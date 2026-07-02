@@ -1,0 +1,579 @@
+// !$*UTF8*$!
+{
+	archiveVersion = 1;
+	classes = {
+	};
+	objectVersion = 77;
+	objects = {
+
+/* Begin PBXBuildFile section */
+		035D4CFA72BB9CD172C2F866 /* WhisperClipboardApp.swift in Sources */ = {isa = PBXBuildFile; fileRef = 0B34E3F1AC782ABCCE39DD46 /* WhisperClipboardApp.swift */; };
+		06C4D66B424CFFD61225A861 /* Core in Frameworks */ = {isa = PBXBuildFile; productRef = 54A32D5460FC44D8ABE5A235 /* Core */; };
+		1F008F01037DFD52388AB203 /* HomeView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 00BFC79EAD046B59506688C1 /* HomeView.swift */; };
+		52E5BB9F4A48187EC048627D /* AppDelegate.swift in Sources */ = {isa = PBXBuildFile; fileRef = 3E6F593C654F6C75A43A5B71 /* AppDelegate.swift */; };
+		94DB4A8F885C1A6CFA70EA1C /* WhisperClipboardTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = F5DC60D0AD01FB9A0C27FC55 /* WhisperClipboardTests.swift */; };
+		C1DB00CA5C8AA4BAF0C86CC8 /* AppState.swift in Sources */ = {isa = PBXBuildFile; fileRef = AC7B42FADEACCDC706B65AD4 /* AppState.swift */; };
+		D5D9CF7335C2B738EAEC27C1 /* KeyboardShortcuts in Frameworks */ = {isa = PBXBuildFile; productRef = 80C613DCD4DFFFD141E5D9D6 /* KeyboardShortcuts */; };
+		DBF3F3ED2BAC06BC610E9026 /* AppEnvironment.swift in Sources */ = {isa = PBXBuildFile; fileRef = E06A7C66B070227464AECBE6 /* AppEnvironment.swift */; };
+		E42E78851303E762439F49FB /* ActionCard.swift in Sources */ = {isa = PBXBuildFile; fileRef = B9FDB1C6F4C774A6EBB39837 /* ActionCard.swift */; };
+		F4665B7BB06BDD41E7790314 /* NightStoryTheme.swift in Sources */ = {isa = PBXBuildFile; fileRef = D55641EC9E41471832F89016 /* NightStoryTheme.swift */; };
+/* End PBXBuildFile section */
+
+/* Begin PBXContainerItemProxy section */
+		F03216EDD4C369C6EF853B03 /* PBXContainerItemProxy */ = {
+			isa = PBXContainerItemProxy;
+			containerPortal = E60F11E5D4271493A007317F /* Project object */;
+			proxyType = 1;
+			remoteGlobalIDString = F8A862AB40A2EE0EE887C615;
+			remoteInfo = WhisperClipboard;
+		};
+/* End PBXContainerItemProxy section */
+
+/* Begin PBXFileReference section */
+		00BFC79EAD046B59506688C1 /* HomeView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = HomeView.swift; sourceTree = "<group>"; };
+		0B34E3F1AC782ABCCE39DD46 /* WhisperClipboardApp.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = WhisperClipboardApp.swift; sourceTree = "<group>"; };
+		17BA599223B223A27944B5B2 /* WhisperClipboardTests.xctest */ = {isa = PBXFileReference; explicitFileType = wrapper.cfbundle; includeInIndex = 0; path = WhisperClipboardTests.xctest; sourceTree = BUILT_PRODUCTS_DIR; };
+		2332D4851324194112A19294 /* Core */ = {isa = PBXFileReference; lastKnownFileType = folder; name = Core; path = Packages/Core; sourceTree = SOURCE_ROOT; };
+		3E6F593C654F6C75A43A5B71 /* AppDelegate.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AppDelegate.swift; sourceTree = "<group>"; };
+		AC7B42FADEACCDC706B65AD4 /* AppState.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AppState.swift; sourceTree = "<group>"; };
+		B9FDB1C6F4C774A6EBB39837 /* ActionCard.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ActionCard.swift; sourceTree = "<group>"; };
+		D55641EC9E41471832F89016 /* NightStoryTheme.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = NightStoryTheme.swift; sourceTree = "<group>"; };
+		E06A7C66B070227464AECBE6 /* AppEnvironment.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AppEnvironment.swift; sourceTree = "<group>"; };
+		F5DC60D0AD01FB9A0C27FC55 /* WhisperClipboardTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = WhisperClipboardTests.swift; sourceTree = "<group>"; };
+		FBD6F73DA126F3966F0B41E9 /* WhisperClipboard.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = WhisperClipboard.app; sourceTree = BUILT_PRODUCTS_DIR; };
+/* End PBXFileReference section */
+
+/* Begin PBXFrameworksBuildPhase section */
+		F69C6A07BEE82C7E9AC6B326 /* Frameworks */ = {
+			isa = PBXFrameworksBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+				D5D9CF7335C2B738EAEC27C1 /* KeyboardShortcuts in Frameworks */,
+				06C4D66B424CFFD61225A861 /* Core in Frameworks */,
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+/* End PBXFrameworksBuildPhase section */
+
+/* Begin PBXGroup section */
+		22EB91D4060D015CF42BE2F8 /* WhisperClipboard */ = {
+			isa = PBXGroup;
+			children = (
+				752C6AC335B4AA6A30FBF3AC /* App */,
+				93452812D30AC6726B146D90 /* Resources */,
+				9D0DB71AABE2D91A518388F8 /* Support */,
+				C384556C082ABE0F4BFE2EB2 /* UI */,
+			);
+			path = WhisperClipboard;
+			sourceTree = "<group>";
+		};
+		2B5280A4630336B106001851 /* Packages */ = {
+			isa = PBXGroup;
+			children = (
+				2332D4851324194112A19294 /* Core */,
+			);
+			path = Packages;
+			sourceTree = "<group>";
+		};
+		529B26187D655D3175AA6E0B /* WhisperClipboardTests */ = {
+			isa = PBXGroup;
+			children = (
+				F5DC60D0AD01FB9A0C27FC55 /* WhisperClipboardTests.swift */,
+			);
+			path = WhisperClipboardTests;
+			sourceTree = "<group>";
+		};
+		6A26B2DF356CD95C383F0663 /* Theme */ = {
+			isa = PBXGroup;
+			children = (
+				D55641EC9E41471832F89016 /* NightStoryTheme.swift */,
+			);
+			path = Theme;
+			sourceTree = "<group>";
+		};
+		752C6AC335B4AA6A30FBF3AC /* App */ = {
+			isa = PBXGroup;
+			children = (
+				3E6F593C654F6C75A43A5B71 /* AppDelegate.swift */,
+				E06A7C66B070227464AECBE6 /* AppEnvironment.swift */,
+				0B34E3F1AC782ABCCE39DD46 /* WhisperClipboardApp.swift */,
+			);
+			path = App;
+			sourceTree = "<group>";
+		};
+		7651B5B83393559347B6F52C /* Components */ = {
+			isa = PBXGroup;
+			children = (
+				B9FDB1C6F4C774A6EBB39837 /* ActionCard.swift */,
+			);
+			path = Components;
+			sourceTree = "<group>";
+		};
+		93452812D30AC6726B146D90 /* Resources */ = {
+			isa = PBXGroup;
+			children = (
+			);
+			path = Resources;
+			sourceTree = "<group>";
+		};
+		98BBD2719604FF55EEF90350 /* Products */ = {
+			isa = PBXGroup;
+			children = (
+				FBD6F73DA126F3966F0B41E9 /* WhisperClipboard.app */,
+				17BA599223B223A27944B5B2 /* WhisperClipboardTests.xctest */,
+			);
+			name = Products;
+			sourceTree = "<group>";
+		};
+		9D0DB71AABE2D91A518388F8 /* Support */ = {
+			isa = PBXGroup;
+			children = (
+				AC7B42FADEACCDC706B65AD4 /* AppState.swift */,
+			);
+			path = Support;
+			sourceTree = "<group>";
+		};
+		C384556C082ABE0F4BFE2EB2 /* UI */ = {
+			isa = PBXGroup;
+			children = (
+				7651B5B83393559347B6F52C /* Components */,
+				CD285CA4673AF0591BBC4E0C /* Home */,
+				6A26B2DF356CD95C383F0663 /* Theme */,
+			);
+			path = UI;
+			sourceTree = "<group>";
+		};
+		CD285CA4673AF0591BBC4E0C /* Home */ = {
+			isa = PBXGroup;
+			children = (
+				00BFC79EAD046B59506688C1 /* HomeView.swift */,
+			);
+			path = Home;
+			sourceTree = "<group>";
+		};
+		CEDFD638B24A74498DF5F627 = {
+			isa = PBXGroup;
+			children = (
+				2B5280A4630336B106001851 /* Packages */,
+				22EB91D4060D015CF42BE2F8 /* WhisperClipboard */,
+				529B26187D655D3175AA6E0B /* WhisperClipboardTests */,
+				98BBD2719604FF55EEF90350 /* Products */,
+			);
+			sourceTree = "<group>";
+		};
+/* End PBXGroup section */
+
+/* Begin PBXNativeTarget section */
+		7D8ABAEB335138C3075F0419 /* WhisperClipboardTests */ = {
+			isa = PBXNativeTarget;
+			buildConfigurationList = AE514CF48027D578C400C63F /* Build configuration list for PBXNativeTarget "WhisperClipboardTests" */;
+			buildPhases = (
+				CBFE7E9DF6993A85120227BA /* Sources */,
+			);
+			buildRules = (
+			);
+			dependencies = (
+				65594612558877D25A69322E /* PBXTargetDependency */,
+			);
+			name = WhisperClipboardTests;
+			packageProductDependencies = (
+			);
+			productName = WhisperClipboardTests;
+			productReference = 17BA599223B223A27944B5B2 /* WhisperClipboardTests.xctest */;
+			productType = "com.apple.product-type.bundle.unit-test";
+		};
+		F8A862AB40A2EE0EE887C615 /* WhisperClipboard */ = {
+			isa = PBXNativeTarget;
+			buildConfigurationList = 33487394C20E2C79A198C874 /* Build configuration list for PBXNativeTarget "WhisperClipboard" */;
+			buildPhases = (
+				3E7FB730867AA4DF3D687F72 /* Sources */,
+				5C67D17D2B4E673AF3C7B0A3 /* Copy bundled fonts into Resources/Fonts */,
+				F69C6A07BEE82C7E9AC6B326 /* Frameworks */,
+			);
+			buildRules = (
+			);
+			dependencies = (
+			);
+			name = WhisperClipboard;
+			packageProductDependencies = (
+				80C613DCD4DFFFD141E5D9D6 /* KeyboardShortcuts */,
+				54A32D5460FC44D8ABE5A235 /* Core */,
+			);
+			productName = WhisperClipboard;
+			productReference = FBD6F73DA126F3966F0B41E9 /* WhisperClipboard.app */;
+			productType = "com.apple.product-type.application";
+		};
+/* End PBXNativeTarget section */
+
+/* Begin PBXProject section */
+		E60F11E5D4271493A007317F /* Project object */ = {
+			isa = PBXProject;
+			attributes = {
+				BuildIndependentTargetsInParallel = YES;
+				LastUpgradeCheck = 1430;
+				TargetAttributes = {
+					7D8ABAEB335138C3075F0419 = {
+						ProvisioningStyle = Automatic;
+					};
+					F8A862AB40A2EE0EE887C615 = {
+						ProvisioningStyle = Automatic;
+					};
+				};
+			};
+			buildConfigurationList = B5378F980F01EB7C6A29F940 /* Build configuration list for PBXProject "WhisperClipboard" */;
+			developmentRegion = en;
+			hasScannedForEncodings = 0;
+			knownRegions = (
+				Base,
+				en,
+			);
+			mainGroup = CEDFD638B24A74498DF5F627;
+			minimizedProjectReferenceProxies = 1;
+			packageReferences = (
+				A59C2C950D3D7A943F9C18E1 /* XCRemoteSwiftPackageReference "KeyboardShortcuts" */,
+				C616BE4AFD38048F982B67C6 /* XCLocalSwiftPackageReference "Packages/Core" */,
+			);
+			preferredProjectObjectVersion = 77;
+			productRefGroup = 98BBD2719604FF55EEF90350 /* Products */;
+			projectDirPath = "";
+			projectRoot = "";
+			targets = (
+				F8A862AB40A2EE0EE887C615 /* WhisperClipboard */,
+				7D8ABAEB335138C3075F0419 /* WhisperClipboardTests */,
+			);
+		};
+/* End PBXProject section */
+
+/* Begin PBXShellScriptBuildPhase section */
+		5C67D17D2B4E673AF3C7B0A3 /* Copy bundled fonts into Resources/Fonts */ = {
+			isa = PBXShellScriptBuildPhase;
+			alwaysOutOfDate = 1;
+			buildActionMask = 2147483647;
+			files = (
+			);
+			inputFileListPaths = (
+			);
+			inputPaths = (
+			);
+			name = "Copy bundled fonts into Resources/Fonts";
+			outputFileListPaths = (
+			);
+			outputPaths = (
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+			shellPath = /bin/sh;
+			shellScript = "FONTS_SRC=\"${SRCROOT}/WhisperClipboard/Resources/Fonts\"\nFONTS_DST=\"${TARGET_BUILD_DIR}/${UNLOCALIZED_RESOURCES_FOLDER_PATH}/Fonts\"\nrm -rf \"${FONTS_DST}\"\nmkdir -p \"${FONTS_DST}\"\ncp -R \"${FONTS_SRC}/.\" \"${FONTS_DST}/\"\n";
+		};
+/* End PBXShellScriptBuildPhase section */
+
+/* Begin PBXSourcesBuildPhase section */
+		3E7FB730867AA4DF3D687F72 /* Sources */ = {
+			isa = PBXSourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+				E42E78851303E762439F49FB /* ActionCard.swift in Sources */,
+				52E5BB9F4A48187EC048627D /* AppDelegate.swift in Sources */,
+				DBF3F3ED2BAC06BC610E9026 /* AppEnvironment.swift in Sources */,
+				C1DB00CA5C8AA4BAF0C86CC8 /* AppState.swift in Sources */,
+				1F008F01037DFD52388AB203 /* HomeView.swift in Sources */,
+				F4665B7BB06BDD41E7790314 /* NightStoryTheme.swift in Sources */,
+				035D4CFA72BB9CD172C2F866 /* WhisperClipboardApp.swift in Sources */,
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+		CBFE7E9DF6993A85120227BA /* Sources */ = {
+			isa = PBXSourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+				94DB4A8F885C1A6CFA70EA1C /* WhisperClipboardTests.swift in Sources */,
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+/* End PBXSourcesBuildPhase section */
+
+/* Begin PBXTargetDependency section */
+		65594612558877D25A69322E /* PBXTargetDependency */ = {
+			isa = PBXTargetDependency;
+			target = F8A862AB40A2EE0EE887C615 /* WhisperClipboard */;
+			targetProxy = F03216EDD4C369C6EF853B03 /* PBXContainerItemProxy */;
+		};
+/* End PBXTargetDependency section */
+
+/* Begin XCBuildConfiguration section */
+		4FEE712FD4565A35F158C483 /* Release */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				ALWAYS_SEARCH_USER_PATHS = NO;
+				CLANG_ANALYZER_NONNULL = YES;
+				CLANG_ANALYZER_NUMBER_OBJECT_CONVERSION = YES_AGGRESSIVE;
+				CLANG_CXX_LANGUAGE_STANDARD = "gnu++14";
+				CLANG_CXX_LIBRARY = "libc++";
+				CLANG_ENABLE_MODULES = YES;
+				CLANG_ENABLE_OBJC_ARC = YES;
+				CLANG_ENABLE_OBJC_WEAK = YES;
+				CLANG_WARN_BLOCK_CAPTURE_AUTORELEASING = YES;
+				CLANG_WARN_BOOL_CONVERSION = YES;
+				CLANG_WARN_COMMA = YES;
+				CLANG_WARN_CONSTANT_CONVERSION = YES;
+				CLANG_WARN_DEPRECATED_OBJC_IMPLEMENTATIONS = YES;
+				CLANG_WARN_DIRECT_OBJC_ISA_USAGE = YES_ERROR;
+				CLANG_WARN_DOCUMENTATION_COMMENTS = YES;
+				CLANG_WARN_EMPTY_BODY = YES;
+				CLANG_WARN_ENUM_CONVERSION = YES;
+				CLANG_WARN_INFINITE_RECURSION = YES;
+				CLANG_WARN_INT_CONVERSION = YES;
+				CLANG_WARN_NON_LITERAL_NULL_CONVERSION = YES;
+				CLANG_WARN_OBJC_IMPLICIT_RETAIN_SELF = YES;
+				CLANG_WARN_OBJC_LITERAL_CONVERSION = YES;
+				CLANG_WARN_OBJC_ROOT_CLASS = YES_ERROR;
+				CLANG_WARN_QUOTED_INCLUDE_IN_FRAMEWORK_HEADER = YES;
+				CLANG_WARN_RANGE_LOOP_ANALYSIS = YES;
+				CLANG_WARN_STRICT_PROTOTYPES = YES;
+				CLANG_WARN_SUSPICIOUS_MOVE = YES;
+				CLANG_WARN_UNGUARDED_AVAILABILITY = YES_AGGRESSIVE;
+				CLANG_WARN_UNREACHABLE_CODE = YES;
+				CLANG_WARN__DUPLICATE_METHOD_MATCH = YES;
+				CODE_SIGN_IDENTITY = "-";
+				CODE_SIGN_STYLE = Automatic;
+				COPY_PHASE_STRIP = NO;
+				CURRENT_PROJECT_VERSION = 1;
+				DEBUG_INFORMATION_FORMAT = "dwarf-with-dsym";
+				ENABLE_HARDENED_RUNTIME = NO;
+				ENABLE_NS_ASSERTIONS = NO;
+				ENABLE_STRICT_OBJC_MSGSEND = YES;
+				GCC_C_LANGUAGE_STANDARD = gnu11;
+				GCC_NO_COMMON_BLOCKS = YES;
+				GCC_WARN_64_TO_32_BIT_CONVERSION = YES;
+				GCC_WARN_ABOUT_RETURN_TYPE = YES_ERROR;
+				GCC_WARN_UNDECLARED_SELECTOR = YES;
+				GCC_WARN_UNINITIALIZED_AUTOS = YES_AGGRESSIVE;
+				GCC_WARN_UNUSED_FUNCTION = YES;
+				GCC_WARN_UNUSED_VARIABLE = YES;
+				MACOSX_DEPLOYMENT_TARGET = 26.0;
+				MARKETING_VERSION = 2.0.0;
+				MTL_ENABLE_DEBUG_INFO = NO;
+				MTL_FAST_MATH = YES;
+				PRODUCT_NAME = "$(TARGET_NAME)";
+				SDKROOT = macosx;
+				SWIFT_COMPILATION_MODE = wholemodule;
+				SWIFT_OPTIMIZATION_LEVEL = "-O";
+				SWIFT_STRICT_CONCURRENCY = complete;
+				SWIFT_VERSION = 6.0;
+			};
+			name = Release;
+		};
+		AAB383DC94B9DC693B5B27C4 /* Release */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
+				CODE_SIGN_ENTITLEMENTS = WhisperClipboard/WhisperClipboard.entitlements;
+				COMBINE_HIDPI_IMAGES = YES;
+				CURRENT_PROJECT_VERSION = 1;
+				GENERATE_INFOPLIST_FILE = NO;
+				INFOPLIST_FILE = WhisperClipboard/Resources/Info.plist;
+				LD_RUNPATH_SEARCH_PATHS = (
+					"$(inherited)",
+					"@executable_path/../Frameworks",
+				);
+				MACOSX_DEPLOYMENT_TARGET = 26.0;
+				MARKETING_VERSION = 2.0.0;
+				PRODUCT_BUNDLE_IDENTIFIER = nl.nielscroiset.whisperclipboard;
+				PRODUCT_NAME = WhisperClipboard;
+				SDKROOT = macosx;
+				SWIFT_VERSION = 6.0;
+			};
+			name = Release;
+		};
+		C436747F5D348CB2C540C768 /* Debug */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
+				CODE_SIGN_ENTITLEMENTS = WhisperClipboard/WhisperClipboard.entitlements;
+				COMBINE_HIDPI_IMAGES = YES;
+				CURRENT_PROJECT_VERSION = 1;
+				GENERATE_INFOPLIST_FILE = NO;
+				INFOPLIST_FILE = WhisperClipboard/Resources/Info.plist;
+				LD_RUNPATH_SEARCH_PATHS = (
+					"$(inherited)",
+					"@executable_path/../Frameworks",
+				);
+				MACOSX_DEPLOYMENT_TARGET = 26.0;
+				MARKETING_VERSION = 2.0.0;
+				PRODUCT_BUNDLE_IDENTIFIER = nl.nielscroiset.whisperclipboard;
+				PRODUCT_NAME = WhisperClipboard;
+				SDKROOT = macosx;
+				SWIFT_VERSION = 6.0;
+			};
+			name = Debug;
+		};
+		D55C3865B7D93523EC16852D /* Release */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				BUNDLE_LOADER = "$(TEST_HOST)";
+				COMBINE_HIDPI_IMAGES = YES;
+				GENERATE_INFOPLIST_FILE = YES;
+				LD_RUNPATH_SEARCH_PATHS = (
+					"$(inherited)",
+					"@executable_path/../Frameworks",
+					"@loader_path/../Frameworks",
+				);
+				MACOSX_DEPLOYMENT_TARGET = 26.0;
+				PRODUCT_BUNDLE_IDENTIFIER = nl.nielscroiset.whisperclipboardTests;
+				SDKROOT = macosx;
+				SWIFT_VERSION = 6.0;
+				TEST_HOST = "$(BUILT_PRODUCTS_DIR)/WhisperClipboard.app/Contents/MacOS/WhisperClipboard";
+			};
+			name = Release;
+		};
+		DCE8586EA051B960A5480021 /* Debug */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				ALWAYS_SEARCH_USER_PATHS = NO;
+				CLANG_ANALYZER_NONNULL = YES;
+				CLANG_ANALYZER_NUMBER_OBJECT_CONVERSION = YES_AGGRESSIVE;
+				CLANG_CXX_LANGUAGE_STANDARD = "gnu++14";
+				CLANG_CXX_LIBRARY = "libc++";
+				CLANG_ENABLE_MODULES = YES;
+				CLANG_ENABLE_OBJC_ARC = YES;
+				CLANG_ENABLE_OBJC_WEAK = YES;
+				CLANG_WARN_BLOCK_CAPTURE_AUTORELEASING = YES;
+				CLANG_WARN_BOOL_CONVERSION = YES;
+				CLANG_WARN_COMMA = YES;
+				CLANG_WARN_CONSTANT_CONVERSION = YES;
+				CLANG_WARN_DEPRECATED_OBJC_IMPLEMENTATIONS = YES;
+				CLANG_WARN_DIRECT_OBJC_ISA_USAGE = YES_ERROR;
+				CLANG_WARN_DOCUMENTATION_COMMENTS = YES;
+				CLANG_WARN_EMPTY_BODY = YES;
+				CLANG_WARN_ENUM_CONVERSION = YES;
+				CLANG_WARN_INFINITE_RECURSION = YES;
+				CLANG_WARN_INT_CONVERSION = YES;
+				CLANG_WARN_NON_LITERAL_NULL_CONVERSION = YES;
+				CLANG_WARN_OBJC_IMPLICIT_RETAIN_SELF = YES;
+				CLANG_WARN_OBJC_LITERAL_CONVERSION = YES;
+				CLANG_WARN_OBJC_ROOT_CLASS = YES_ERROR;
+				CLANG_WARN_QUOTED_INCLUDE_IN_FRAMEWORK_HEADER = YES;
+				CLANG_WARN_RANGE_LOOP_ANALYSIS = YES;
+				CLANG_WARN_STRICT_PROTOTYPES = YES;
+				CLANG_WARN_SUSPICIOUS_MOVE = YES;
+				CLANG_WARN_UNGUARDED_AVAILABILITY = YES_AGGRESSIVE;
+				CLANG_WARN_UNREACHABLE_CODE = YES;
+				CLANG_WARN__DUPLICATE_METHOD_MATCH = YES;
+				CODE_SIGN_IDENTITY = "-";
+				CODE_SIGN_STYLE = Automatic;
+				COPY_PHASE_STRIP = NO;
+				CURRENT_PROJECT_VERSION = 1;
+				DEBUG_INFORMATION_FORMAT = dwarf;
+				ENABLE_HARDENED_RUNTIME = NO;
+				ENABLE_STRICT_OBJC_MSGSEND = YES;
+				ENABLE_TESTABILITY = YES;
+				GCC_C_LANGUAGE_STANDARD = gnu11;
+				GCC_DYNAMIC_NO_PIC = NO;
+				GCC_NO_COMMON_BLOCKS = YES;
+				GCC_OPTIMIZATION_LEVEL = 0;
+				GCC_PREPROCESSOR_DEFINITIONS = (
+					"$(inherited)",
+					"DEBUG=1",
+				);
+				GCC_WARN_64_TO_32_BIT_CONVERSION = YES;
+				GCC_WARN_ABOUT_RETURN_TYPE = YES_ERROR;
+				GCC_WARN_UNDECLARED_SELECTOR = YES;
+				GCC_WARN_UNINITIALIZED_AUTOS = YES_AGGRESSIVE;
+				GCC_WARN_UNUSED_FUNCTION = YES;
+				GCC_WARN_UNUSED_VARIABLE = YES;
+				MACOSX_DEPLOYMENT_TARGET = 26.0;
+				MARKETING_VERSION = 2.0.0;
+				MTL_ENABLE_DEBUG_INFO = INCLUDE_SOURCE;
+				MTL_FAST_MATH = YES;
+				ONLY_ACTIVE_ARCH = YES;
+				PRODUCT_NAME = "$(TARGET_NAME)";
+				SDKROOT = macosx;
+				SWIFT_ACTIVE_COMPILATION_CONDITIONS = DEBUG;
+				SWIFT_OPTIMIZATION_LEVEL = "-Onone";
+				SWIFT_STRICT_CONCURRENCY = complete;
+				SWIFT_VERSION = 6.0;
+			};
+			name = Debug;
+		};
+		ED8C636ED2C194DB5B588C54 /* Debug */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				BUNDLE_LOADER = "$(TEST_HOST)";
+				COMBINE_HIDPI_IMAGES = YES;
+				GENERATE_INFOPLIST_FILE = YES;
+				LD_RUNPATH_SEARCH_PATHS = (
+					"$(inherited)",
+					"@executable_path/../Frameworks",
+					"@loader_path/../Frameworks",
+				);
+				MACOSX_DEPLOYMENT_TARGET = 26.0;
+				PRODUCT_BUNDLE_IDENTIFIER = nl.nielscroiset.whisperclipboardTests;
+				SDKROOT = macosx;
+				SWIFT_VERSION = 6.0;
+				TEST_HOST = "$(BUILT_PRODUCTS_DIR)/WhisperClipboard.app/Contents/MacOS/WhisperClipboard";
+			};
+			name = Debug;
+		};
+/* End XCBuildConfiguration section */
+
+/* Begin XCConfigurationList section */
+		33487394C20E2C79A198C874 /* Build configuration list for PBXNativeTarget "WhisperClipboard" */ = {
+			isa = XCConfigurationList;
+			buildConfigurations = (
+				C436747F5D348CB2C540C768 /* Debug */,
+				AAB383DC94B9DC693B5B27C4 /* Release */,
+			);
+			defaultConfigurationIsVisible = 0;
+			defaultConfigurationName = Debug;
+		};
+		AE514CF48027D578C400C63F /* Build configuration list for PBXNativeTarget "WhisperClipboardTests" */ = {
+			isa = XCConfigurationList;
+			buildConfigurations = (
+				ED8C636ED2C194DB5B588C54 /* Debug */,
+				D55C3865B7D93523EC16852D /* Release */,
+			);
+			defaultConfigurationIsVisible = 0;
+			defaultConfigurationName = Debug;
+		};
+		B5378F980F01EB7C6A29F940 /* Build configuration list for PBXProject "WhisperClipboard" */ = {
+			isa = XCConfigurationList;
+			buildConfigurations = (
+				DCE8586EA051B960A5480021 /* Debug */,
+				4FEE712FD4565A35F158C483 /* Release */,
+			);
+			defaultConfigurationIsVisible = 0;
+			defaultConfigurationName = Debug;
+		};
+/* End XCConfigurationList section */
+
+/* Begin XCLocalSwiftPackageReference section */
+		C616BE4AFD38048F982B67C6 /* XCLocalSwiftPackageReference "Packages/Core" */ = {
+			isa = XCLocalSwiftPackageReference;
+			relativePath = Packages/Core;
+		};
+/* End XCLocalSwiftPackageReference section */
+
+/* Begin XCRemoteSwiftPackageReference section */
+		A59C2C950D3D7A943F9C18E1 /* XCRemoteSwiftPackageReference "KeyboardShortcuts" */ = {
+			isa = XCRemoteSwiftPackageReference;
+			repositoryURL = "https://github.com/sindresorhus/KeyboardShortcuts";
+			requirement = {
+				kind = upToNextMajorVersion;
+				minimumVersion = 2.0.0;
+			};
+		};
+/* End XCRemoteSwiftPackageReference section */
+
+/* Begin XCSwiftPackageProductDependency section */
+		54A32D5460FC44D8ABE5A235 /* Core */ = {
+			isa = XCSwiftPackageProductDependency;
+			productName = Core;
+		};
+		80C613DCD4DFFFD141E5D9D6 /* KeyboardShortcuts */ = {
+			isa = XCSwiftPackageProductDependency;
+			package = A59C2C950D3D7A943F9C18E1 /* XCRemoteSwiftPackageReference "KeyboardShortcuts" */;
+			productName = KeyboardShortcuts;
+		};
+/* End XCSwiftPackageProductDependency section */
+	};
+	rootObject = E60F11E5D4271493A007317F /* Project object */;
+}

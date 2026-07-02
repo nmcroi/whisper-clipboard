@@ -1,0 +1,91 @@
+[
+  {
+    "id": "basic_whitespace_and_punct",
+    "input": "  hallo   wereld .  dit is  een test.nieuwe zin ",
+    "replacements": [],
+    "clean": true,
+    "output": "Hallo wereld. Dit is een test. Nieuwe zin"
+  },
+  {
+    "id": "replacements_then_clean",
+    "input": "de klant heet  noornano .",
+    "replacements": [
+      [
+        "noornano",
+        "Noornano"
+      ]
+    ],
+    "clean": true,
+    "output": "De klant heet Noornano."
+  },
+  {
+    "id": "replacements_whole_word_case_insensitive",
+    "input": "Ik gebruik VPS en vps, maar niet vpsx.",
+    "replacements": [
+      [
+        "vps",
+        "server"
+      ]
+    ],
+    "clean": false,
+    "output": "Ik gebruik server en server, maar niet vpsx."
+  },
+  {
+    "id": "digit_exception_keeps_decimal_intact",
+    "input": "de prijs is 1.5 euro per stuk, en 2,5 kilo.ook dit",
+    "replacements": [],
+    "clean": true,
+    "output": "De prijs is 1.5 euro per stuk, en 2,5 kilo. Ook dit"
+  },
+  {
+    "id": "no_clean_skips_cleanup",
+    "input": "rauw   blijft",
+    "replacements": [],
+    "clean": false,
+    "output": "rauw   blijft"
+  },
+  {
+    "id": "unicode_accented_sentence_start",
+    "input": "dit is een zin. écht een test! àlweer een nieuwe? über test",
+    "replacements": [],
+    "clean": true,
+    "output": "Dit is een zin. Écht een test! Àlweer een nieuwe? Über test"
+  },
+  {
+    "id": "dutch_ai_replacement_and_sentences",
+    "input": "we gebruiken ai voor dit.  ai is overal. de vps draait ai-taken",
+    "replacements": [
+      [
+        "ai",
+        "AI"
+      ],
+      [
+        "vps",
+        "server"
+      ]
+    ],
+    "clean": true,
+    "output": "We gebruiken AI voor dit. AI is overal. De server draait AI-taken"
+  },
+  {
+    "id": "empty_after_strip",
+    "input": "    ",
+    "replacements": [],
+    "clean": true,
+    "output": ""
+  },
+  {
+    "id": "punct_run_and_semicolon_colon",
+    "input": "eerste deel ; tweede deel : derde deel , laatste deel !test",
+    "replacements": [],
+    "clean": true,
+    "output": "Eerste deel; tweede deel: derde deel, laatste deel! Test"
+  },
+  {
+    "id": "multiple_sentence_capitalization",
+    "input": "dit werkt.dan dit ook!en dit?en dit: ook",
+    "replacements": [],
+    "clean": true,
+    "output": "Dit werkt. Dan dit ook! En dit? En dit: ook"
+  }
+]

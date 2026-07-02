@@ -1,0 +1,107 @@
+name: WhisperClipboard
+
+# macOS 26 deployment target: the primary transcription engine is the
+# macOS-26 SpeechAnalyzer API, so we cannot target anything older.
+options:
+  bundleIdPrefix: nl.nielscroiset
+  deploymentTarget:
+    macOS: "26.0"
+  createIntermediateGroups: true
+
+settings:
+  base:
+    SWIFT_VERSION: "6.0"
+    SWIFT_STRICT_CONCURRENCY: complete # Swift 6 language mode
+    MARKETING_VERSION: "2.0.0"
+    CURRENT_PROJECT_VERSION: "1"
+    # Local dev signing: automatic + ad-hoc identity so builds run locally.
+    # Release signing (Developer ID + notarization) arrives in a later milestone.
+    CODE_SIGN_STYLE: Automatic
+    CODE_SIGN_IDENTITY: "-"
+    # Hardened runtime stays OFF for dev builds; enabled with release signing later.
+    ENABLE_HARDENED_RUNTIME: false
+
+packages:
+  KeyboardShortcuts:
+    url: https://github.com/sindresorhus/KeyboardShortcuts
+    from: "2.0.0"
+  Core:
+    path: Packages/Core
+
+targets:
+  WhisperClipboard:
+    type: application
+    platform: macOS
+    deploymentTarget: "26.0"
+    sources:
+      - path: WhisperClipboard
+        excludes:
+          - "Resources/Info.plist"
+          - "WhisperClipboard.entitlements"
+          # Fonts are copied intact into Contents/Resources/Fonts by the
+          # postCompileScripts phase below (ATSApplicationFontsPath = Fonts).
+          - "Resources/Fonts"
+    dependencies:
+      - package: KeyboardShortcuts
+      - package: Core
+    postCompileScripts:
+      - name: Copy bundled fonts into Resources/Fonts
+        basedOnDependencyAnalysis: false
+        script: |
+          FONTS_SRC="${SRCROOT}/WhisperClipboard/Resources/Fonts"
+          FONTS_DST="${TARGET_BUILD_DIR}/${UNLOCALIZED_RESOURCES_FOLDER_PATH}/Fonts"
+          rm -rf "${FONTS_DST}"
+          mkdir -p "${FONTS_DST}"
+          cp -R "${FONTS_SRC}/." "${FONTS_DST}/"
+    info:
+      path: WhisperClipboard/Resources/Info.plist
+      properties:
+        CFBundleDevelopmentRegion: nl
+        CFBundleDisplayName: Whisper Clipboard
+        CFBundleShortVersionString: $(MARKETING_VERSION)
+        CFBundleVersion: $(CURRENT_PROJECT_VERSION)
+        LSMinimumSystemVersion: $(MACOSX_DEPLOYMENT_TARGET)
+        # Menu bar app: no Dock icon by default (toggled to .regular at runtime).
+        LSUIElement: true
+        NSMicrophoneUsageDescription: "Whisper Clipboard gebruikt de microfoon om je spraak lokaal op je Mac om te zetten naar tekst. Er verlaat geen audio je computer."
+        ATSApplicationFontsPath: Fonts
+        NSHumanReadableCopyright: "© 2026 NightStory"
+    entitlements:
+      path: WhisperClipboard/WhisperClipboard.entitlements
+      properties:
+        # Needed once hardened runtime is enabled in a later milestone; harmless now.
+        com.apple.security.device.audio-input: true
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: nl.nielscroiset.whisperclipboard
+        PRODUCT_NAME: WhisperClipboard
+        GENERATE_INFOPLIST_FILE: false
+        SWIFT_VERSION: "6.0"
+        MARKETING_VERSION: "2.0.0"
+        CURRENT_PROJECT_VERSION: "1"
+
+  WhisperClipboardTests:
+    type: bundle.unit-test
+    platform: macOS
+    deploymentTarget: "26.0"
+    sources:
+      - WhisperClipboardTests
+    dependencies:
+      - target: WhisperClipboard
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: nl.nielscroiset.whisperclipboardTests
+        GENERATE_INFOPLIST_FILE: true
+        SWIFT_VERSION: "6.0"
+
+schemes:
+  WhisperClipboard:
+    build:
+      targets:
+        WhisperClipboard: all
+    run:
+      config: Debug
+    test:
+      config: Debug
+      targets:
+        - WhisperClipboardTests
