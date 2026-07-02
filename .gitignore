@@ -1,0 +1,18 @@
+.venv/
+models/
+recordings/
+transcripts/
+*.wav
+*.pyc
+__pycache__/
+*.egg-info/
+
+# v1 build artifact
+Whisper Clipboard.app/
+
+# Swift/Xcode (v2)
+v2/**/.build/
+v2/**/xcuserdata/
+v2/**/.swiftpm/
+v2/DerivedData/
+.DS_Store

@@ -1,0 +1,21 @@
+[project]
+name = "whisper-clipboard"
+version = "0.5.0"
+description = "Local hotkey voice transcription to clipboard."
+requires-python = ">=3.10"
+dependencies = [
+  "faster-whisper>=1.1.0,<2",
+  "mlx-whisper>=0.4; sys_platform == 'darwin' and platform_machine == 'arm64'",
+  "numpy>=1.26",
+  "pyobjc-framework-Cocoa>=10; sys_platform == 'darwin'",
+  "pyperclip>=1.9.0",
+  "sounddevice>=0.4.7",
+  "tomli>=2.0.1; python_version < '3.11'",
+]
+
+[project.scripts]
+whisper-clipboard = "whisper_clipboard.__main__:main"
+
+[build-system]
+requires = ["setuptools>=69", "wheel"]
+build-backend = "setuptools.build_meta"

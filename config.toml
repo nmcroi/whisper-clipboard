@@ -1,0 +1,64 @@
+# Press once to start recording, press again to stop and transcribe.
+# If macOS already uses this shortcut, change it to something like:
+# "<cmd>+<shift>+space" or "<ctrl>+<alt>+space"
+hotkey = "<ctrl>+<space>"
+
+# Dutch by default. Use "en" for English or leave empty for auto-detect.
+language = "nl"
+
+# Local engine.
+# "mlx_whisper"   = Apple-Silicon GPU (fast, recommended) -> uses mlx_model_path.
+# "faster_whisper"= CPU fallback -> uses the "model" setting below.
+# "whisper_cpp"   = optional, needs whisper-cli installed separately.
+engine = "mlx_whisper"
+
+# Only used by the faster_whisper CPU fallback. "small" is light; "medium" slower.
+model = "small"
+models_dir = "models"
+preload_model = true
+
+# CPU works on every Mac. Keep int8 for speed.
+device = "cpu"
+compute_type = "int8"
+
+sample_rate = 16000
+vad_filter = true
+
+# Decoding quality vs speed (faster_whisper only). Higher beam = slower.
+beam_size = 1
+
+# "transcribe" keeps the spoken language. "translate" outputs English.
+task = "transcribe"
+
+# Bias recognition toward names and jargon (a hint, not a guarantee).
+# Example: initial_prompt = "Niels, NightStory, GHX, NORMA, voice-over"
+initial_prompt = ""
+
+# Tidy capitalization and spacing of the result. Set false for raw output.
+clean_output = true
+
+# Fix recurring mistranscriptions. Whole-word, case-insensitive.
+# Add one [[replacements]] block per fix:
+# [[replacements]]
+# from = "ziekerfatt"
+# to = "zekerheid"
+
+# Keep false for pure clipboard mode. Turn on to paste into the active app too.
+paste_after_copy = false
+
+save_recordings = false
+recordings_dir = "recordings"
+
+# Recent transcripts are always stored locally for the history window.
+history_limit = 20
+
+# Optional: also save every transcript as a separate text file.
+save_transcripts = false
+transcripts_dir = "transcripts"
+
+# Only used when engine = "whisper_cpp".
+whisper_cpp_binary = "whisper-cli"
+whisper_cpp_model_path = ""
+
+# Only used when engine = "mlx_whisper". Local MLX model directory.
+mlx_model_path = "models/mlx/whisper-medium"

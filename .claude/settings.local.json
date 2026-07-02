@@ -1,0 +1,15 @@
+{
+  "permissions": {
+    "allow": [
+      "WebFetch(domain:github.com)",
+      "Read(//private/tmp/**)",
+      "Bash(python3 -)",
+      "Bash(ls -la scripts)",
+      "Bash(cat pyproject.toml)",
+      "Bash(git check-ignore *)",
+      "WebFetch(domain:cocoadev.github.io)",
+      "Bash(ls tests/conftest.py)",
+      "Bash(grep -rn \"pytest\\\\|tool.pytest\\\\|testpaths\\\\|addopts\" pyproject.toml)"
+    ]
+  }
+}
