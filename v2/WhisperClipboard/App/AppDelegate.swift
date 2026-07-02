@@ -10,6 +10,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
     private var statusItem: NSStatusItem?
     private var statusMenuItem: NSMenuItem?
+    private var recordMenuItem: NSMenuItem?
+    private var downloadMenuItem: NSMenuItem?
     private var openWindowCount = 0
     private var cancellables = Set<AnyCancellable>()
 
@@ -21,9 +23,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
         setUpStatusItem()
         observeState()
+        observeDictation()
         observeWindows()
 
-        environment.appState = .ready
+        environment.bootstrap()
     }
 
     // MARK: - Status item
@@ -40,9 +43,15 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
         menu.addItem(.separator())
 
-        menu.addItem(
-            makeItem(title: "Start/stop opname", action: #selector(toggleRecording), key: "r")
-        )
+        let record = makeItem(title: "Start opname", action: #selector(toggleRecording), key: "r")
+        menu.addItem(record)
+        recordMenuItem = record
+
+        let download = makeItem(title: "Nederlands model downloaden…", action: #selector(downloadModel), key: "")
+        download.isHidden = true
+        menu.addItem(download)
+        downloadMenuItem = download
+
         menu.addItem(
             makeItem(title: "Open Whisper Clipboard", action: #selector(openHome), key: "o")
         )
@@ -59,6 +68,30 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         item.menu = menu
         statusItem = item
         updateStatusIcon(for: environment.appState)
+        updateMenuItems()
+    }
+
+    /// Reflects model availability + recording phase in the menu item titles.
+    private func updateMenuItems() {
+        let status = environment.modelManager.status
+        let ready = status.isReady
+        let unsupported = status == .unsupported
+        // Offer the download only when the model is installable (not when ready
+        // and not when the language is unsupported on this OS).
+        downloadMenuItem?.isHidden = ready || unsupported
+        recordMenuItem?.isHidden = !ready
+
+        switch environment.dictation.phase {
+        case .recording:
+            recordMenuItem?.title = "Stop opname"
+            recordMenuItem?.isEnabled = true
+        case .transcribing:
+            recordMenuItem?.title = "Transcriberen…"
+            recordMenuItem?.isEnabled = false
+        case .idle, .finished:
+            recordMenuItem?.title = "Start opname"
+            recordMenuItem?.isEnabled = true
+        }
     }
 
     private func makeItem(title: String, action: Selector, key: String) -> NSMenuItem {
@@ -92,7 +125,20 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             .sink { [weak self] state in
                 self?.statusMenuItem?.title = state.statusText
                 self?.updateStatusIcon(for: state)
+                self?.updateMenuItems()
             }
+            .store(in: &cancellables)
+    }
+
+    private func observeDictation() {
+        environment.dictation.$phase
+            .receive(on: RunLoop.main)
+            .sink { [weak self] _ in self?.updateMenuItems() }
+            .store(in: &cancellables)
+
+        environment.modelManager.$status
+            .receive(on: RunLoop.main)
+            .sink { [weak self] _ in self?.updateMenuItems() }
             .store(in: &cancellables)
     }
 
@@ -144,8 +190,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     // MARK: - Actions
 
     @objc private func toggleRecording() {
-        // Placeholder for M0: exercise the state machine so the UI updates.
-        environment.simulateStateCycle()
+        environment.dictation.toggle()
+    }
+
+    @objc private func downloadModel() {
+        environment.downloadModel()
     }
 
     @objc private func openHome() {
