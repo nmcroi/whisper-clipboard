@@ -13,12 +13,16 @@
 		1F008F01037DFD52388AB203 /* HomeView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 00BFC79EAD046B59506688C1 /* HomeView.swift */; };
 		27B565300FDB25C3952D6151 /* DictationLogicTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 9663E781B96BFEF73FA36A8D /* DictationLogicTests.swift */; };
 		2A21960A8199F67F798E28B6 /* Clipboard.swift in Sources */ = {isa = PBXBuildFile; fileRef = 029416F2756C062AE6D4E7B6 /* Clipboard.swift */; };
+		515ACF1BDEA62654B5CB614E /* ParakeetEngine.swift in Sources */ = {isa = PBXBuildFile; fileRef = EEB95C3BEEDBD0BAA3113C37 /* ParakeetEngine.swift */; };
 		52E5BB9F4A48187EC048627D /* AppDelegate.swift in Sources */ = {isa = PBXBuildFile; fileRef = 3E6F593C654F6C75A43A5B71 /* AppDelegate.swift */; };
 		5F45F79D322F348A72B3D7CB /* LatencyMetrics.swift in Sources */ = {isa = PBXBuildFile; fileRef = DCB334E92B82F0FFEDB89656 /* LatencyMetrics.swift */; };
 		76B0A09BB59439210964062B /* RecordingHUDView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 5592BB0E945E69DD5A8CE883 /* RecordingHUDView.swift */; };
 		784C47CD3864FD97B88A8040 /* EngineModelManager.swift in Sources */ = {isa = PBXBuildFile; fileRef = 000C6FB33D6CEF603B949FD5 /* EngineModelManager.swift */; };
+		79EB3934A5A97F7A5AFEEBEF /* FluidAudio in Frameworks */ = {isa = PBXBuildFile; productRef = 0B4FC27467C536B5C06BE6C0 /* FluidAudio */; };
 		8730F933F9C033BD1AB409DD /* PartialAccumulator.swift in Sources */ = {isa = PBXBuildFile; fileRef = AC86E857A32F39F643084E6D /* PartialAccumulator.swift */; };
 		94DB4A8F885C1A6CFA70EA1C /* WhisperClipboardTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = F5DC60D0AD01FB9A0C27FC55 /* WhisperClipboardTests.swift */; };
+		ACB5188A09DF4687337C1474 /* EngineSelector.swift in Sources */ = {isa = PBXBuildFile; fileRef = 8B1A3D57A97CCCC29C050CD2 /* EngineSelector.swift */; };
+		B26A7036B10AA0BF4F2FDBCE /* EngineSelectorTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 0AEE5D15EFE4C778C60B0AD8 /* EngineSelectorTests.swift */; };
 		B61EF769A6AB553AFEC5757D /* AudioEngine.swift in Sources */ = {isa = PBXBuildFile; fileRef = 5DBE222C3711913D4763EB80 /* AudioEngine.swift */; };
 		B969EBB017308A95725A7695 /* AppleSpeechEngine.swift in Sources */ = {isa = PBXBuildFile; fileRef = A7C6E4DC1F209E80189F098D /* AppleSpeechEngine.swift */; };
 		C1DB00CA5C8AA4BAF0C86CC8 /* AppState.swift in Sources */ = {isa = PBXBuildFile; fileRef = AC7B42FADEACCDC706B65AD4 /* AppState.swift */; };
@@ -49,6 +53,7 @@
 		029416F2756C062AE6D4E7B6 /* Clipboard.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Clipboard.swift; sourceTree = "<group>"; };
 		08CEDB25B73E98D8266CF7C8 /* HotkeyManager.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = HotkeyManager.swift; sourceTree = "<group>"; };
 		0ABF735D403D87E00A49F782 /* Notifications.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Notifications.swift; sourceTree = "<group>"; };
+		0AEE5D15EFE4C778C60B0AD8 /* EngineSelectorTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = EngineSelectorTests.swift; sourceTree = "<group>"; };
 		0B34E3F1AC782ABCCE39DD46 /* WhisperClipboardApp.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = WhisperClipboardApp.swift; sourceTree = "<group>"; };
 		0FA5679A1E38136DF9836F26 /* TranscriptionEngine.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TranscriptionEngine.swift; sourceTree = "<group>"; };
 		17BA599223B223A27944B5B2 /* WhisperClipboardTests.xctest */ = {isa = PBXFileReference; explicitFileType = wrapper.cfbundle; includeInIndex = 0; path = WhisperClipboardTests.xctest; sourceTree = BUILT_PRODUCTS_DIR; };
@@ -57,6 +62,7 @@
 		5592BB0E945E69DD5A8CE883 /* RecordingHUDView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = RecordingHUDView.swift; sourceTree = "<group>"; };
 		5DBE222C3711913D4763EB80 /* AudioEngine.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AudioEngine.swift; sourceTree = "<group>"; };
 		71BD0555FE8A47DCABAC137E /* DictationController.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = DictationController.swift; sourceTree = "<group>"; };
+		8B1A3D57A97CCCC29C050CD2 /* EngineSelector.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = EngineSelector.swift; sourceTree = "<group>"; };
 		9663E781B96BFEF73FA36A8D /* DictationLogicTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = DictationLogicTests.swift; sourceTree = "<group>"; };
 		A72C9D7BFA9B61B73521E54B /* RecordingHUDPanel.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = RecordingHUDPanel.swift; sourceTree = "<group>"; };
 		A7C6E4DC1F209E80189F098D /* AppleSpeechEngine.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AppleSpeechEngine.swift; sourceTree = "<group>"; };
@@ -67,6 +73,7 @@
 		D55641EC9E41471832F89016 /* NightStoryTheme.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = NightStoryTheme.swift; sourceTree = "<group>"; };
 		DCB334E92B82F0FFEDB89656 /* LatencyMetrics.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = LatencyMetrics.swift; sourceTree = "<group>"; };
 		E06A7C66B070227464AECBE6 /* AppEnvironment.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AppEnvironment.swift; sourceTree = "<group>"; };
+		EEB95C3BEEDBD0BAA3113C37 /* ParakeetEngine.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ParakeetEngine.swift; sourceTree = "<group>"; };
 		F5DC60D0AD01FB9A0C27FC55 /* WhisperClipboardTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = WhisperClipboardTests.swift; sourceTree = "<group>"; };
 		FBD6F73DA126F3966F0B41E9 /* WhisperClipboard.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = WhisperClipboard.app; sourceTree = BUILT_PRODUCTS_DIR; };
 /* End PBXFileReference section */
@@ -78,6 +85,7 @@
 			files = (
 				D5D9CF7335C2B738EAEC27C1 /* KeyboardShortcuts in Frameworks */,
 				06C4D66B424CFFD61225A861 /* Core in Frameworks */,
+				79EB3934A5A97F7A5AFEEBEF /* FluidAudio in Frameworks */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
@@ -89,6 +97,8 @@
 			children = (
 				A7C6E4DC1F209E80189F098D /* AppleSpeechEngine.swift */,
 				000C6FB33D6CEF603B949FD5 /* EngineModelManager.swift */,
+				8B1A3D57A97CCCC29C050CD2 /* EngineSelector.swift */,
+				EEB95C3BEEDBD0BAA3113C37 /* ParakeetEngine.swift */,
 				AC86E857A32F39F643084E6D /* PartialAccumulator.swift */,
 				0FA5679A1E38136DF9836F26 /* TranscriptionEngine.swift */,
 			);
@@ -122,6 +132,7 @@
 			isa = PBXGroup;
 			children = (
 				9663E781B96BFEF73FA36A8D /* DictationLogicTests.swift */,
+				0AEE5D15EFE4C778C60B0AD8 /* EngineSelectorTests.swift */,
 				F5DC60D0AD01FB9A0C27FC55 /* WhisperClipboardTests.swift */,
 			);
 			path = WhisperClipboardTests;
@@ -280,6 +291,7 @@
 			packageProductDependencies = (
 				80C613DCD4DFFFD141E5D9D6 /* KeyboardShortcuts */,
 				54A32D5460FC44D8ABE5A235 /* Core */,
+				0B4FC27467C536B5C06BE6C0 /* FluidAudio */,
 			);
 			productName = WhisperClipboard;
 			productReference = FBD6F73DA126F3966F0B41E9 /* WhisperClipboard.app */;
@@ -312,6 +324,7 @@
 			mainGroup = CEDFD638B24A74498DF5F627;
 			minimizedProjectReferenceProxies = 1;
 			packageReferences = (
+				2E2997F59ED92AEFD7F026AB /* XCRemoteSwiftPackageReference "FluidAudio" */,
 				A59C2C950D3D7A943F9C18E1 /* XCRemoteSwiftPackageReference "KeyboardShortcuts" */,
 				C616BE4AFD38048F982B67C6 /* XCLocalSwiftPackageReference "Packages/Core" */,
 			);
@@ -362,11 +375,13 @@
 				2A21960A8199F67F798E28B6 /* Clipboard.swift in Sources */,
 				C9632AF3E24DB8F5F10269F8 /* DictationController.swift in Sources */,
 				784C47CD3864FD97B88A8040 /* EngineModelManager.swift in Sources */,
+				ACB5188A09DF4687337C1474 /* EngineSelector.swift in Sources */,
 				1F008F01037DFD52388AB203 /* HomeView.swift in Sources */,
 				DACC80FC33811729E1E987DE /* HotkeyManager.swift in Sources */,
 				5F45F79D322F348A72B3D7CB /* LatencyMetrics.swift in Sources */,
 				F4665B7BB06BDD41E7790314 /* NightStoryTheme.swift in Sources */,
 				FAB989C7FD60D837AD315A06 /* Notifications.swift in Sources */,
+				515ACF1BDEA62654B5CB614E /* ParakeetEngine.swift in Sources */,
 				8730F933F9C033BD1AB409DD /* PartialAccumulator.swift in Sources */,
 				1B17BEFC34473D2671024472 /* RecordingHUDPanel.swift in Sources */,
 				76B0A09BB59439210964062B /* RecordingHUDView.swift in Sources */,
@@ -381,6 +396,7 @@
 			buildActionMask = 2147483647;
 			files = (
 				27B565300FDB25C3952D6151 /* DictationLogicTests.swift in Sources */,
+				B26A7036B10AA0BF4F2FDBCE /* EngineSelectorTests.swift in Sources */,
 				94DB4A8F885C1A6CFA70EA1C /* WhisperClipboardTests.swift in Sources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
@@ -649,6 +665,14 @@
 /* End XCLocalSwiftPackageReference section */
 
 /* Begin XCRemoteSwiftPackageReference section */
+		2E2997F59ED92AEFD7F026AB /* XCRemoteSwiftPackageReference "FluidAudio" */ = {
+			isa = XCRemoteSwiftPackageReference;
+			repositoryURL = "https://github.com/FluidInference/FluidAudio.git";
+			requirement = {
+				kind = upToNextMajorVersion;
+				minimumVersion = 0.15.4;
+			};
+		};
 		A59C2C950D3D7A943F9C18E1 /* XCRemoteSwiftPackageReference "KeyboardShortcuts" */ = {
 			isa = XCRemoteSwiftPackageReference;
 			repositoryURL = "https://github.com/sindresorhus/KeyboardShortcuts";
@@ -660,6 +684,11 @@
 /* End XCRemoteSwiftPackageReference section */
 
 /* Begin XCSwiftPackageProductDependency section */
+		0B4FC27467C536B5C06BE6C0 /* FluidAudio */ = {
+			isa = XCSwiftPackageProductDependency;
+			package = 2E2997F59ED92AEFD7F026AB /* XCRemoteSwiftPackageReference "FluidAudio" */;
+			productName = FluidAudio;
+		};
 		54A32D5460FC44D8ABE5A235 /* Core */ = {
 			isa = XCSwiftPackageProductDependency;
 			productName = Core;

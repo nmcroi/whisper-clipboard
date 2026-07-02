@@ -24,15 +24,33 @@ final class EngineModelManager: ObservableObject {
     }
 
     /// Drives a download, updating `status`/`isDownloading` around it.
+    ///
+    /// The engine reports live progress via its own `assetStatus`, so we poll it
+    /// on a short cadence while the download runs and mirror it into `status`
+    /// for the UI's progress bar.
     func download() async {
         guard !isDownloading else { return }
         isDownloading = true
         status = .downloading(progress: 0)
+
+        // Poll the engine's asset status for live download progress.
+        let poller = Task { [engine, locale] in
+            while !Task.isCancelled {
+                let live = await engine.assetStatus(for: locale)
+                await MainActor.run {
+                    if case .downloading = live { self.status = live }
+                }
+                try? await Task.sleep(for: .milliseconds(250))
+            }
+        }
+
         do {
             try await engine.downloadAssets(for: locale)
+            poller.cancel()
             status = await engine.assetStatus(for: locale)
             try? await engine.prepare()
         } catch {
+            poller.cancel()
             status = await engine.assetStatus(for: locale)
         }
         isDownloading = false

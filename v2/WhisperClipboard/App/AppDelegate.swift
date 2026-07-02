@@ -47,7 +47,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         menu.addItem(record)
         recordMenuItem = record
 
-        let download = makeItem(title: "Nederlands model downloaden…", action: #selector(downloadModel), key: "")
+        let download = makeItem(title: "Parakeet-model downloaden (494 MB)…", action: #selector(downloadModel), key: "")
         download.isHidden = true
         menu.addItem(download)
         downloadMenuItem = download

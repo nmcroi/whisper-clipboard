@@ -51,6 +51,20 @@ actor AppleSpeechEngine: TranscriptionEngine {
         partialsContinuation = continuation
     }
 
+    // MARK: - Supported languages
+
+    /// The ISO language codes (e.g. "en", "nl") that `SpeechTranscriber`
+    /// advertises support for on this machine. Used by ``EngineSelector`` to
+    /// decide whether Apple Speech is viable for the configured language.
+    ///
+    /// Note: this reflects the framework's *advertised* locale list; whether the
+    /// on-device asset is actually installable is decided separately by
+    /// ``assetStatus(for:)`` via `AssetInventory.status`.
+    static func supportedLanguageCodes() async -> Set<String> {
+        let locales = await SpeechTranscriber.supportedLocales
+        return Set(locales.compactMap { $0.language.languageCode?.identifier })
+    }
+
     // MARK: - Preparation
 
     func prepare() async throws {

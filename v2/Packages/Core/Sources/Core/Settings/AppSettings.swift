@@ -31,7 +31,7 @@ public struct AppSettings: Codable, Equatable, Sendable {
     public init(
         hotkeyMode: HotkeyMode = .toggle,
         language: String = "nl",
-        engine: Engine = .appleSpeech,
+        engine: Engine = .parakeet,
         cleanOutput: Bool = true,
         replacements: [Replacement] = [],
         directInsertion: Bool = false,

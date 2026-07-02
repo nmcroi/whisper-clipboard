@@ -5,15 +5,28 @@ import SwiftUI
 
 /// Dependency-injection container shared across the app.
 ///
-/// M1 wires the real dictation pipeline: audio capture, the Apple Speech
-/// streaming engine, orchestration, the global hotkey, and the recording HUD.
+/// M2 wires the real dictation pipeline with a selectable transcription engine.
+/// Parakeet (multilingual, incl. Dutch) is the primary engine; Apple Speech is
+/// available when its on-device model supports the configured language. Both
+/// engines are instantiated up front; the active one is resolved from settings
+/// with a language-support fallback (see ``EngineSelector``).
 @MainActor
 final class AppEnvironment: ObservableObject {
     @Published var appState: AppState = .starting
     @Published var settings = AppSettings()
+    /// A one-line Dutch notice when the active engine differs from the requested
+    /// one (e.g. Apple Speech asked for but the language is unsupported).
+    @Published private(set) var engineNotice: String?
 
     let audioEngine = AudioEngine()
-    let engine: AppleSpeechEngine
+
+    // Both engines exist for the app's lifetime; the active one is chosen below.
+    let appleSpeechEngine = AppleSpeechEngine()
+    let parakeetEngine = ParakeetEngine()
+
+    /// The engine actually driving dictation this launch.
+    let activeEngine: any TranscriptionEngine
+
     let modelManager: EngineModelManager
     let dictation: DictationController
     let hotkeys: HotkeyManager
@@ -24,12 +37,18 @@ final class AppEnvironment: ObservableObject {
     }
 
     init() {
-        let engine = AppleSpeechEngine()
-        self.engine = engine
+        // Resolve the active engine synchronously from the initial settings.
+        // Apple Speech's live language-support check is async, so at init we
+        // default to honouring the requested engine; `bootstrap()` re-checks and
+        // applies the fallback once `SpeechTranscriber.supportedLocales` is known.
+        let initialSettings = AppSettings()
+        let engine: any TranscriptionEngine =
+            initialSettings.engine == .appleSpeech ? appleSpeechEngine : parakeetEngine
+        self.activeEngine = engine
 
         let modelManager = EngineModelManager(
             engine: engine,
-            locale: Locale(identifier: "nl-NL")
+            locale: Locale(identifier: initialSettings.language.isEmpty ? "nl-NL" : initialSettings.language)
         )
         self.modelManager = modelManager
 
@@ -59,21 +78,38 @@ final class AppEnvironment: ObservableObject {
         stateSink = { [weak self] state in self?.appState = state }
     }
 
-    /// Kicks off model status refresh + pre-warm at launch.
+    /// Kicks off engine-selection resolution, model status refresh + pre-warm at launch.
     func bootstrap() {
         Task {
+            await resolveEngineSelection()
             await modelManager.refresh()
             switch modelManager.status {
             case .installed:
                 appState = .ready
-                try? await engine.prepare()
+                try? await activeEngine.prepare()
             case .unsupported:
-                // No on-device model for this language on this macOS build.
-                appState = .error("Taal ‘\(settings.language)’ niet beschikbaar voor spraakherkenning")
+                appState = .error("Transcriptie is niet beschikbaar op dit apparaat")
             case .needsDownload, .downloading, .unknown:
                 // Model missing but installable: the UI offers a download.
                 appState = .ready
             }
+        }
+    }
+
+    /// Applies the ``EngineSelector`` fallback: if the user picked Apple Speech
+    /// but the configured language is not in `SpeechTranscriber.supportedLocales`,
+    /// surface a notice. (The active engine itself is fixed for the launch; the
+    /// notice tells the user why Parakeet is in use.)
+    private func resolveEngineSelection() async {
+        let supported = await AppleSpeechEngine.supportedLanguageCodes()
+        let decision = EngineSelector.decide(
+            requested: settings.engine,
+            language: settings.language,
+            appleSupportedLanguageCodes: supported
+        )
+        engineNotice = decision.notice
+        if let notice = decision.notice {
+            NSLog("EngineSelector: %@", notice)
         }
     }
 

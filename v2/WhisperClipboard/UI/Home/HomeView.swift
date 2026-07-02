@@ -31,6 +31,9 @@ private struct HomeContent: View {
         VStack(alignment: .leading, spacing: 20) {
             header
             statusPill
+            if let notice = environment.engineNotice {
+                engineNoticeBanner(notice)
+            }
             if modelManager.needsDownload {
                 modelDownloadCard
             }
@@ -71,25 +74,48 @@ private struct HomeContent: View {
         .clipShape(Capsule())
     }
 
+    private func engineNoticeBanner(_ text: String) -> some View {
+        HStack(spacing: 8) {
+            Image(systemName: "info.circle")
+                .foregroundStyle(NightStory.marine)
+            Text(text)
+                .font(NightStoryFont.body(size: 12, weight: .medium))
+                .foregroundStyle(NightStory.marine)
+                .fixedSize(horizontal: false, vertical: true)
+            Spacer(minLength: 0)
+        }
+        .padding(.horizontal, 12)
+        .padding(.vertical, 8)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .background(NightStory.softblue.opacity(0.18))
+        .clipShape(RoundedRectangle(cornerRadius: 10, style: .continuous))
+    }
+
     private var modelDownloadCard: some View {
         VStack(alignment: .leading, spacing: 10) {
             HStack(spacing: 8) {
                 Image(systemName: "arrow.down.circle")
                     .foregroundStyle(NightStory.terra)
-                Text("Nederlands spraakmodel")
+                Text("Parakeet-spraakmodel")
                     .font(NightStoryFont.body(size: 15, weight: .semibold))
                     .foregroundStyle(NightStory.marine)
             }
-            Text("Het lokale spraakmodel wordt eenmalig gedownload voordat je kunt dicteren.")
+            Text("Het lokale Parakeet-model (meertalig, incl. Nederlands) wordt eenmalig gedownload voordat je kunt dicteren. Dit gebeurt volledig op je Mac.")
                 .font(NightStoryFont.body(size: 12))
                 .foregroundStyle(.secondary)
                 .fixedSize(horizontal: false, vertical: true)
 
             if modelManager.isDownloading {
-                ProgressView()
-                    .controlSize(.small)
+                VStack(alignment: .leading, spacing: 6) {
+                    ProgressView(value: downloadFraction)
+                        .controlSize(.small)
+                        .tint(NightStory.terra)
+                    Text(downloadProgressLabel)
+                        .font(NightStoryFont.body(size: 11))
+                        .foregroundStyle(.secondary)
+                }
             } else {
-                Button("Model downloaden") { environment.downloadModel() }
+                Button("Parakeet-model downloaden (494 MB)…") { environment.downloadModel() }
                     .buttonStyle(.borderedProminent)
                     .tint(NightStory.terra)
             }
@@ -148,6 +174,21 @@ private struct HomeContent: View {
                 .strokeBorder(NightStory.sand, lineWidth: 1)
         )
         .nightStoryShadowSmall()
+    }
+
+    /// Current download progress (0…1) from the model status, for the bar.
+    private var downloadFraction: Double {
+        switch modelManager.status {
+        case .downloading(let progress), .needsDownload(let progress):
+            return progress
+        default:
+            return 0
+        }
+    }
+
+    private var downloadProgressLabel: String {
+        let percent = Int((downloadFraction * 100).rounded())
+        return "Downloaden… \(percent)%"
     }
 
     private var testButtonTitle: String {

@@ -25,6 +25,12 @@ packages:
   KeyboardShortcuts:
     url: https://github.com/sindresorhus/KeyboardShortcuts
     from: "2.0.0"
+  # NVIDIA Parakeet TDT 0.6b v3 (multilingual, incl. Dutch) CoreML via FluidAudio.
+  # v0.15.4 is the latest release; the README's `from: 0.12.4` is stale relative
+  # to the API this app compiles against (progress handlers, ParakeetEncoderPrecision).
+  FluidAudio:
+    url: https://github.com/FluidInference/FluidAudio.git
+    from: "0.15.4"
   Core:
     path: Packages/Core
 
@@ -44,6 +50,7 @@ targets:
     dependencies:
       - package: KeyboardShortcuts
       - package: Core
+      - package: FluidAudio
     postCompileScripts:
       - name: Copy bundled fonts into Resources/Fonts
         basedOnDependencyAnalysis: false

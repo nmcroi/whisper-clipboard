@@ -99,7 +99,7 @@ final class DictationController: ObservableObject {
 
         // Guard: model still loading/downloading → notify, mirror Python.
         guard modelManager.status.isReady else {
-            Notifications.post("Whisper-model wordt nog geladen")
+            Notifications.post("Spraakmodel wordt nog geladen")
             return
         }
 
