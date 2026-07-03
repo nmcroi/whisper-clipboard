@@ -72,7 +72,7 @@ struct RecordingHUDView: View {
             HStack(spacing: 8) {
                 Image(systemName: "checkmark.circle.fill")
                     .foregroundStyle(Theme.accent)
-                Text("Op klembord")
+                Text(controller.lastInsertionOutcome == .inserted ? "Ingevoegd" : "Op klembord")
                     .font(ThemeFont.ui(13, weight: .semibold))
                     .foregroundStyle(Theme.text)
                 // Celebrate the speed: the stop→clipboard figure in Dutch.

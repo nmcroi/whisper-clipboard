@@ -47,8 +47,8 @@ private struct WindowConfigurator: NSViewRepresentable {
     func updateNSView(_ nsView: NSView, context: Context) {}
 }
 
-/// Tabbed settings window: "Algemeen" (placeholder for now) and "AI" (Claude
-/// API key + custom mode editor).
+/// Tabbed settings window: "Algemeen" (hotkey, taal, opstarten), "Invoegen"
+/// (direct text insertion) and "AI" (Claude API key + custom mode editor).
 struct SettingsView: View {
     @EnvironmentObject private var environment: AppEnvironment
 
@@ -57,34 +57,14 @@ struct SettingsView: View {
             GeneralSettingsView()
                 .tabItem { Label("Algemeen", systemImage: "gearshape") }
 
+            InsertionSettingsView()
+                .tabItem { Label("Invoegen", systemImage: "text.cursor") }
+
             AISettingsView(modes: environment.modes)
                 .tabItem { Label("AI", systemImage: "sparkles") }
         }
         .frame(width: 520, height: 460)
         .background(Theme.window)
         .preferredColorScheme(.dark)
-    }
-}
-
-/// Placeholder "Algemeen" tab (full general settings arrive in a later version).
-private struct GeneralSettingsView: View {
-    var body: some View {
-        VStack(alignment: .leading, spacing: 12) {
-            (
-                Text("Algemeen")
-                    .foregroundStyle(Theme.text)
-                + Text(".")
-                    .foregroundStyle(Theme.accent)
-            )
-            .font(ThemeFont.ui(18, weight: .bold))
-
-            Text("Algemene instellingen komen in een latere versie.")
-                .font(ThemeFont.ui(13))
-                .foregroundStyle(Theme.textSecondary)
-            Spacer()
-        }
-        .padding(24)
-        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
-        .background(Theme.window)
     }
 }

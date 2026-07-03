@@ -47,6 +47,17 @@ final class DictationController: ObservableObject {
     /// Returns true when a file import is running, so dictation refuses to start
     /// (mirrors the Python "one job at a time" guard). Nil-safe.
     var importBusyProvider: (() -> Bool)?
+    /// Delivers the processed transcript for direct insertion into the target app
+    /// (captured at `start()`). Returns the outcome so the HUD line can reflect it.
+    /// Nil-safe: when unset, dictation stays clipboard-only.
+    var insertionHandler: ((_ text: String, _ target: InsertionTarget?) -> InsertionOutcome)?
+    /// Captures the frontmost app at recording start (before the HUD appears).
+    var captureInsertionTarget: (() -> InsertionTarget?)?
+
+    /// The frontmost app captured when the current run started.
+    private var capturedInsertionTarget: InsertionTarget?
+    /// The insertion outcome of the most recent completed run (drives the HUD line).
+    @Published private(set) var lastInsertionOutcome: InsertionOutcome?
 
     /// The payload handed to `onTranscriptCompleted` after a successful run.
     struct TranscriptCompletion {
@@ -124,6 +135,10 @@ final class DictationController: ObservableObject {
             Notifications.post("Wacht tot de huidige opname of transcriptie klaar is")
             return
         }
+
+        // Capture the frontmost app now, before the (non-activating) HUD shows,
+        // so we know where a later direct insertion should paste.
+        capturedInsertionTarget = captureInsertionTarget?()
 
         hudDismissTask?.cancel()
         phase = .recording
@@ -236,6 +251,21 @@ final class DictationController: ObservableObject {
         latency.markClipboard()
         lastMetrics = latency.metrics
 
+        // Direct insertion (M5): if wired + enabled, attempt to paste the text
+        // into the app that was frontmost when recording started. On any skip or
+        // failure the text simply remains on the clipboard (already copied above).
+        let outcome = insertionHandler?(processed, capturedInsertionTarget)
+        lastInsertionOutcome = outcome
+        capturedInsertionTarget = nil
+        switch outcome {
+        case .inserted:
+            NSLog("Insertion: ingevoegd in doel-app")
+        case .insertionFailed:
+            Notifications.post("Tekst staat op je klembord (invoegen niet mogelijk)")
+        case .clipboardOnly, nil:
+            break
+        }
+
         // Persist the completed transcript (history store). Duration is the last
         // ticked recording elapsed; source is always mic for hotkey/menu dictation.
         onTranscriptCompleted?(
@@ -250,7 +280,15 @@ final class DictationController: ObservableObject {
         )
 
         livePartial = StreamingPartial(finalizedText: processed, volatileText: "")
-        Notifications.post("Tekst staat op je klembord")
+        // The insertionFailed case already posted its own notification above.
+        switch outcome {
+        case .inserted:
+            Notifications.post("Tekst ingevoegd")
+        case .insertionFailed:
+            break
+        case .clipboardOnly, nil:
+            Notifications.post("Tekst staat op je klembord")
+        }
         onStateChange(.ready)
         finishHUD(success: true)
     }

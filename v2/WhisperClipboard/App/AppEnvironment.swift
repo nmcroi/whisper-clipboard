@@ -30,7 +30,12 @@ final class AppEnvironment: ObservableObject {
     }
 
     @Published var appState: AppState = .starting
-    @Published var settings = AppSettings()
+    @Published var settings = SettingsStore.load() {
+        didSet {
+            guard settings != oldValue else { return }
+            SettingsStore.save(settings)
+        }
+    }
     /// Set by the menu bar; `HomeView` observes and resets it to `nil`.
     @Published var menuNavigationRequest: MenuNavigationRequest?
     /// A one-line Dutch notice when the active engine differs from the requested
@@ -54,6 +59,8 @@ final class AppEnvironment: ObservableObject {
     /// AI prompt modes (M4): built-in + custom, runs against transcripts.
     let modes: ModesService
     private let hud: RecordingHUDController
+    /// Direct text insertion (M5): pastes into the frontmost app when enabled.
+    let insertion = InsertionService()
 
     private var locale: Locale {
         Locale(identifier: settings.language.isEmpty ? "nl-NL" : settings.language)
@@ -64,7 +71,7 @@ final class AppEnvironment: ObservableObject {
         // Apple Speech's live language-support check is async, so at init we
         // default to honouring the requested engine; `bootstrap()` re-checks and
         // applies the fallback once `SpeechTranscriber.supportedLocales` is known.
-        let initialSettings = AppSettings()
+        let initialSettings = SettingsStore.load()
         let engine: any TranscriptionEngine =
             initialSettings.engine == .appleSpeech ? appleSpeechEngine : parakeetEngine
         self.activeEngine = engine
@@ -133,6 +140,14 @@ final class AppEnvironment: ObservableObject {
         }
         // Refuse dictation while a file import is running.
         dictation.importBusyProvider = { [weak self] in self?.fileImport.isBusy ?? false }
+
+        // Direct insertion wiring (M5). Capture the frontmost app at recording
+        // start; attempt insertion at completion (clipboard-only when disabled).
+        dictation.captureInsertionTarget = { InsertionService.captureFrontmost() }
+        dictation.insertionHandler = { [weak self] text, target in
+            guard let self else { return .clipboardOnly(reason: .disabled) }
+            return self.insertion.insert(text, settings: self.settings, target: target)
+        }
     }
 
     /// Opens the on-disk history store, degrading through an in-memory queue if

@@ -23,6 +23,9 @@ public struct AppSettings: Codable, Equatable, Sendable {
     public var cleanOutput: Bool
     public var replacements: [Replacement]
     public var directInsertion: Bool
+    /// Bundle identifiers of apps into which direct insertion is suppressed
+    /// (clipboard-only for that run). Case-insensitive matching at use site.
+    public var insertionDeniedBundleIds: [String]
     public var saveRecordings: Bool
     /// `nil` means unlimited history retention.
     public var historyRetention: Int?
@@ -35,6 +38,7 @@ public struct AppSettings: Codable, Equatable, Sendable {
         cleanOutput: Bool = true,
         replacements: [Replacement] = [],
         directInsertion: Bool = false,
+        insertionDeniedBundleIds: [String] = [],
         saveRecordings: Bool = false,
         historyRetention: Int? = nil,
         initialPrompt: String = ""
@@ -45,8 +49,33 @@ public struct AppSettings: Codable, Equatable, Sendable {
         self.cleanOutput = cleanOutput
         self.replacements = replacements
         self.directInsertion = directInsertion
+        self.insertionDeniedBundleIds = insertionDeniedBundleIds
         self.saveRecordings = saveRecordings
         self.historyRetention = historyRetention
         self.initialPrompt = initialPrompt
+    }
+
+    // Tolerant decoding: any key missing from an older/newer on-disk settings.json
+    // falls back to the default rather than failing the whole load. This lets new
+    // fields (e.g. `insertionDeniedBundleIds`) be added without breaking existing files.
+    private enum CodingKeys: String, CodingKey {
+        case hotkeyMode, language, engine, cleanOutput, replacements
+        case directInsertion, insertionDeniedBundleIds, saveRecordings
+        case historyRetention, initialPrompt
+    }
+
+    public init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        let d = AppSettings()
+        self.hotkeyMode = try c.decodeIfPresent(HotkeyMode.self, forKey: .hotkeyMode) ?? d.hotkeyMode
+        self.language = try c.decodeIfPresent(String.self, forKey: .language) ?? d.language
+        self.engine = try c.decodeIfPresent(Engine.self, forKey: .engine) ?? d.engine
+        self.cleanOutput = try c.decodeIfPresent(Bool.self, forKey: .cleanOutput) ?? d.cleanOutput
+        self.replacements = try c.decodeIfPresent([Replacement].self, forKey: .replacements) ?? d.replacements
+        self.directInsertion = try c.decodeIfPresent(Bool.self, forKey: .directInsertion) ?? d.directInsertion
+        self.insertionDeniedBundleIds = try c.decodeIfPresent([String].self, forKey: .insertionDeniedBundleIds) ?? d.insertionDeniedBundleIds
+        self.saveRecordings = try c.decodeIfPresent(Bool.self, forKey: .saveRecordings) ?? d.saveRecordings
+        self.historyRetention = try c.decodeIfPresent(Int.self, forKey: .historyRetention) ?? d.historyRetention
+        self.initialPrompt = try c.decodeIfPresent(String.self, forKey: .initialPrompt) ?? d.initialPrompt
     }
 }
