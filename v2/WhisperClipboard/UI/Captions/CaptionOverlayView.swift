@@ -65,15 +65,27 @@ struct CaptionOverlayView: View {
             VStack(alignment: .leading, spacing: 6) {
                 ForEach(Array(lines.enumerated()), id: \.element.id) { index, line in
                     let isNewest = index == lines.count - 1
-                    Text(line.text)
+                    Text(line.text.isEmpty ? "…" : line.text)
+                        // In-progress (volatile) lines render dimmed at 0.55 opacity
+                        // like the dictation HUD's live text; finalized lines are
+                        // full white. The newest final line stays emphasized.
                         .font(isNewest ? ThemeFont.ui(17, weight: .semibold) : ThemeFont.ui(15))
-                        .foregroundStyle(isNewest ? Theme.text : Theme.textSecondary.opacity(0.7))
+                        .foregroundStyle(foreground(for: line, isNewest: isNewest))
                         .fixedSize(horizontal: false, vertical: true)
                         .frame(maxWidth: .infinity, alignment: .leading)
                         .transition(.opacity.combined(with: .move(edge: .bottom)))
                 }
             }
         }
+    }
+
+    /// The colour for a caption line: volatile lines are dimmed (0.55), a
+    /// finalized newest line is full white, older finalized lines are softened.
+    private func foreground(for line: CaptionLine, isNewest: Bool) -> Color {
+        if !line.isFinal {
+            return Theme.text.opacity(0.55)
+        }
+        return isNewest ? Theme.text : Theme.textSecondary.opacity(0.7)
     }
 
     private var background: some View {

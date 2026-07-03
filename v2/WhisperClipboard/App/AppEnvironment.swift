@@ -30,6 +30,11 @@ final class AppEnvironment: ObservableObject {
     }
 
     @Published var appState: AppState = .starting
+    /// Shared sidebar/detail navigation state. Owned here (rather than as a
+    /// per-view `@StateObject`) so the menu bar and the SwiftUI window operate on
+    /// one single source of truth and a view recreation can never spawn a second
+    /// navigation hierarchy.
+    let navigation = AppNavigation()
     @Published var settings = SettingsStore.load() {
         didSet {
             guard settings != oldValue else { return }
@@ -129,7 +134,8 @@ final class AppEnvironment: ObservableObject {
                 default:
                     return nil
                 }
-            }
+            },
+            settings: { settingsRef() }
         )
 
         // Live captions (M6): a dedicated engine instance (created inside the
@@ -151,7 +157,8 @@ final class AppEnvironment: ObservableObject {
                     return "Wacht tot het importeren klaar is voordat je ondertitels start"
                 }
                 return nil
-            }
+            },
+            replacements: { settingsRef().replacements }
         )
         self.captions = captions
         self.captionOverlay = CaptionOverlayController(service: captions)

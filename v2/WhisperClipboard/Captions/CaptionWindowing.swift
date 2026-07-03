@@ -2,13 +2,27 @@ import Foundation
 
 /// One displayed caption line: transcribed text plus the wall-clock moment it
 /// was produced.
+///
+/// A line is **volatile** while its window is still open and being re-transcribed
+/// in place (rendered dimmed, like the dictation HUD's in-progress text); it
+/// becomes **final** (full white) once the window closes and a last transcription
+/// replaces it.
 struct CaptionLine: Identifiable, Equatable, Sendable {
-    let id = UUID()
+    let id: UUID
     var text: String
     var timestamp: Date
+    /// `false` while the line's window is open and still being re-transcribed.
+    var isFinal: Bool
+
+    init(id: UUID = UUID(), text: String, timestamp: Date = Date(), isFinal: Bool = true) {
+        self.id = id
+        self.text = text
+        self.timestamp = timestamp
+        self.isFinal = isFinal
+    }
 
     static func == (lhs: CaptionLine, rhs: CaptionLine) -> Bool {
-        lhs.id == rhs.id && lhs.text == rhs.text
+        lhs.id == rhs.id && lhs.text == rhs.text && lhs.isFinal == rhs.isFinal
     }
 }
 
@@ -85,6 +99,15 @@ struct CaptionWindowAccumulator {
         return Self.rms(tail) < silenceThreshold
     }
 
+    /// A non-destructive view of the current open window, for pseudo-streaming
+    /// re-transcription while the window is still filling. Returns `nil` when
+    /// there is too little audio yet to be worth transcribing. Does NOT reset the
+    /// buffer (unlike ``cut()``).
+    func snapshot() -> [Float]? {
+        guard samples.count >= minWindowSamples else { return nil }
+        return samples
+    }
+
     /// Cuts and returns the accumulated window, resetting the buffer. Returns
     /// `nil` when there is too little audio to transcribe.
     mutating func cut() -> [Float]? {
@@ -142,5 +165,47 @@ struct CaptionLineBuffer: Equatable {
 
     mutating func clear() {
         lines.removeAll()
+    }
+}
+
+/// Pure scheduler for pseudo-streaming re-transcription — no Core Audio, no
+/// Parakeet, so it is fully unit-testable.
+///
+/// While a window is open, we want to re-transcribe its accumulated samples every
+/// ``interval`` seconds so the current caption line updates in place. Two rules
+/// keep this cheap and non-overlapping:
+///
+/// - **Cadence:** a tick fires only once at least ``interval`` seconds have
+///   elapsed since the last one (or since the window opened).
+/// - **Non-overlap:** a tick is suppressed while a previous transcription is
+///   still in flight (``inFlight``), so slow transcriptions can never queue up.
+struct CaptionTickPlanner {
+    /// Minimum seconds between volatile re-transcriptions.
+    var interval: Double = 0.9
+
+    /// When the current window opened / last volatile tick fired.
+    private var lastTick: Date?
+
+    init(interval: Double = 0.9) {
+        self.interval = interval
+    }
+
+    /// Whether a volatile re-transcription should start `now`, given whether a
+    /// previous one is still running. When it returns `true`, the caller should
+    /// record the tick via ``didTick(at:)`` and begin transcribing.
+    func shouldTick(now: Date, inFlight: Bool) -> Bool {
+        guard !inFlight else { return false }
+        guard let lastTick else { return true }
+        return now.timeIntervalSince(lastTick) >= interval
+    }
+
+    /// Records that a tick fired (or the window (re)opened) at `time`.
+    mutating func didTick(at time: Date = Date()) {
+        lastTick = time
+    }
+
+    /// Resets the cadence for a freshly opened window.
+    mutating func reset(at time: Date = Date()) {
+        lastTick = time
     }
 }

@@ -30,6 +30,7 @@
 		515ACF1BDEA62654B5CB614E /* ParakeetEngine.swift in Sources */ = {isa = PBXBuildFile; fileRef = EEB95C3BEEDBD0BAA3113C37 /* ParakeetEngine.swift */; };
 		52E5BB9F4A48187EC048627D /* AppDelegate.swift in Sources */ = {isa = PBXBuildFile; fileRef = 3E6F593C654F6C75A43A5B71 /* AppDelegate.swift */; };
 		590D692DC0F95AEB2FF2197D /* GeneralSettingsView.swift in Sources */ = {isa = PBXBuildFile; fileRef = D7500F947869E624B24DFED7 /* GeneralSettingsView.swift */; };
+		5B4C3676F47894269AEFA2C5 /* DictionarySettingsView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 85605EF6B46FA8FA2148A712 /* DictionarySettingsView.swift */; };
 		5F45F79D322F348A72B3D7CB /* LatencyMetrics.swift in Sources */ = {isa = PBXBuildFile; fileRef = DCB334E92B82F0FFEDB89656 /* LatencyMetrics.swift */; };
 		6365CDB69FDCE7ED46502836 /* CaptionOverlayPanel.swift in Sources */ = {isa = PBXBuildFile; fileRef = 066CA48ADCD92B4E982DE02F /* CaptionOverlayPanel.swift */; };
 		6952E8A06EFDFF0702A804A3 /* KeychainStore.swift in Sources */ = {isa = PBXBuildFile; fileRef = 4F3C36C196F407798792F0AF /* KeychainStore.swift */; };
@@ -124,6 +125,7 @@
 		71BD0555FE8A47DCABAC137E /* DictationController.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = DictationController.swift; sourceTree = "<group>"; };
 		7BEDBA15BDAF29CFDEEAA4DE /* InsertionLogic.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = InsertionLogic.swift; sourceTree = "<group>"; };
 		826BBAD27D8C8176815452C8 /* ModesServiceTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ModesServiceTests.swift; sourceTree = "<group>"; };
+		85605EF6B46FA8FA2148A712 /* DictionarySettingsView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = DictionarySettingsView.swift; sourceTree = "<group>"; };
 		8B1A3D57A97CCCC29C050CD2 /* EngineSelector.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = EngineSelector.swift; sourceTree = "<group>"; };
 		8FDE7327C4F5CDCD5A605058 /* ImportQueueView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ImportQueueView.swift; sourceTree = "<group>"; };
 		9663E781B96BFEF73FA36A8D /* DictationLogicTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = DictationLogicTests.swift; sourceTree = "<group>"; };
@@ -373,6 +375,7 @@
 			isa = PBXGroup;
 			children = (
 				6F934C205DC4CFBB131DA182 /* AISettingsView.swift */,
+				85605EF6B46FA8FA2148A712 /* DictionarySettingsView.swift */,
 				D7500F947869E624B24DFED7 /* GeneralSettingsView.swift */,
 				2A88261D297C8F8330BA7F31 /* InsertionSettingsView.swift */,
 			);
@@ -594,6 +597,7 @@
 				1BEF6F7C0818096B4D74F4E2 /* ClaudeClient.swift in Sources */,
 				2A21960A8199F67F798E28B6 /* Clipboard.swift in Sources */,
 				C9632AF3E24DB8F5F10269F8 /* DictationController.swift in Sources */,
+				5B4C3676F47894269AEFA2C5 /* DictionarySettingsView.swift in Sources */,
 				784C47CD3864FD97B88A8040 /* EngineModelManager.swift in Sources */,
 				ACB5188A09DF4687337C1474 /* EngineSelector.swift in Sources */,
 				415027E4686279437E6D7E7E /* FileImportService.swift in Sources */,

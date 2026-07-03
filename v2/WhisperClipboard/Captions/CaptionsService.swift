@@ -47,21 +47,32 @@ final class CaptionsService: ObservableObject {
     private let saveToHistory: () -> Bool
     /// Reason string when captions must be refused (dictation/import busy), else nil.
     private let busyReason: () -> String?
+    /// The personal woordenlijst applied to every caption line (whole-word,
+    /// case-insensitive). Read on demand so edits take effect immediately.
+    private let replacements: () -> [Replacement]
     private let notify: (String) -> Void
 
     // MARK: - Session state
 
     private var tap: SystemAudioTap?
     private var feedTask: Task<Void, Never>?
-    /// All lines pushed this session, for the saved transcript.
+    /// All FINAL lines pushed this session, for the saved transcript.
     private var sessionLines: [String] = []
-    private var lineBuffer = CaptionLineBuffer(capacity: 3)
+    /// The id of the in-progress (volatile) line currently shown, if any. Its text
+    /// is re-transcribed in place while its window stays open.
+    private var volatileLineID: UUID?
+    /// The most recent in-flight volatile re-transcription, tracked so a slow one
+    /// can be cancelled on stop and never overlaps the next tick.
+    private var volatileTask: Task<Void, Never>?
+    /// True while a volatile re-transcription is running (non-overlap guard).
+    private var isTranscribingVolatile = false
 
     init(
         history: HistoryStore,
         locale: @escaping () -> Locale,
         saveToHistory: @escaping () -> Bool,
         busyReason: @escaping () -> String?,
+        replacements: @escaping () -> [Replacement] = { [] },
         engine: ParakeetEngine = ParakeetEngine(),
         notify: @escaping (String) -> Void = { Notifications.post($0) }
     ) {
@@ -70,6 +81,7 @@ final class CaptionsService: ObservableObject {
         self.locale = locale
         self.saveToHistory = saveToHistory
         self.busyReason = busyReason
+        self.replacements = replacements
         self.notify = notify
     }
 
@@ -88,9 +100,10 @@ final class CaptionsService: ObservableObject {
 
         errorMessage = nil
         permissionDenied = false
-        lineBuffer.clear()
         sessionLines.removeAll()
         lines = []
+        volatileLineID = nil
+        isTranscribingVolatile = false
 
         let tap = SystemAudioTap()
         let stream: AsyncStream<AudioBufferBox>
@@ -122,6 +135,9 @@ final class CaptionsService: ObservableObject {
         guard isRunning else { return }
         isRunning = false
 
+        volatileTask?.cancel()
+        volatileTask = nil
+        isTranscribingVolatile = false
         feedTask?.cancel()
         feedTask = nil
         tap?.stop()
@@ -139,11 +155,22 @@ final class CaptionsService: ObservableObject {
 
     // MARK: - Consumption
 
-    /// Drains the tap stream, running the rolling-window logic and transcribing
-    /// each cut window on the (actor) engine. Runs until the stream finishes or
-    /// the task is cancelled.
+    /// Drains the tap stream with pseudo-streaming captioning:
+    ///
+    /// - While a window is OPEN, every ~0.9 s (and never overlapping) it snapshots
+    ///   the accumulated samples and re-transcribes them, updating the current
+    ///   caption line IN PLACE as a volatile (dimmed) line.
+    /// - When the window CLOSES (silence / max / hard cap), it transcribes the full
+    ///   window one last time and replaces the volatile line as FINAL (full white),
+    ///   then starts the next window.
+    ///
+    /// Parakeet runs many times realtime, so re-transcribing a ≤10 s window every
+    /// second is cheap; the non-overlap guard skips a tick if the previous
+    /// transcription is still running.
     private func consume(_ stream: AsyncStream<AudioBufferBox>) async {
         var accumulator = CaptionWindowAccumulator(sampleRate: 16_000)
+        var planner = CaptionTickPlanner()
+        planner.reset()
 
         for await box in stream {
             if Task.isCancelled { break }
@@ -151,38 +178,112 @@ final class CaptionsService: ObservableObject {
             accumulator.append(chunk)
 
             if accumulator.shouldCut, let window = accumulator.cut() {
-                await transcribeAndEmit(window)
+                // Window closed: cancel any in-flight volatile pass and finalize.
+                volatileTask?.cancel()
+                isTranscribingVolatile = false
+                await finalizeWindow(window)
+                planner.reset()
+            } else if planner.shouldTick(now: Date(), inFlight: isTranscribingVolatile),
+                      let snapshot = accumulator.snapshot() {
+                // Window still open: fire a non-blocking volatile re-transcription.
+                planner.didTick()
+                startVolatileTranscription(of: snapshot)
             }
         }
 
         // Final flush of any trailing audio when the stream ends naturally.
+        volatileTask?.cancel()
+        isTranscribingVolatile = false
         if !Task.isCancelled, let tail = accumulator.drain() {
-            await transcribeAndEmit(tail)
+            await finalizeWindow(tail)
         }
     }
 
-    /// Transcribes one window and pushes the resulting non-empty text as the
-    /// current caption line.
-    private func transcribeAndEmit(_ window: [Float]) async {
-        let text: String
-        do {
-            let result = try await engine.transcribeSamples(window, locale: locale())
-            text = result.text.trimmingCharacters(in: .whitespacesAndNewlines)
-        } catch {
-            // A single failed window shouldn't kill the session; skip it.
+    /// Re-transcribes an open window's snapshot and updates the current volatile
+    /// line in place. Runs as a detached-from-the-loop task so the consume loop
+    /// keeps ingesting audio; the non-overlap flag prevents pile-ups.
+    private func startVolatileTranscription(of window: [Float]) {
+        isTranscribingVolatile = true
+        volatileTask = Task { [weak self] in
+            guard let self else { return }
+            defer { self.isTranscribingVolatile = false }
+            let text = await self.transcribe(window)
+            guard !Task.isCancelled, self.isRunning, let text, !text.isEmpty else { return }
+            self.updateVolatileLine(text)
+        }
+    }
+
+    /// Transcribes one closed window and commits it as a FINAL caption line
+    /// (replacing the volatile line if one is showing).
+    private func finalizeWindow(_ window: [Float]) async {
+        let text = await transcribe(window)
+        guard isRunning, let text, !text.isEmpty else {
+            // Nothing usable: drop any dangling volatile line so it doesn't linger.
+            clearVolatileLine()
             return
         }
-        guard !text.isEmpty else { return }
-        emit(line: text)
+        commitFinalLine(text)
     }
 
-    /// Appends a caption line to the display buffer and the session transcript.
-    private func emit(line text: String) {
-        guard isRunning else { return }
-        if lineBuffer.push(text) {
-            sessionLines.append(text)
-            lines = lineBuffer.lines
+    /// Runs the engine on a window and applies the personal woordenlijst. Returns
+    /// `nil` on failure (a single bad window must not kill the session).
+    private func transcribe(_ window: [Float]) async -> String? {
+        do {
+            let result = try await engine.transcribeSamples(window, locale: locale())
+            let processed = TextProcessor.applyReplacements(result.text, replacements())
+            return processed.trimmingCharacters(in: .whitespacesAndNewlines)
+        } catch {
+            return nil
         }
+    }
+
+    // MARK: - Line emission
+
+    /// Max caption lines kept on screen (newest last).
+    private static let displayCapacity = 3
+
+    /// Updates (or creates) the current volatile line's text in place.
+    private func updateVolatileLine(_ text: String) {
+        guard isRunning else { return }
+        if let id = volatileLineID, let index = lines.firstIndex(where: { $0.id == id }) {
+            lines[index].text = text
+        } else {
+            let line = CaptionLine(text: text, isFinal: false)
+            volatileLineID = line.id
+            appendBounded(line)
+        }
+    }
+
+    /// Commits `text` as a final line: promotes the volatile line in place if
+    /// present, else appends a fresh final line. Records it in the session
+    /// transcript for the optional saved history entry.
+    private func commitFinalLine(_ text: String) {
+        guard isRunning else { return }
+        if let id = volatileLineID, let index = lines.firstIndex(where: { $0.id == id }) {
+            lines[index].text = text
+            lines[index].isFinal = true
+        } else {
+            appendBounded(CaptionLine(text: text, isFinal: true))
+        }
+        volatileLineID = nil
+        sessionLines.append(text)
+    }
+
+    /// Appends a line and trims the display to ``displayCapacity`` (newest last).
+    private func appendBounded(_ line: CaptionLine) {
+        var next = lines
+        next.append(line)
+        if next.count > Self.displayCapacity {
+            next.removeFirst(next.count - Self.displayCapacity)
+        }
+        lines = next
+    }
+
+    /// Drops a dangling volatile line (used when a window finalizes to nothing).
+    private func clearVolatileLine() {
+        guard let id = volatileLineID else { return }
+        lines.removeAll { $0.id == id }
+        volatileLineID = nil
     }
 
     // MARK: - History
@@ -220,20 +321,36 @@ final class CaptionsService: ObservableObject {
     /// validate captioning end-to-end without the system-audio tap. `feedChunk`
     /// mirrors the tap's buffer cadence.
     ///
-    /// This is the same logic ``consume(_:)`` runs, factored so a test can drive
-    /// it deterministically with a real cached Parakeet model.
-    func captionSamplesForTesting(
+    /// The lines a pseudo-streaming caption run produced, for tests.
+    struct CaptionRunResult: Sendable {
+        /// The finalized caption lines, in order (post-replacement).
+        var finalLines: [String]
+        /// Every volatile (in-progress) line update observed, in order. Useful to
+        /// show that captions update in place before a window closes.
+        var volatileUpdates: [String]
+    }
+
+    /// Runs the pseudo-streaming caption path over pre-decoded 16 kHz mono Float32
+    /// samples, returning both the volatile in-progress updates and the finalized
+    /// lines. Used by the E2E test to validate captioning end-to-end without the
+    /// system-audio tap. This mirrors ``consume(_:)`` but is fully deterministic:
+    /// a volatile pass runs on every window snapshot (no wall-clock cadence) so the
+    /// test sees the in-place updates regardless of transcription speed.
+    func captionRunForTesting(
         _ samples: [Float],
         chunkFrames: Int = 4096,
         sampleRate: Double = 16_000
-    ) async -> [String] {
+    ) async -> CaptionRunResult {
         var accumulator = CaptionWindowAccumulator(sampleRate: sampleRate)
-        var produced: [String] = []
+        var finalLines: [String] = []
+        var volatileUpdates: [String] = []
+        var sawVolatileSinceCut = false
 
-        func transcribe(_ window: [Float]) async {
-            guard let result = try? await engine.transcribeSamples(window, locale: locale()) else { return }
-            let text = result.text.trimmingCharacters(in: .whitespacesAndNewlines)
-            if !text.isEmpty { produced.append(text) }
+        func transcribe(_ window: [Float]) async -> String? {
+            guard let result = try? await engine.transcribeSamples(window, locale: locale()) else { return nil }
+            let processed = TextProcessor.applyReplacements(result.text, replacements())
+            let text = processed.trimmingCharacters(in: .whitespacesAndNewlines)
+            return text.isEmpty ? nil : text
         }
 
         var index = 0
@@ -241,14 +358,32 @@ final class CaptionsService: ObservableObject {
             let end = min(index + chunkFrames, samples.count)
             accumulator.append(Array(samples[index..<end]))
             index = end
+
             if accumulator.shouldCut, let window = accumulator.cut() {
-                await transcribe(window)
+                if let text = await transcribe(window) { finalLines.append(text) }
+                sawVolatileSinceCut = false
+            } else if !sawVolatileSinceCut, let snapshot = accumulator.snapshot() {
+                // One volatile pass per open window (deterministic stand-in for the
+                // ~0.9 s cadence used live).
+                if let text = await transcribe(snapshot) {
+                    volatileUpdates.append(text)
+                    sawVolatileSinceCut = true
+                }
             }
         }
-        if let tail = accumulator.drain() {
-            await transcribe(tail)
+        if let tail = accumulator.drain(), let text = await transcribe(tail) {
+            finalLines.append(text)
         }
-        return produced
+        return CaptionRunResult(finalLines: finalLines, volatileUpdates: volatileUpdates)
+    }
+
+    /// Back-compat convenience: the finalized caption lines only.
+    func captionSamplesForTesting(
+        _ samples: [Float],
+        chunkFrames: Int = 4096,
+        sampleRate: Double = 16_000
+    ) async -> [String] {
+        await captionRunForTesting(samples, chunkFrames: chunkFrames, sampleRate: sampleRate).finalLines
     }
 
     // MARK: - Helpers

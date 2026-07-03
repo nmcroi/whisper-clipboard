@@ -7,13 +7,30 @@ import UniformTypeIdentifiers
 /// (Home / Geschiedenis) and a detail pane per tab.
 struct HomeView: View {
     @EnvironmentObject private var environment: AppEnvironment
-    @StateObject private var navigation = AppNavigation()
+
+    var body: some View {
+        // Drive the whole window from the single, app-owned navigation object so
+        // the menu bar and SwiftUI share one source of truth and a view
+        // recreation can never spawn a second navigation hierarchy.
+        HomeRootView(environment: environment, navigation: environment.navigation)
+    }
+}
+
+/// The window root, split out so it can `@ObservedObject` the shared navigation
+/// (whose `@Published` tab drives which detail pane shows).
+private struct HomeRootView: View {
+    @ObservedObject var environment: AppEnvironment
+    @ObservedObject var navigation: AppNavigation
     @State private var columnVisibility: NavigationSplitViewVisibility = .all
 
     var body: some View {
+        // A SINGLE navigation container. The detail pane swaps its content per
+        // tab. History renders its own list|detail split (a plain HSplitView, NOT
+        // a nested NavigationSplitView), so there is never a split-inside-a-
+        // navigation-column fighting the outer split for width.
         NavigationSplitView(columnVisibility: $columnVisibility) {
             Sidebar(selection: $navigation.tab)
-                .navigationSplitViewColumnWidth(min: 180, ideal: 200, max: 240)
+                .navigationSplitViewColumnWidth(180)
         } detail: {
             Group {
                 switch navigation.tab {
@@ -66,23 +83,43 @@ private struct Sidebar: View {
     @Binding var selection: SidebarTab
 
     var body: some View {
-        List(selection: $selection) {
-            Section {
-                ForEach(SidebarTab.allCases, id: \.self) { tab in
-                    Label(tab.title, systemImage: tab.symbol)
-                        .font(ThemeFont.ui(13, weight: .medium))
-                        .tag(tab)
-                }
-            } header: {
-                Wordmark(size: 17)
-                    .padding(.bottom, 6)
-                    .padding(.top, 2)
+        // A plain custom list instead of `List(selection:)`: the macOS `.sidebar`
+        // list style paints its selected row with the SYSTEM accent (blue) no
+        // matter what `.tint` is set, which violates the no-blue design rule. A
+        // button-per-row layout lets us own the selection background (yellow-tinted
+        // surface) and keep it strictly on-brand.
+        VStack(alignment: .leading, spacing: 4) {
+            Wordmark(size: 17)
+                .padding(.horizontal, 12)
+                .padding(.top, 14)
+                .padding(.bottom, 10)
+
+            ForEach(SidebarTab.allCases, id: \.self) { tab in
+                sidebarRow(tab)
             }
+
+            Spacer(minLength: 0)
         }
-        .listStyle(.sidebar)
-        .scrollContentBackground(.hidden)
+        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
         .background(Theme.window)
+    }
+
+    private func sidebarRow(_ tab: SidebarTab) -> some View {
+        let isSelected = selection == tab
+        return Button { selection = tab } label: {
+            Label(tab.title, systemImage: tab.symbol)
+                .font(ThemeFont.ui(13, weight: .medium))
+                .foregroundStyle(isSelected ? Theme.text : Theme.textSecondary)
+                .padding(.horizontal, 10)
+                .padding(.vertical, 7)
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .background(isSelected ? Theme.accent.opacity(0.14) : Color.clear)
+                .clipShape(RoundedRectangle(cornerRadius: Theme.Metrics.radius, style: .continuous))
+                .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
         .tint(Theme.accent)
+        .padding(.horizontal, 8)
     }
 }
 
@@ -167,8 +204,16 @@ private struct HomeContent: View {
     // MARK: Header
 
     private var header: some View {
+        // The wordmark lives in the sidebar; the content header shows a plain page
+        // title so the brand mark isn't rendered twice.
         VStack(alignment: .leading, spacing: 10) {
-            Wordmark(size: 30)
+            (
+                Text("Home")
+                    .foregroundStyle(Theme.text)
+                + Text(".")
+                    .foregroundStyle(Theme.accent)
+            )
+            .font(ThemeFont.ui(28, weight: .bold))
             statusPill
         }
     }

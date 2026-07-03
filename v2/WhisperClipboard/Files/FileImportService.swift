@@ -115,6 +115,10 @@ final class FileImportService {
     private let engine: ParakeetEngine
     private let history: HistoryStore
     private let locale: () -> Locale
+    /// Current app settings, read on demand so the personal woordenlijst
+    /// (replacements) and the clean-output toggle are applied to imported files
+    /// exactly as they are to dictation.
+    private let settings: () -> AppSettings
     /// Guard predicate: returns a Dutch reason string when import must be refused
     /// (e.g. dictation is recording/transcribing), or nil when clear to proceed.
     private let busyReason: () -> String?
@@ -129,12 +133,14 @@ final class FileImportService {
         history: HistoryStore,
         locale: @escaping () -> Locale,
         busyReason: @escaping () -> String?,
+        settings: @escaping () -> AppSettings = { AppSettings() },
         notify: @escaping (String) -> Void = { Notifications.post($0) },
         copyToClipboard: @escaping (String) -> Void = { Clipboard.copy($0) }
     ) {
         self.engine = engine
         self.history = history
         self.locale = locale
+        self.settings = settings
         self.busyReason = busyReason
         self.notify = notify
         self.copyToClipboard = copyToClipboard
@@ -221,7 +227,14 @@ final class FileImportService {
             let samples = try AudioSampleConverter.readSamples(fromWAV: decoded.url)
             let result = try await engine.transcribeSamples(samples, locale: locale())
 
-            let text = result.text.trimmingCharacters(in: .whitespacesAndNewlines)
+            // Apply the same post-processing as dictation: the personal
+            // woordenlijst (whole-word replacements) first, then optional cleanup.
+            let config = settings()
+            let text = TextProcessor.process(
+                result.text,
+                replacements: config.replacements,
+                clean: config.cleanOutput
+            ).trimmingCharacters(in: .whitespacesAndNewlines)
             guard !text.isEmpty else {
                 throw FileImportError.emptyTranscript
             }

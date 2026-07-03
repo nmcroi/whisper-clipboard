@@ -16,6 +16,22 @@ import Foundation
         #expect(TextProcessor.applyReplacements("blijft", [Replacement(find: "", replace: "x")]) == "blijft")
     }
 
+    /// The exact personal-woordenlijst examples from the UI empty-state.
+    @Test func personalDictionaryExamples() {
+        // "klot" (whatever the recognizer hears) → "Claude", case-insensitive.
+        #expect(
+            TextProcessor.applyReplacements("vraag het aan klot en Klot",
+                                            [Replacement(find: "klot", replace: "Claude")])
+                == "vraag het aan Claude en Claude"
+        )
+        // A hyphenated find like "G-A-X" → "GHX" (word boundaries surround it).
+        #expect(
+            TextProcessor.applyReplacements("we werken bij G-A-X vandaag.",
+                                            [Replacement(find: "G-A-X", replace: "GHX")])
+                == "we werken bij GHX vandaag."
+        )
+    }
+
     @Test func cleanCollapsesWhitespaceAndCapitalizesSentences() {
         let text = "  hallo   wereld .  dit is  een test.nieuwe zin "
         let result = TextProcessor.cleanText(text)

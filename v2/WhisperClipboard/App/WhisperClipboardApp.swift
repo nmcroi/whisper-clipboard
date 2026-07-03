@@ -8,7 +8,9 @@ struct WhisperClipboardApp: App {
         Window("Whisper Clipboard", id: "main") {
             HomeView()
                 .environmentObject(appDelegate.environment)
-                .frame(minWidth: 700, minHeight: 480)
+                // Min width fits the Geschiedenis three-pane layout without
+                // cramping: 180 (sidebar) + 320 (list) + 380 (detail) = 880.
+                .frame(minWidth: 900, minHeight: 520)
                 // AppKit remembers the size/position per autosave name.
                 .background(WindowConfigurator(autosaveName: "WhisperClipboardMain"))
         }
@@ -47,8 +49,9 @@ private struct WindowConfigurator: NSViewRepresentable {
     func updateNSView(_ nsView: NSView, context: Context) {}
 }
 
-/// Tabbed settings window: "Algemeen" (hotkey, taal, opstarten), "Invoegen"
-/// (direct text insertion) and "AI" (Claude API key + custom mode editor).
+/// Tabbed settings window: "Algemeen" (hotkey, taal, opstarten), "Woordenlijst"
+/// (personal find→replace dictionary), "Invoegen" (direct text insertion) and
+/// "AI" (Claude API key + custom mode editor).
 struct SettingsView: View {
     @EnvironmentObject private var environment: AppEnvironment
 
@@ -57,13 +60,16 @@ struct SettingsView: View {
             GeneralSettingsView()
                 .tabItem { Label("Algemeen", systemImage: "gearshape") }
 
+            DictionarySettingsView()
+                .tabItem { Label("Woordenlijst", systemImage: "character.book.closed") }
+
             InsertionSettingsView()
                 .tabItem { Label("Invoegen", systemImage: "text.cursor") }
 
             AISettingsView(modes: environment.modes)
                 .tabItem { Label("AI", systemImage: "sparkles") }
         }
-        .frame(width: 520, height: 460)
+        .frame(width: 560, height: 460)
         .background(Theme.window)
         .preferredColorScheme(.dark)
     }

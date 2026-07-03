@@ -103,6 +103,55 @@ final class CaptionWindowingTests: XCTestCase {
         XCTAssertEqual(windows.count, 2)
     }
 
+    // MARK: - Snapshot (pseudo-streaming)
+
+    func testSnapshotReturnsOpenWindowWithoutCutting() {
+        var acc = CaptionWindowAccumulator(sampleRate: sampleRate)
+        acc.append(loud(1.0)) // above 0.4s min, below 3s max — window still open
+        XCTAssertFalse(acc.shouldCut)
+        let snap = acc.snapshot()
+        XCTAssertEqual(snap?.count, Int(1.0 * sampleRate))
+        // Snapshot is non-destructive: the buffer is untouched.
+        XCTAssertEqual(acc.samples.count, Int(1.0 * sampleRate))
+    }
+
+    func testSnapshotNilBelowMinWindow() {
+        var acc = CaptionWindowAccumulator(sampleRate: sampleRate)
+        acc.append(loud(0.2)) // below the 0.4s min meaningful window
+        XCTAssertNil(acc.snapshot())
+    }
+
+    // MARK: - Tick planner (pseudo-streaming cadence)
+
+    func testTickPlannerFiresFirstTimeThenWaitsForInterval() {
+        var planner = CaptionTickPlanner(interval: 0.9)
+        let t0 = Date(timeIntervalSince1970: 1000)
+        // First tick allowed immediately (no prior tick).
+        XCTAssertTrue(planner.shouldTick(now: t0, inFlight: false))
+        planner.didTick(at: t0)
+        // Too soon after.
+        XCTAssertFalse(planner.shouldTick(now: t0.addingTimeInterval(0.5), inFlight: false))
+        // After the interval elapses.
+        XCTAssertTrue(planner.shouldTick(now: t0.addingTimeInterval(0.95), inFlight: false))
+    }
+
+    func testTickPlannerSuppressedWhileInFlight() {
+        var planner = CaptionTickPlanner(interval: 0.9)
+        let t0 = Date(timeIntervalSince1970: 2000)
+        planner.didTick(at: t0)
+        // Even well past the interval, an in-flight transcription blocks the tick.
+        XCTAssertFalse(planner.shouldTick(now: t0.addingTimeInterval(5), inFlight: true))
+        XCTAssertTrue(planner.shouldTick(now: t0.addingTimeInterval(5), inFlight: false))
+    }
+
+    func testTickPlannerResetRestartsCadence() {
+        var planner = CaptionTickPlanner(interval: 0.9)
+        let t0 = Date(timeIntervalSince1970: 3000)
+        planner.reset(at: t0)
+        XCTAssertFalse(planner.shouldTick(now: t0.addingTimeInterval(0.4), inFlight: false))
+        XCTAssertTrue(planner.shouldTick(now: t0.addingTimeInterval(1.0), inFlight: false))
+    }
+
     // MARK: - RMS
 
     func testRMSOfSilenceIsZero() {
@@ -157,5 +206,24 @@ final class CaptionLineBufferTests: XCTestCase {
         buffer.push("a")
         buffer.push("b")
         XCTAssertEqual(buffer.lines.map(\.text), ["b"])
+    }
+}
+
+/// Tests for the volatile/final caption-line model.
+final class CaptionLineTests: XCTestCase {
+    func testDefaultsToFinal() {
+        XCTAssertTrue(CaptionLine(text: "klaar").isFinal)
+    }
+
+    func testVolatileFlagPreserved() {
+        let line = CaptionLine(text: "bezig", isFinal: false)
+        XCTAssertFalse(line.isFinal)
+    }
+
+    func testEqualityConsidersFinalFlag() {
+        let id = UUID()
+        let volatile = CaptionLine(id: id, text: "x", isFinal: false)
+        let final = CaptionLine(id: id, text: "x", isFinal: true)
+        XCTAssertNotEqual(volatile, final)
     }
 }

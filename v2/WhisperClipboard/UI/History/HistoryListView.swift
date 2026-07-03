@@ -21,12 +21,16 @@ struct HistoryListView: View {
     @State private var searchDebounce = PassthroughSubject<String, Never>()
 
     var body: some View {
+        // A plain HSplitView inside the single NavigationSplitView's detail column
+        // (never a nested NavigationSplitView). Minimums are chosen so the pair
+        // fits the window's minimum content width alongside the 180pt sidebar.
         HSplitView {
             listPane
-                .frame(minWidth: 280, idealWidth: 340, maxWidth: 460)
+                .frame(minWidth: 320, idealWidth: 360, maxWidth: 460)
             detailPane
-                .frame(minWidth: 360, maxWidth: .infinity)
+                .frame(minWidth: 380, maxWidth: .infinity)
         }
+        .frame(maxWidth: .infinity, maxHeight: .infinity)
         .background(Theme.window)
         .confirmationDialog(
             "Verwijder deze transcriptie?",
