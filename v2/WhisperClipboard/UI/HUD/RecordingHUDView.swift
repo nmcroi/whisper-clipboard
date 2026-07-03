@@ -106,12 +106,7 @@ struct RecordingHUDView: View {
     private var transcript: some View {
         let partial = controller.livePartial
         if !partial.displayText.isEmpty {
-            (
-                Text(partial.finalizedText)
-                    .foregroundStyle(Theme.text)
-                + Text(partial.volatileText)
-                    .foregroundStyle(Theme.text.opacity(0.55))
-            )
+            Text("\(Text(partial.finalizedText).foregroundStyle(Theme.text))\(Text(partial.volatileText).foregroundStyle(Theme.text.opacity(0.55)))")
             .font(ThemeFont.ui(13))
             .lineLimit(4)
             .fixedSize(horizontal: false, vertical: true)

@@ -34,12 +34,7 @@ struct AutomationSettingsView: View {
 
     private var header: some View {
         VStack(alignment: .leading, spacing: 8) {
-            (
-                Text("Automatisering")
-                    .foregroundStyle(Theme.text)
-                + Text(".")
-                    .foregroundStyle(Theme.accentText)
-            )
+            Text.accentDotted("Automatisering")
             .font(ThemeFont.ui(18, weight: .bold))
 
             Text("Laat Whisper Clipboard werk uit handen nemen: stopwoorden opschonen, transcripties automatisch bewaren en hele mappen vanzelf transcriberen.")

@@ -50,12 +50,7 @@ struct PlaudSettingsView: View {
 
     private var header: some View {
         VStack(alignment: .leading, spacing: 8) {
-            (
-                Text("PLAUD")
-                    .foregroundStyle(Theme.text)
-                + Text(".")
-                    .foregroundStyle(Theme.accentText)
-            )
+            Text.accentDotted("PLAUD")
             .font(ThemeFont.ui(18, weight: .bold))
 
             Text("Haal je PLAUD-opnamen automatisch uit de cloud en laat ze door Whisper Clipboard transcriberen. Dit gebruikt PLAUD's onofficiële cloud-API met jouw eigen account.")

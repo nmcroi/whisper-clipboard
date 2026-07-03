@@ -202,12 +202,16 @@ struct Wordmark: View {
     var size: CGFloat = 26
 
     var body: some View {
-        (
-            Text("Whisper Clipboard")
-                .foregroundStyle(Theme.text)
-            + Text(".")
-                .foregroundStyle(Theme.accentText)
-        )
+        Text.accentDotted("Whisper Clipboard")
         .font(ThemeFont.wordmark(size, weight: .bold))
+    }
+}
+
+extension Text {
+    /// The brand heading pattern: "<title>." with the trailing period in the
+    /// accent colour. Built with Text interpolation — the `Text + Text`
+    /// operator is deprecated on macOS 26.
+    static func accentDotted(_ title: String) -> Text {
+        Text("\(Text(title).foregroundStyle(Theme.text))\(Text(".").foregroundStyle(Theme.accentText))")
     }
 }

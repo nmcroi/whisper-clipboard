@@ -38,12 +38,7 @@ struct GeneralSettingsView: View {
     }
 
     private var header: some View {
-        (
-            Text("Algemeen")
-                .foregroundStyle(Theme.text)
-            + Text(".")
-                .foregroundStyle(Theme.accentText)
-        )
+        Text.accentDotted("Algemeen")
         .font(ThemeFont.ui(18, weight: .bold))
     }
 

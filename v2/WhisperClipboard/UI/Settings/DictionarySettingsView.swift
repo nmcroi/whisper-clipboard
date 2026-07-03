@@ -26,12 +26,7 @@ struct DictionarySettingsView: View {
 
     private var header: some View {
         VStack(alignment: .leading, spacing: 8) {
-            (
-                Text("Woordenlijst")
-                    .foregroundStyle(Theme.text)
-                + Text(".")
-                    .foregroundStyle(Theme.accentText)
-            )
+            Text.accentDotted("Woordenlijst")
             .font(ThemeFont.ui(18, weight: .bold))
 
             Text("Corrigeer woorden die de spraakherkenning vaak verkeerd verstaat. Elk woord links wordt overal vervangen door de tekst rechts — hele woorden, hoofdletterongevoelig.")

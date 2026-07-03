@@ -52,12 +52,7 @@ struct TranscriptAISection: View {
         HStack(spacing: 8) {
             Image(systemName: "sparkles")
                 .foregroundStyle(Theme.accentText)
-            (
-                Text("AI")
-                    .foregroundStyle(Theme.text)
-                + Text(".")
-                    .foregroundStyle(Theme.accentText)
-            )
+            Text.accentDotted("AI")
             .font(ThemeFont.ui(15, weight: .semibold))
             Spacer(minLength: 0)
         }

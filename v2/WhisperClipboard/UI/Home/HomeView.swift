@@ -207,12 +207,7 @@ private struct HomeContent: View {
         // The wordmark lives in the sidebar; the content header shows a plain page
         // title so the brand mark isn't rendered twice.
         VStack(alignment: .leading, spacing: 10) {
-            (
-                Text("Home")
-                    .foregroundStyle(Theme.text)
-                + Text(".")
-                    .foregroundStyle(Theme.accentText)
-            )
+            Text.accentDotted("Home")
             .font(ThemeFont.ui(28, weight: .bold))
             statusPill
         }

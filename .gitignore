@@ -28,3 +28,6 @@ v2/Packaging/dist/
 sparkle_private_key*
 *private_key*.pem
 *.privkey
+
+# Release-artefacten (DMGs)
+Releases/

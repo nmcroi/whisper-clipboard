@@ -24,13 +24,24 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private var openWindowCount = 0
     private var cancellables = Set<AnyCancellable>()
 
+    /// Whether a real Sparkle update feed is configured. `SUFeedURL` ships with
+    /// a placeholder until a public release location (e.g. GitHub Releases)
+    /// exists; until then the updater stays dormant and the menu item is hidden.
+    static var updateFeedConfigured: Bool {
+        guard let feed = Bundle.main.object(forInfoDictionaryKey: "SUFeedURL") as? String else {
+            return false
+        }
+        return !feed.isEmpty && !feed.contains("github.com/USER/")
+    }
+
     /// Sparkle auto-updater. Non-sandboxed app, so the simple integration:
     /// the standard controller starts the updater at launch (reading SUFeedURL /
     /// SUPublicEDKey from Info.plist) and drives the built-in update UI. It also
     /// serves as the target for the "Controleer op updates…" menu item via its
     /// `checkForUpdates(_:)` action (which auto-enables/disables itself).
+    /// Not started while the feed URL is still the placeholder.
     private let updaterController = SPUStandardUpdaterController(
-        startingUpdater: true,
+        startingUpdater: AppDelegate.updateFeedConfigured,
         updaterDelegate: nil,
         userDriverDelegate: nil
     )
@@ -133,13 +144,16 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
         // Sparkle "check for updates" — target the updater controller directly so
         // it validates/enables the item itself (disabled while a check is running).
-        let updates = NSMenuItem(
-            title: "Controleer op updates…",
-            action: #selector(SPUStandardUpdaterController.checkForUpdates(_:)),
-            keyEquivalent: ""
-        )
-        updates.target = updaterController
-        menu.addItem(updates)
+        // Hidden entirely while SUFeedURL is still the placeholder (no real feed).
+        if Self.updateFeedConfigured {
+            let updates = NSMenuItem(
+                title: "Controleer op updates…",
+                action: #selector(SPUStandardUpdaterController.checkForUpdates(_:)),
+                keyEquivalent: ""
+            )
+            updates.target = updaterController
+            menu.addItem(updates)
+        }
 
         menu.addItem(
             makeItem(title: "Stop Whisper Clipboard", action: #selector(quit), key: "q")
