@@ -1,0 +1,28 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<!--
+  LOCAL AD-HOC VERIFY ONLY — DO NOT SHIP THIS FILE'S ENTITLEMENTS.
+
+  Identical to WhisperClipboard/WhisperClipboard.entitlements PLUS
+  com.apple.security.cs.disable-library-validation.
+
+  Why it exists: under the hardened runtime, dyld enforces that a non-platform
+  framework (here: Sparkle.framework) shares the loading process's Team ID.
+  A *real* Developer-ID build satisfies this automatically because the packaging
+  script re-signs Sparkle with the same identity as the app. But an *ad-hoc*
+  build (identity "-") has no Team ID at all, so library validation refuses to
+  load Sparkle and the app aborts at launch ("different Team IDs"). Disabling
+  library validation lets the ad-hoc Release build run locally so we can smoke-
+  test hardened runtime + Sparkle without a certificate.
+
+  build_release.sh applies THIS file only when signing ad-hoc (no DEVELOPER_ID_APP
+  configured); the real Developer-ID path uses the minimal production entitlements.
+-->
+<plist version="1.0">
+<dict>
+	<key>com.apple.security.device.audio-input</key>
+	<true/>
+	<key>com.apple.security.cs.disable-library-validation</key>
+	<true/>
+</dict>
+</plist>

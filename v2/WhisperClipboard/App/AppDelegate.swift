@@ -1,6 +1,7 @@
 import AppKit
 import Combine
 import Core
+import Sparkle
 import SwiftUI
 
 /// Owns the menu bar status item and drives the app's activation policy so the
@@ -22,6 +23,17 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private weak var menu: NSMenu?
     private var openWindowCount = 0
     private var cancellables = Set<AnyCancellable>()
+
+    /// Sparkle auto-updater. Non-sandboxed app, so the simple integration:
+    /// the standard controller starts the updater at launch (reading SUFeedURL /
+    /// SUPublicEDKey from Info.plist) and drives the built-in update UI. It also
+    /// serves as the target for the "Controleer op updates…" menu item via its
+    /// `checkForUpdates(_:)` action (which auto-enables/disables itself).
+    private let updaterController = SPUStandardUpdaterController(
+        startingUpdater: true,
+        updaterDelegate: nil,
+        userDriverDelegate: nil
+    )
 
     // MARK: - Lifecycle
 
@@ -102,6 +114,17 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         menu.addItem(
             makeItem(title: "Instellingen…", action: #selector(openSettings), key: ",")
         )
+
+        // Sparkle "check for updates" — target the updater controller directly so
+        // it validates/enables the item itself (disabled while a check is running).
+        let updates = NSMenuItem(
+            title: "Controleer op updates…",
+            action: #selector(SPUStandardUpdaterController.checkForUpdates(_:)),
+            keyEquivalent: ""
+        )
+        updates.target = updaterController
+        menu.addItem(updates)
+
         menu.addItem(
             makeItem(title: "Stop Whisper Clipboard", action: #selector(quit), key: "q")
         )

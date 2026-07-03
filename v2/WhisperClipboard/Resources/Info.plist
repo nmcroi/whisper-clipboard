@@ -34,5 +34,13 @@
 	<string>© 2026 NightStory</string>
 	<key>NSMicrophoneUsageDescription</key>
 	<string>Whisper Clipboard gebruikt de microfoon om je spraak lokaal op je Mac om te zetten naar tekst. Er verlaat geen audio je computer.</string>
+	<key>SUEnableAutomaticChecks</key>
+	<true/>
+	<key>SUFeedURL</key>
+	<string>https://github.com/USER/whisper-clipboard/releases/latest/download/appcast.xml</string>
+	<key>SUPublicEDKey</key>
+	<string>ykAoJsoYRdrAQb2cN0p7GPcLUxjTKwEwDmNeUkWPmEI=</string>
+	<key>SUScheduledCheckInterval</key>
+	<integer>86400</integer>
 </dict>
 </plist>

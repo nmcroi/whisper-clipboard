@@ -1,0 +1,58 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  Sparkle 2 appcast for Whisper Clipboard.
+
+  This is a TEMPLATE. For each release, replace the placeholders in the <item>
+  below (or, easier, regenerate the whole file with Sparkle's `generate_appcast`
+  as described in RELEASING.md, which fills in the version, length and
+  sparkle:edSignature automatically from the signed DMG).
+
+  Placeholders to fill per release:
+    {SHORT_VERSION}   e.g. 2.0.1   (CFBundleShortVersionString)
+    {BUILD}           e.g. 3       (CFBundleVersion — MUST increase every release)
+    {PUB_DATE}        RFC 822, e.g. `date -R` output: Fri, 03 Jul 2026 17:00:00 +0200
+    {DMG_URL}         https://github.com/USER/whisper-clipboard/releases/download/v2.0.1/WhisperClipboard-2.0.1.dmg
+    {LENGTH}          DMG size in bytes (stat -f%z WhisperClipboard-2.0.1.dmg)
+    {ED_SIGNATURE}    output of: sign_update WhisperClipboard-2.0.1.dmg  (see RELEASING.md)
+    {MIN_OS}          minimum macOS, e.g. 26.0
+
+  Notes:
+    • The channel URL polled by the app is SUFeedURL in Info.plist:
+      https://github.com/USER/whisper-clipboard/releases/latest/download/appcast.xml
+      i.e. this file is uploaded as an asset named "appcast.xml" to each GitHub
+      Release, and "latest/download" always resolves to the newest one.
+    • Updates are verified against SUPublicEDKey in Info.plist
+      (ykAoJsoYRdrAQb2cN0p7GPcLUxjTKwEwDmNeUkWPmEI=). A DMG whose signature does
+      not match that key will be REFUSED by Sparkle — this is the security model.
+-->
+<rss version="2.0"
+     xmlns:sparkle="http://www.andymatuschak.org/xml-namespaces/sparkle"
+     xmlns:dc="http://purl.org/dc/elements/1.1/">
+  <channel>
+    <title>Whisper Clipboard</title>
+    <link>https://github.com/USER/whisper-clipboard/releases/latest/download/appcast.xml</link>
+    <description>Updates voor Whisper Clipboard.</description>
+    <language>nl</language>
+
+    <item>
+      <title>Whisper Clipboard {SHORT_VERSION}</title>
+      <pubDate>{PUB_DATE}</pubDate>
+      <sparkle:version>{BUILD}</sparkle:version>
+      <sparkle:shortVersionString>{SHORT_VERSION}</sparkle:shortVersionString>
+      <sparkle:minimumSystemVersion>{MIN_OS}</sparkle:minimumSystemVersion>
+      <description><![CDATA[
+        <h2>Wat is er nieuw in {SHORT_VERSION}</h2>
+        <ul>
+          <li>Beschrijf hier de wijzigingen voor deze release.</li>
+        </ul>
+      ]]></description>
+      <enclosure
+        url="{DMG_URL}"
+        sparkle:version="{BUILD}"
+        sparkle:shortVersionString="{SHORT_VERSION}"
+        length="{LENGTH}"
+        type="application/octet-stream"
+        sparkle:edSignature="{ED_SIGNATURE}" />
+    </item>
+  </channel>
+</rss>

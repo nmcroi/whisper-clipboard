@@ -14,12 +14,32 @@ settings:
     SWIFT_STRICT_CONCURRENCY: complete # Swift 6 language mode
     MARKETING_VERSION: "2.0.0"
     CURRENT_PROJECT_VERSION: "1"
-    # Local dev signing: automatic + ad-hoc identity so builds run locally.
-    # Release signing (Developer ID + notarization) arrives in a later milestone.
-    CODE_SIGN_STYLE: Automatic
+    # Signing is deliberately parameterized so the SAME project builds two ways:
+    #   • Local dev / CI (this file as-is): ad-hoc identity "-", no team, so a
+    #     plain `xcodebuild` runs without a Developer account or provisioning.
+    #   • Release for distribution: Packaging/build_release.sh passes real values
+    #     on the command line (CODE_SIGN_IDENTITY="Developer ID Application: …",
+    #     DEVELOPMENT_TEAM=<TEAMID>) which OVERRIDE the placeholders below.
+    # Do NOT hardcode a real Developer ID here — that would break every ad-hoc
+    # build (including the Release verify build) for anyone without that cert.
+    CODE_SIGN_STYLE: Manual
     CODE_SIGN_IDENTITY: "-"
-    # Hardened runtime stays OFF for dev builds; enabled with release signing later.
+    DEVELOPMENT_TEAM: ""
+    # Hardened runtime is required for Developer-ID notarization. It is enabled
+    # per-config below: ON for Release (works fine with an ad-hoc identity too,
+    # so the local verify build still succeeds) and OFF for Debug so day-to-day
+    # development is unencumbered (debugger attach, dyld env vars, etc.).
     ENABLE_HARDENED_RUNTIME: false
+  configs:
+    Debug:
+      # Explicit for clarity: no hardened runtime while developing.
+      ENABLE_HARDENED_RUNTIME: false
+    Release:
+      # Developer-ID distribution build. Hardened runtime + a secure timestamp
+      # are prerequisites for notarization; both are compatible with ad-hoc
+      # signing locally, so the Release verify build (ad-hoc) still passes.
+      ENABLE_HARDENED_RUNTIME: true
+      OTHER_CODE_SIGN_FLAGS: "--timestamp"
 
 packages:
   KeyboardShortcuts:
@@ -35,6 +55,13 @@ packages:
   GRDB:
     url: https://github.com/groue/GRDB.swift
     from: "7.0.0"
+  # Sparkle 2 in-app auto-updates. The app is NON-sandboxed, so we use the simple
+  # integration: link the framework directly (no XPC Installer/Downloader services
+  # or sandbox plumbing needed). 2.6+ ships as a proper SPM binary framework.
+  # Pinned to a 2.x minimum; 2.9.4 is the latest at time of writing.
+  Sparkle:
+    url: https://github.com/sparkle-project/Sparkle
+    from: "2.6.0"
   Core:
     path: Packages/Core
 
@@ -57,6 +84,7 @@ targets:
       - package: FluidAudio
       - package: GRDB
         product: GRDB
+      - package: Sparkle
     postCompileScripts:
       - name: Copy bundled fonts into Resources/Fonts
         basedOnDependencyAnalysis: false
@@ -81,10 +109,30 @@ targets:
         NSAudioCaptureUsageDescription: "Whisper Clipboard gebruikt systeemaudio om live ondertitels te maken van wat er op je Mac klinkt. Er verlaat geen audio je computer."
         ATSApplicationFontsPath: Fonts
         NSHumanReadableCopyright: "© 2026 NightStory"
+        # --- Sparkle 2 auto-update configuration ---
+        # SUFeedURL: the appcast Sparkle polls for new versions.
+        # TODO(release): replace USER/whisper-clipboard with the real GitHub repo
+        # once the public repo exists. This "latest release" URL always points at
+        # the appcast.xml uploaded to the most recent GitHub Release.
+        SUFeedURL: "https://github.com/USER/whisper-clipboard/releases/latest/download/appcast.xml"
+        # EdDSA public key. Sparkle verifies every downloaded update against this.
+        # The matching PRIVATE key lives ONLY in the login keychain (service
+        # "https://sparkle-project.org", account "nl.nielscroiset.whisperclipboard");
+        # see Packaging/RELEASING.md. It must NEVER be committed. Generated with
+        # Sparkle 2.9.4 `generate_keys` on 2026-07-03.
+        SUPublicEDKey: "ykAoJsoYRdrAQb2cN0p7GPcLUxjTKwEwDmNeUkWPmEI="
+        # Check automatically, but ask the user before the first automatic check
+        # (Sparkle shows a one-time "check for updates automatically?" prompt).
+        SUEnableAutomaticChecks: true
+        SUScheduledCheckInterval: 86400
     entitlements:
       path: WhisperClipboard/WhisperClipboard.entitlements
       properties:
-        # Needed once hardened runtime is enabled in a later milestone; harmless now.
+        # Microphone access under hardened runtime. This is the ONLY entitlement
+        # the app needs: it is non-sandboxed (no app-sandbox key), performs no
+        # JIT, loads no unsigned code, and does not disable library validation
+        # (all linked frameworks — Sparkle, FluidAudio, GRDB, KeyboardShortcuts —
+        # are signed by the same Developer ID during packaging). See PRIVACY.md.
         com.apple.security.device.audio-input: true
     settings:
       base:

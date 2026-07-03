@@ -16,3 +16,15 @@ v2/**/xcuserdata/
 v2/**/.swiftpm/
 v2/DerivedData/
 .DS_Store
+
+# Release packaging output (built .app, DMGs, throwaway DerivedData)
+v2/Packaging/dist/
+
+# Signing secrets — NEVER commit. The Sparkle EdDSA private key lives ONLY in
+# the login keychain; these patterns guard against an accidental exported copy,
+# and against App Store Connect API keys being dropped in the tree.
+*.p8
+*.p12
+sparkle_private_key*
+*private_key*.pem
+*.privkey

@@ -1,5 +1,32 @@
 <?xml version="1.0" encoding="UTF-8"?>
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<!--
+  Production entitlements for Whisper Clipboard (Developer-ID, non-sandboxed,
+  hardened runtime). Kept deliberately MINIMAL — see PRIVACY.md for the rationale.
+
+  Present:
+    com.apple.security.device.audio-input
+        Microphone access under the hardened runtime (dictation + system-audio
+        captions). Required; without it a hardened-runtime app cannot record.
+
+  Deliberately ABSENT (and why we do not need them):
+    com.apple.security.app-sandbox
+        The app is not sandboxed (it inserts text into other apps via the
+        Accessibility API and watches user-chosen folders, which the sandbox
+        would block). Direct distribution to friends / a managed Mac, not the
+        App Store.
+    com.apple.security.cs.disable-library-validation
+        NOT needed in the shipping build: Packaging/build_release.sh re-signs the
+        embedded frameworks (Sparkle, and the Swift stdlib) with the SAME
+        Developer ID as the app, so hardened-runtime library validation sees one
+        matching Team ID and is satisfied. (Only an ad-hoc *local* build needs
+        this exception, because ad-hoc signatures carry no Team ID — for that
+        case the verify build uses Packaging/adhoc.entitlements instead. Never
+        ship that variant.)
+    com.apple.security.cs.allow-jit / allow-unsigned-executable-memory /
+    allow-dyld-environment-variables
+        No JIT, no unsigned code, no injected dylibs — none required.
+-->
 <plist version="1.0">
 <dict>
 	<key>com.apple.security.device.audio-input</key>

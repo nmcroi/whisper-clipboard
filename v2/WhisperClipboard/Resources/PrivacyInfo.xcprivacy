@@ -1,0 +1,79 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+	<!--
+	  Apple Privacy Manifest for Whisper Clipboard.
+
+	  Summary: this app does NOT track users and collects NO data. All
+	  transcription, translation, diarization and filler-removal run 100%
+	  on-device. The only outbound connections are user-initiated (the optional
+	  Claude API with the user's own key), first-run on-device model downloads
+	  from Hugging Face/Apple, and the Sparkle update check to GitHub. See
+	  PRIVACY.md for the full data-flow document.
+	-->
+
+	<!-- No cross-app/website tracking, and no tracking domains. -->
+	<key>NSPrivacyTracking</key>
+	<false/>
+	<key>NSPrivacyTrackingDomains</key>
+	<array/>
+
+	<!-- No data-collection types are collected, linked, or used for tracking. -->
+	<key>NSPrivacyCollectedDataTypes</key>
+	<array/>
+
+	<!--
+	  Required-reason API declarations. Each entry lists an Apple "required
+	  reason" API the app (or a bundled framework) may call, with the approved
+	  reason code. These are the categories Apple asks direct-distribution and
+	  App Store apps to declare; none of them involve collecting user data.
+	-->
+	<key>NSPrivacyAccessedAPITypes</key>
+	<array>
+		<!-- UserDefaults: app settings (hotkey, language, dictionary, etc.).
+		     Reason CA92.1 = access info stored solely by this app. -->
+		<dict>
+			<key>NSPrivacyAccessedAPIType</key>
+			<string>NSPrivacyAccessedAPICategoryUserDefaults</string>
+			<key>NSPrivacyAccessedAPITypeReasons</key>
+			<array>
+				<string>CA92.1</string>
+			</array>
+		</dict>
+		<!-- File timestamps: history DB, exports, watched-folder scanning, and
+		     bundled model files. Reason C617.1 = access timestamps/size/etc. of
+		     files inside the app's own container / files the user selected. -->
+		<dict>
+			<key>NSPrivacyAccessedAPIType</key>
+			<string>NSPrivacyAccessedAPICategoryFileTimestamp</string>
+			<key>NSPrivacyAccessedAPITypeReasons</key>
+			<array>
+				<string>C617.1</string>
+			</array>
+		</dict>
+		<!-- Disk space: model-download/import code checks free space before
+		     writing. Reason E174.1 = display space to the user / avoid running
+		     out of space during an operation the user initiated. -->
+		<dict>
+			<key>NSPrivacyAccessedAPIType</key>
+			<string>NSPrivacyAccessedAPICategoryDiskSpace</string>
+			<key>NSPrivacyAccessedAPITypeReasons</key>
+			<array>
+				<string>E174.1</string>
+			</array>
+		</dict>
+		<!-- System boot time: used indirectly by dependencies (e.g. mach time
+		     for audio/scheduling). Reason 35F9.1 = measure elapsed time for
+		     events within the app. -->
+		<dict>
+			<key>NSPrivacyAccessedAPIType</key>
+			<string>NSPrivacyAccessedAPICategorySystemBootTime</string>
+			<key>NSPrivacyAccessedAPITypeReasons</key>
+			<array>
+				<string>35F9.1</string>
+			</array>
+		</dict>
+	</array>
+</dict>
+</plist>
