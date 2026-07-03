@@ -199,6 +199,19 @@ if [[ -d "${APP}/Contents/Frameworks" ]]; then
     ok "signed nested $(basename "${nested}")"
   done < <(find "${APP}/Contents/Frameworks" -depth \( -name "*.xpc" -o -name "*.app" \) -print0)
 
+  # 2a-ii. Sparkle ships a bare helper executable named "Autoupdate" directly
+  #        under Sparkle.framework/Versions/Current/ — NOT wrapped in a .app/.xpc
+  #        bundle, so the generic loop above misses it. It arrives pre-signed by
+  #        the Sparkle project (different Team ID, no secure timestamp), so it
+  #        MUST be re-signed with our Developer ID + --timestamp or notarization
+  #        rejects exactly this binary. Match it by name (no `file`/perm probe,
+  #        which proved unreliable in the script's exec environment) and sign it
+  #        before the framework bundle is sealed.
+  while IFS= read -r -d '' au; do
+    sign_one "${au}"
+    ok "signed Sparkle helper $(basename "${au}")"
+  done < <(find "${APP}/Contents/Frameworks" -type f -name "Autoupdate" -print0)
+
   # The frameworks themselves (Sparkle, FluidAudio, GRDB, KeyboardShortcuts,
   # and any Swift runtime dylibs Xcode copied in).
   while IFS= read -r -d '' fw; do
@@ -221,6 +234,36 @@ ok "signed ${APP_NAME}.app (last, with entitlements)"
 codesign --verify --deep --strict --verbose=2 "${APP}" \
   || die "codesign --verify failed on the freshly signed app"
 ok "codesign --verify --deep --strict passed"
+
+# Local notarization pre-flight: --verify does NOT check for a Developer ID
+# authority or a secure timestamp, but notarization does. Sparkle's Autoupdate
+# was the exact binary Apple rejected before, so confirm every Mach-O helper we
+# re-signed now carries both — catching the problem here instead of after a
+# multi-minute notarization round-trip. (Skipped ad-hoc, which has neither.)
+if [[ "${ADHOC}" -eq 0 ]]; then
+  autoupdate_ok() {  # Developer ID authority AND a secure timestamp present?
+    local au="$1"
+    codesign -dvv "${au}" 2>&1 | grep -q "Authority=Developer ID Application" \
+      && codesign -dvv "${au}" 2>&1 | grep -q "^Timestamp="
+  }
+  while IFS= read -r -d '' au; do
+    if ! autoupdate_ok "${au}"; then
+      # Observed: the in-loop signing of this bare helper does not always
+      # "stick" on the first pass (cause not fully understood — a codesign /
+      # bundle-sealing interaction). Re-doing the exact inside-out sequence
+      # by hand reliably fixes it, so encode that as a self-healing repair:
+      # re-sign the helper, its framework, then re-seal the app, and re-check.
+      say "Repairing signature on $(basename "${au}")"
+      sign_one "${au}"
+      fwdir="${au%/Versions/*}"                 # .../Sparkle.framework
+      [[ -d "${fwdir}" ]] && sign_one "${fwdir}"
+      sign_one "${APP}" "${SIGN_ENTITLEMENTS}"
+    fi
+    autoupdate_ok "${au}" \
+      || die "notarization pre-flight: '${au}' still lacks a Developer ID signature + secure timestamp after a repair pass."
+  done < <(find "${APP}/Contents/Frameworks" -type f -name "Autoupdate" -print0)
+  ok "notarization pre-flight: Sparkle helpers have Developer ID + timestamp"
+fi
 
 # --------------------------------------------------------------------------
 # 3. Build a DMG (pure hdiutil — no create-dmg dependency). Layout: the .app
@@ -261,13 +304,27 @@ fi
 # 4. Notarize the DMG (notarytool submit --wait, App Store Connect API key).
 # --------------------------------------------------------------------------
 say "Notarizing DMG (this uploads to Apple and waits)"
+# notarytool submit --wait exits 0 as long as the SUBMISSION completed — even
+# when Apple's verdict is "Invalid". So we must inspect the final status
+# ourselves and, on anything other than Accepted, fetch Apple's issue log and
+# fail loudly (the earlier version silently continued to a doomed staple).
+NOTARY_OUT="${BUILD_DIR}/notarytool-submit.txt"
+set +e
 xcrun notarytool submit "${DMG_PATH}" \
   --key "${AC_API_KEY_PATH}" \
   --key-id "${AC_API_KEY_ID}" \
   --issuer "${AC_API_ISSUER}" \
-  --wait \
-  || die "notarytool submit failed. Inspect the log with: xcrun notarytool log <submission-id> --key ... --key-id ... --issuer ..."
-ok "Notarization accepted"
+  --wait | tee "${NOTARY_OUT}"
+set -e
+SUBMISSION_ID="$(awk '/^[[:space:]]*id:/{print $2; exit}' "${NOTARY_OUT}")"
+NOTARY_STATUS="$(awk '/^[[:space:]]*status:/{s=$2} END{print s}' "${NOTARY_OUT}")"
+if [[ "${NOTARY_STATUS}" != "Accepted" ]]; then
+  say "Notarization did NOT succeed (status: ${NOTARY_STATUS:-unknown}). Apple's issue log:"
+  [[ -n "${SUBMISSION_ID}" ]] && xcrun notarytool log "${SUBMISSION_ID}" \
+    --key "${AC_API_KEY_PATH}" --key-id "${AC_API_KEY_ID}" --issuer "${AC_API_ISSUER}" || true
+  die "Notarization failed (status: ${NOTARY_STATUS:-unknown}). Fix the issues above and re-run."
+fi
+ok "Notarization accepted (id: ${SUBMISSION_ID})"
 
 # --------------------------------------------------------------------------
 # 5. Staple the ticket to BOTH the .app and the .dmg.
