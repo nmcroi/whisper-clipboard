@@ -108,9 +108,10 @@ struct RecordingHUDView: View {
     }
 
     private var background: some View {
+        // Vol zwart met een vleugje doorschijnendheid (expliciete wens van Niels).
         ZStack {
-            Theme.window.opacity(0.9)
-            Rectangle().fill(.ultraThinMaterial).opacity(0.22)
+            Color.black.opacity(0.94)
+            Rectangle().fill(.ultraThinMaterial).opacity(0.12)
         }
     }
 
