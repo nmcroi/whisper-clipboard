@@ -65,8 +65,9 @@ private struct WindowConfigurator: NSViewRepresentable {
 
 /// Tabbed settings window: "Algemeen" (hotkey, taal, opstarten), "Woordenlijst"
 /// (personal find→replace dictionary), "Invoegen" (direct text insertion),
-/// "Automatisering" (filler removal, auto-export, watched folders) and "AI"
-/// (Claude API key + custom mode editor).
+/// "Automatisering" (filler removal, auto-export, watched folders), "PLAUD"
+/// (PLAUD cloud sync of NotePin recordings) and "AI" (Claude API key + custom
+/// mode editor).
 struct SettingsView: View {
     @EnvironmentObject private var environment: AppEnvironment
 
@@ -83,6 +84,9 @@ struct SettingsView: View {
 
             AutomationSettingsView()
                 .tabItem { Label("Automatisering", systemImage: "gearshape.2") }
+
+            PlaudSettingsView()
+                .tabItem { Label("PLAUD", systemImage: "waveform.badge.mic") }
 
             AISettingsView(modes: environment.modes)
                 .tabItem { Label("AI", systemImage: "sparkles") }

@@ -72,6 +72,18 @@ public struct AppSettings: Codable, Equatable, Sendable {
     /// auto-transcribe. Empty = watching disabled.
     public var watchedFolders: [String]
 
+    // MARK: - PLAUD cloud sync
+
+    /// Automatically pull recordings from PLAUD's cloud and run them through the
+    /// transcription pipeline. Off by default (opt-in; needs credentials).
+    public var plaudSyncEnabled: Bool
+    /// Poll interval (minutes) when PLAUD sync is enabled. Clamped to a sane range
+    /// at the call site. Default 15.
+    public var plaudSyncIntervalMinutes: Int
+    /// The PLAUD account email. Shown in Settings; the password/token live **only**
+    /// in the Keychain (never here). Empty = not configured.
+    public var plaudEmail: String
+
     public init(
         hotkeyMode: HotkeyMode = .toggle,
         language: String = "nl",
@@ -92,7 +104,10 @@ public struct AppSettings: Codable, Equatable, Sendable {
         autoExportEnabled: Bool = false,
         autoExportDirectory: String = "",
         autoExportFormat: String = "md",
-        watchedFolders: [String] = []
+        watchedFolders: [String] = [],
+        plaudSyncEnabled: Bool = false,
+        plaudSyncIntervalMinutes: Int = 15,
+        plaudEmail: String = ""
     ) {
         self.hotkeyMode = hotkeyMode
         self.language = language
@@ -114,6 +129,9 @@ public struct AppSettings: Codable, Equatable, Sendable {
         self.autoExportDirectory = autoExportDirectory
         self.autoExportFormat = autoExportFormat
         self.watchedFolders = watchedFolders
+        self.plaudSyncEnabled = plaudSyncEnabled
+        self.plaudSyncIntervalMinutes = plaudSyncIntervalMinutes
+        self.plaudEmail = plaudEmail
     }
 
     // Tolerant decoding: any key missing from an older/newer on-disk settings.json
@@ -126,6 +144,7 @@ public struct AppSettings: Codable, Equatable, Sendable {
         case diarizeImports
         case historyRetention, initialPrompt, hudLingerSeconds
         case removeFillers, autoExportEnabled, autoExportDirectory, autoExportFormat, watchedFolders
+        case plaudSyncEnabled, plaudSyncIntervalMinutes, plaudEmail
     }
 
     public init(from decoder: Decoder) throws {
@@ -151,5 +170,8 @@ public struct AppSettings: Codable, Equatable, Sendable {
         self.autoExportDirectory = try c.decodeIfPresent(String.self, forKey: .autoExportDirectory) ?? d.autoExportDirectory
         self.autoExportFormat = try c.decodeIfPresent(String.self, forKey: .autoExportFormat) ?? d.autoExportFormat
         self.watchedFolders = try c.decodeIfPresent([String].self, forKey: .watchedFolders) ?? d.watchedFolders
+        self.plaudSyncEnabled = try c.decodeIfPresent(Bool.self, forKey: .plaudSyncEnabled) ?? d.plaudSyncEnabled
+        self.plaudSyncIntervalMinutes = try c.decodeIfPresent(Int.self, forKey: .plaudSyncIntervalMinutes) ?? d.plaudSyncIntervalMinutes
+        self.plaudEmail = try c.decodeIfPresent(String.self, forKey: .plaudEmail) ?? d.plaudEmail
     }
 }

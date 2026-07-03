@@ -1,13 +1,22 @@
 import Foundation
 import Security
 
-/// Thin wrapper over the Security framework for storing the Claude API key as a
-/// generic password. The key is stored **only** in the login keychain — it never
-/// touches UserDefaults or any file on disk.
+/// Thin wrapper over the Security framework for storing secrets (the Claude API
+/// key, the PLAUD credentials) as generic passwords. Secrets are stored **only**
+/// in the login keychain — they never touch UserDefaults or any file on disk.
 ///
 /// Access is `kSecAttrAccessibleAfterFirstUnlockThisDeviceOnly`: readable after
 /// the first unlock following boot, never migrated to another device.
-enum KeychainStore {
+///
+/// ## Two shapes of API
+/// - The **static** members (`save/read/delete/hasKey`) operate on the Claude
+///   API key (account ``account``). They are kept as-is for source compatibility
+///   with existing call sites and tests.
+/// - The **instance** members operate on an arbitrary account under the same
+///   service, so a second secret (e.g. PLAUD, account ``plaudAccount``) lives
+///   alongside the API key without any of the logic being duplicated. The static
+///   members are implemented in terms of an instance for `account`.
+struct KeychainStore {
 
     /// Errors surfaced by the wrapper, carrying the underlying `OSStatus` for
     /// diagnostics.
@@ -16,12 +25,27 @@ enum KeychainStore {
     }
 
     static let service = "nl.nielscroiset.whisperclipboard"
+    /// Account for the Claude API key (unchanged).
     static let account = "anthropic-api-key"
+    /// Account for the PLAUD credentials blob (email + password/token as JSON).
+    static let plaudAccount = "plaud-credentials"
 
-    /// Saves (or replaces) the API key. An empty/blank value deletes the entry
-    /// instead of storing whitespace.
-    static func save(_ key: String) throws {
-        let trimmed = key.trimmingCharacters(in: .whitespacesAndNewlines)
+    /// The keychain account this instance reads/writes.
+    let account: String
+
+    init(account: String) {
+        self.account = account
+    }
+
+    /// A store for the PLAUD credentials item.
+    static let plaud = KeychainStore(account: plaudAccount)
+
+    // MARK: - Instance API (arbitrary account)
+
+    /// Saves (or replaces) `value` for this account. An empty/blank value deletes
+    /// the entry instead of storing whitespace.
+    func save(_ value: String) throws {
+        let trimmed = value.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !trimmed.isEmpty else {
             try delete()
             return
@@ -33,7 +57,7 @@ enum KeychainStore {
         // Try updating an existing item first; fall back to adding.
         let query: [String: Any] = [
             kSecClass as String: kSecClassGenericPassword,
-            kSecAttrService as String: service,
+            kSecAttrService as String: Self.service,
             kSecAttrAccount as String: account,
         ]
         let attributes: [String: Any] = [
@@ -58,11 +82,11 @@ enum KeychainStore {
         throw KeychainError.unexpectedStatus(updateStatus)
     }
 
-    /// Reads the stored API key, or `nil` if none is set.
-    static func read() throws -> String? {
+    /// Reads the stored value for this account, or `nil` if none is set.
+    func read() throws -> String? {
         let query: [String: Any] = [
             kSecClass as String: kSecClassGenericPassword,
-            kSecAttrService as String: service,
+            kSecAttrService as String: Self.service,
             kSecAttrAccount as String: account,
             kSecReturnData as String: true,
             kSecMatchLimit as String: kSecMatchLimitOne,
@@ -81,11 +105,11 @@ enum KeychainStore {
         return string
     }
 
-    /// Deletes the stored key (no-op if none exists).
-    static func delete() throws {
+    /// Deletes the stored value for this account (no-op if none exists).
+    func delete() throws {
         let query: [String: Any] = [
             kSecClass as String: kSecClassGenericPassword,
-            kSecAttrService as String: service,
+            kSecAttrService as String: Self.service,
             kSecAttrAccount as String: account,
         ]
         let status = SecItemDelete(query as CFDictionary)
@@ -94,8 +118,76 @@ enum KeychainStore {
         }
     }
 
-    /// Convenience: whether a non-empty key is currently stored.
-    static func hasKey() -> Bool {
+    /// Convenience: whether a non-empty value is currently stored for this account.
+    func hasValue() -> Bool {
         (try? read())?.isEmpty == false
+    }
+
+    // MARK: - Static API (Claude API key — unchanged surface)
+
+    private static let apiKeyStore = KeychainStore(account: account)
+
+    /// Saves (or replaces) the Claude API key. Blank deletes.
+    static func save(_ key: String) throws { try apiKeyStore.save(key) }
+
+    /// Reads the stored API key, or `nil` if none is set.
+    static func read() throws -> String? { try apiKeyStore.read() }
+
+    /// Deletes the stored key (no-op if none exists).
+    static func delete() throws { try apiKeyStore.delete() }
+
+    /// Convenience: whether a non-empty key is currently stored.
+    static func hasKey() -> Bool { apiKeyStore.hasValue() }
+}
+
+// MARK: - PLAUD credentials
+
+/// The PLAUD login secret, stored as one JSON blob in the Keychain under
+/// ``KeychainStore/plaudAccount``. The email is *also* mirrored into
+/// `AppSettings.plaudEmail` for display, but the password/token live **only**
+/// here. When `token` is present it is used directly as the bearer (the
+/// paste-a-token fallback); otherwise `password` drives an email+password login.
+struct PlaudCredentials: Codable, Equatable, Sendable {
+    var email: String
+    /// PLAUD account password (empty when using a pasted token instead).
+    var password: String
+    /// A raw bearer token pasted by the user (empty when using email+password).
+    var token: String
+
+    init(email: String = "", password: String = "", token: String = "") {
+        self.email = email
+        self.password = password
+        self.token = token
+    }
+
+    /// True when there is *something* to authenticate with.
+    var isConfigured: Bool {
+        !token.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+            || (!email.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+                && !password.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
+    }
+
+    // MARK: Keychain round-trip
+
+    /// Loads the stored credentials, or `nil` when none are saved / unreadable.
+    static func load(from store: KeychainStore = .plaud) -> PlaudCredentials? {
+        guard let json = try? store.read(), let data = json.data(using: .utf8) else { return nil }
+        return try? JSONDecoder().decode(PlaudCredentials.self, from: data)
+    }
+
+    /// Persists these credentials. Deletes the Keychain item when there is no
+    /// actual secret left to store (password **and** token both empty) — an
+    /// email-only blob is useless (you can't authenticate with it), and the email
+    /// is already mirrored into `AppSettings.plaudEmail` for display. So clearing
+    /// the password removes the item rather than leaving a dangling secret.
+    func save(to store: KeychainStore = .plaud) throws {
+        let hasSecret = !password.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+            || !token.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+        guard hasSecret else {
+            try store.delete()
+            return
+        }
+        let data = try JSONEncoder().encode(self)
+        try store.save(String(decoding: data, as: UTF8.self))
     }
 }

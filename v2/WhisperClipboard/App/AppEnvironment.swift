@@ -94,6 +94,9 @@ final class AppEnvironment: ObservableObject {
     let autoExport: AutoExportService
     /// Watched-folder auto-transcribe (M7).
     let watchedFolders: WatchedFolderService
+    /// PLAUD cloud sync: pulls NotePin recordings from PLAUD's cloud into the
+    /// import pipeline.
+    let plaudSync: PlaudSyncService
 
     private var locale: Locale {
         Locale(identifier: settings.language.isEmpty ? "nl-NL" : settings.language)
@@ -217,6 +220,24 @@ final class AppEnvironment: ObservableObject {
             }
         )
 
+        // PLAUD cloud sync (off by default). Pulls NotePin recordings from
+        // PLAUD's cloud, downloads the new ones, and feeds them into the same
+        // file-import pipeline (tagged source "plaud"). Same readiness/busy guard
+        // as watched folders so a sync never fights the model download or a live
+        // dictation.
+        self.plaudSync = PlaudSyncService(
+            settings: { settingsRef() },
+            importer: { [weak fileImport] urls in fileImport?.importFiles(urls, source: "plaud") },
+            isBusy: { [weak dictation, weak fileImport, weak modelManager] in
+                if modelManager?.status.isReady != true { return true }
+                switch dictation?.phase {
+                case .recording, .transcribing: return true
+                default: break
+                }
+                return fileImport?.isBusy ?? false
+            }
+        )
+
         // Now that stored properties exist, bind the closures to `self`.
         settingsRef = { [weak self] in self?.settings ?? AppSettings() }
         stateSink = { [weak self] state in self?.appState = state }
@@ -306,6 +327,11 @@ final class AppEnvironment: ObservableObject {
         // unconditionally: with no folders configured each scan is a no-op, and
         // the service picks up folders added later via `watchedFolders.refresh()`.
         watchedFolders.start()
+
+        // Start PLAUD cloud sync if enabled. Safe to start unconditionally: when
+        // disabled it schedules nothing; enabling it later re-schedules via
+        // `plaudSync.refresh()`.
+        plaudSync.start()
 
         Task {
             await resolveEngineSelection()

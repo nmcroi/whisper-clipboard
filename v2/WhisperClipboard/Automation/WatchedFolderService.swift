@@ -162,45 +162,27 @@ final class WatchedFolderService {
 
 // MARK: - Processed-set persistence
 
-/// Persists the set of already-transcribed watched-file identities to a small
-/// JSON file, so restarts don't reprocess files still present in a watched
-/// folder. Mirrors the `modes.json`-style tiny-store pattern used elsewhere.
+/// Persists the set of already-transcribed watched-file identities to
+/// `watched-processed.json`, so restarts don't reprocess files still present in
+/// a watched folder. A thin wrapper over the shared ``JSONIdentitySet`` (same
+/// on-disk format: a sorted `[String]`).
 struct WatchedProcessedStore {
 
-    private let fileURL: URL
+    /// The fixed on-disk filename (unchanged, so existing state loads).
+    static let filename = "watched-processed.json"
+
+    private let backing: JSONIdentitySet
 
     /// Default location under Application Support next to the other v2 state.
+    /// Pass `fileURL` (tests) to redirect it elsewhere.
     init(fileURL: URL? = nil) {
-        if let fileURL {
-            self.fileURL = fileURL
-        } else {
-            let base = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask).first
-                ?? URL(fileURLWithPath: NSHomeDirectory()).appendingPathComponent("Library/Application Support")
-            self.fileURL = base
-                .appendingPathComponent("Whisper Clipboard v2", isDirectory: true)
-                .appendingPathComponent("watched-processed.json", isDirectory: false)
-        }
+        self.backing = JSONIdentitySet(filename: Self.filename, fileURL: fileURL)
     }
 
     /// Loads the persisted identities, or an empty set when absent/unreadable.
-    func load() -> Set<String> {
-        guard let data = try? Data(contentsOf: fileURL) else { return [] }
-        guard let identities = try? JSONDecoder().decode([String].self, from: data) else { return [] }
-        return Set(identities)
-    }
+    func load() -> Set<String> { backing.load() }
 
     /// Persists `identities`. Best-effort: logs and swallows failures so a
     /// read-only disk can never break watching.
-    func save(_ identities: Set<String>) {
-        do {
-            try FileManager.default.createDirectory(
-                at: fileURL.deletingLastPathComponent(),
-                withIntermediateDirectories: true
-            )
-            let data = try JSONEncoder().encode(Array(identities).sorted())
-            try data.write(to: fileURL, options: .atomic)
-        } catch {
-            NSLog("WatchedProcessedStore: failed to save (%@)", String(describing: error))
-        }
-    }
+    func save(_ identities: Set<String>) { backing.save(identities) }
 }

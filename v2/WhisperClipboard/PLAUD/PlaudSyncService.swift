@@ -1,0 +1,359 @@
+import Core
+import Foundation
+import Observation
+
+/// Pulls PLAUD cloud recordings and feeds them into the existing
+/// ``FileImportService`` transcription pipeline.
+///
+/// ## Strategy
+/// A periodic **timer poll** (every `plaudSyncIntervalMinutes`, default 15) plus
+/// a manual "Synchroniseer nu". Each run: resolve a token (login from stored
+/// email+password, or use a pasted token), list recordings **newer than the last
+/// successful sync** (minus an overlap margin), dedup them against a persisted set
+/// of processed recording ids, download each new one's audio to a dedicated PLAUD
+/// dir, and enqueue it into ``FileImportService`` — which gives transcription,
+/// diarization, history, auto-export and AI for free. The interval clamp lives in
+/// the pure ``Core/PlaudSyncLogic``.
+///
+/// ## De-duplication across restarts
+/// Every downloaded recording's PLAUD `id` is persisted to a small
+/// `plaud-processed.json` (mirroring ``WatchedProcessedStore``), so relaunching
+/// never re-downloads a recording already run through the pipeline.
+///
+/// ## Robustness
+/// - Never crashes on API failure: every error maps to a Dutch status message.
+/// - Respects the importer busy-guard (won't stampede a live dictation/import).
+/// - A recording is only marked processed **after** it is successfully enqueued,
+///   so a mid-sync failure leaves it eligible for the next run.
+@MainActor
+@Observable
+final class PlaudSyncService {
+
+    // MARK: - Status (drives the Settings status area)
+
+    enum Status: Equatable {
+        case idle
+        case syncing
+        case success(imported: Int, at: Date)
+        case failed(String)
+    }
+
+    /// Live status for the UI. `lastError` persists the last failure text even
+    /// after a later success cleared `status`, for the "laatste fout" line.
+    private(set) var status: Status = .idle
+    /// Timestamp of the last completed (successful) sync.
+    private(set) var lastSyncedAt: Date?
+    /// Count of recordings imported in the last successful sync.
+    private(set) var lastImportedCount = 0
+    /// Human (Dutch) text of the last failure, or nil if the last run succeeded.
+    private(set) var lastError: String?
+    /// True while a sync run is in flight (guards against overlap).
+    private(set) var isSyncing = false
+
+    // MARK: - Dependencies
+
+    /// Current settings (enabled flag, interval, email). Read on demand.
+    private let settings: () -> AppSettings
+    /// Loads the PLAUD credentials (email+password/token) from the Keychain.
+    private let credentialsProvider: () -> PlaudCredentials?
+    /// Enqueues downloaded audio files into the transcription pipeline.
+    private let importer: (_ urls: [URL]) -> Void
+    /// True when the importer/dictation is busy and we must hold off this tick.
+    private let isBusy: () -> Bool
+    /// The client (injected for tests; default uses `.shared`).
+    private let client: PlaudClient
+    private let store: PlaudProcessedStore
+    /// Persists the last successful sync time so each run only asks PLAUD for
+    /// recordings newer than that (minus an overlap margin), instead of paging the
+    /// full history every tick.
+    private let checkpoint: PlaudSyncCheckpoint
+    /// Directory downloaded audio is saved to.
+    private let audioDirectory: URL
+
+    /// Recording ids already downloaded + enqueued (loaded from disk at init).
+    private var processed: Set<String>
+    /// The last successful sync time (loaded from disk at init), or nil on a first
+    /// run — a nil `since` lists the full history once, then narrows.
+    private var lastSuccessfulSync: Date?
+
+    private var timer: Timer?
+
+    /// How far *before* the last successful sync each run re-fetches, so a
+    /// recording that landed in PLAUD's cloud slightly out of `start_time` order
+    /// (or during the previous run) is never missed. One day is generous and cheap
+    /// (dedup drops anything already processed).
+    static let syncOverlapMargin: TimeInterval = 24 * 60 * 60
+
+    init(
+        settings: @escaping () -> AppSettings,
+        credentialsProvider: @escaping () -> PlaudCredentials? = { PlaudCredentials.load() },
+        importer: @escaping (_ urls: [URL]) -> Void,
+        isBusy: @escaping () -> Bool,
+        client: PlaudClient = PlaudClient(),
+        store: PlaudProcessedStore = PlaudProcessedStore(),
+        checkpoint: PlaudSyncCheckpoint = PlaudSyncCheckpoint(),
+        audioDirectory: URL? = nil
+    ) {
+        self.settings = settings
+        self.credentialsProvider = credentialsProvider
+        self.importer = importer
+        self.isBusy = isBusy
+        self.client = client
+        self.store = store
+        self.checkpoint = checkpoint
+        self.audioDirectory = audioDirectory ?? Self.defaultAudioDirectory
+        self.processed = store.load()
+        self.lastSuccessfulSync = checkpoint.load()
+    }
+
+    /// `~/Library/Application Support/Whisper Clipboard v2/PLAUD/`.
+    static var defaultAudioDirectory: URL {
+        AppSupport.baseDirectory.appendingPathComponent("PLAUD", isDirectory: true)
+    }
+
+    // MARK: - Lifecycle
+
+    /// Starts (or restarts) the poll timer to match the current settings. Safe to
+    /// call repeatedly — e.g. after the user toggles sync or changes the interval.
+    /// When sync is disabled, this simply stops the timer.
+    func start() {
+        timer?.invalidate()
+        timer = nil
+
+        guard settings().plaudSyncEnabled else { return }
+
+        // Kick a first sync shortly after enabling (not synchronously, so enabling
+        // the toggle stays snappy).
+        Task { [weak self] in await self?.syncIfDue(trigger: .automatic) }
+
+        let minutes = PlaudSyncLogic.clampIntervalMinutes(settings().plaudSyncIntervalMinutes)
+        let interval = TimeInterval(minutes * 60)
+        // Construct unscheduled and add once in `.common` mode so it keeps firing
+        // while menus/panels track the run loop — without also being registered in
+        // `.default` (which `Timer.scheduledTimer` would do).
+        let timer = Timer(timeInterval: interval, repeats: true) { [weak self] _ in
+            Task { @MainActor in await self?.syncIfDue(trigger: .automatic) }
+        }
+        RunLoop.main.add(timer, forMode: .common)
+        self.timer = timer
+    }
+
+    /// Stops polling (teardown; not required for app quit).
+    func stop() {
+        timer?.invalidate()
+        timer = nil
+    }
+
+    /// Re-reads settings and reschedules the timer (call after the user changes
+    /// the enabled flag or interval in Settings).
+    func refresh() {
+        start()
+    }
+
+    // MARK: - Sync
+
+    enum Trigger { case automatic, manual }
+
+    /// A manual "Synchroniseer nu": always attempts, even if busy is transiently
+    /// true (it still won't overlap another in-flight sync).
+    func syncNow() {
+        Task { await self.performSync(trigger: .manual) }
+    }
+
+    /// An automatic tick: skips when the importer/dictation is busy (the files
+    /// will be picked up next tick).
+    private func syncIfDue(trigger: Trigger) async {
+        guard settings().plaudSyncEnabled else { return }
+        if isBusy() { return }
+        await performSync(trigger: trigger)
+    }
+
+    /// The actual sync run. Never throws; maps every failure to `status`/`lastError`.
+    func performSync(trigger: Trigger) async {
+        guard !isSyncing else { return }
+
+        guard let credentials = credentialsProvider(), credentials.isConfigured else {
+            setFailure(PlaudError.missingCredentials.errorDescription ?? "Geen PLAUD-inloggegevens.")
+            return
+        }
+
+        isSyncing = true
+        status = .syncing
+        defer { isSyncing = false }
+
+        // Capture the run's start *before* the network call: on success we persist
+        // this as the new checkpoint, so anything that lands in PLAUD's cloud
+        // during this run is still re-fetched next time (belt-and-braces with the
+        // overlap margin below).
+        let runStartedAt = Date()
+        // Only ask PLAUD for recordings newer than the last success, minus an
+        // overlap margin; nil on a first run (full history once).
+        let since = lastSuccessfulSync.map { $0.addingTimeInterval(-Self.syncOverlapMargin) }
+
+        do {
+            let token = try await client.token(for: credentials)
+            let recordings = try await client.listRecordings(token: token, since: since)
+            // Single-pass dedup against the persisted processed set.
+            let toDownload = recordings.filter { !processed.contains($0.id) }
+
+            guard !toDownload.isEmpty else {
+                recordCheckpoint(runStartedAt)
+                setSuccess(imported: 0)
+                return
+            }
+
+            var importedURLs: [URL] = []
+            for recording in toDownload {
+                // A late busy check on automatic runs: don't fight a dictation that
+                // started mid-sync. Manual runs push through (the importer itself
+                // still guards, refusing while dictation records).
+                if trigger == .automatic, isBusy() { break }
+
+                let preferred = audioDirectory.appendingPathComponent(recording.suggestedFilenameStem + ".mp3")
+                let written: URL
+                do {
+                    // Use the *returned* URL — its extension may differ from the
+                    // requested .mp3 when PLAUD serves another format (e.g. opus).
+                    written = try await client.downloadAudio(recording, token: token, to: preferred)
+                } catch {
+                    // One failed download shouldn't abort the whole sync; leave it
+                    // unprocessed so the next run retries it.
+                    NSLog("PlaudSync: download failed for %@: %@", recording.id, String(describing: error))
+                    continue
+                }
+                importedURLs.append(written)
+                // Mark processed only after a successful download.
+                processed.insert(recording.id)
+            }
+
+            store.save(processed)
+            recordCheckpoint(runStartedAt)
+
+            if !importedURLs.isEmpty {
+                importer(importedURLs)
+            }
+            setSuccess(imported: importedURLs.count)
+        } catch let error as PlaudError {
+            setFailure(error.errorDescription ?? "PLAUD-fout.")
+        } catch {
+            setFailure(PlaudError.server(error.localizedDescription).errorDescription ?? "PLAUD-fout.")
+        }
+    }
+
+    // MARK: - Connection test
+
+    /// Validates credentials by logging in (or checking a pasted token via a
+    /// cheap list call). Returns a Dutch error message on failure, or nil on
+    /// success. Does not mutate sync state.
+    func testConnection(_ credentials: PlaudCredentials) async -> String? {
+        guard credentials.isConfigured else {
+            return PlaudError.missingCredentials.errorDescription
+        }
+        do {
+            let token = try await client.token(for: credentials)
+            // A pasted token is only proven valid by an actual authenticated call.
+            // Do the cheapest possible one: a single list page, no paging and no
+            // `since` heuristic — just enough to exercise auth + the list endpoint.
+            _ = try await client.probeConnection(token: token)
+            return nil
+        } catch let error as PlaudError {
+            return error.errorDescription
+        } catch {
+            return PlaudError.server(error.localizedDescription).errorDescription
+        }
+    }
+
+    // MARK: - Status helpers
+
+    /// Persists `date` as the new sync checkpoint (in memory + on disk) so the
+    /// next run only asks PLAUD for newer recordings.
+    private func recordCheckpoint(_ date: Date) {
+        lastSuccessfulSync = date
+        checkpoint.save(date)
+    }
+
+    private func setSuccess(imported: Int) {
+        let now = Date()
+        lastSyncedAt = now
+        lastImportedCount = imported
+        lastError = nil
+        status = .success(imported: imported, at: now)
+    }
+
+    private func setFailure(_ message: String) {
+        lastError = message
+        status = .failed(message)
+    }
+}
+
+// MARK: - Processed-set persistence
+
+/// Persists the set of already-downloaded PLAUD recording ids to
+/// `plaud-processed.json`, so restarts don't re-download recordings already run
+/// through the pipeline. A thin wrapper over the shared ``JSONIdentitySet``
+/// (same on-disk format: a sorted `[String]`).
+struct PlaudProcessedStore {
+
+    /// The fixed on-disk filename (unchanged, so existing state loads).
+    static let filename = "plaud-processed.json"
+
+    private let backing: JSONIdentitySet
+
+    /// Default location under Application Support next to the other v2 state.
+    /// Pass `fileURL` (tests) to redirect it elsewhere.
+    init(fileURL: URL? = nil) {
+        self.backing = JSONIdentitySet(filename: Self.filename, fileURL: fileURL)
+    }
+
+    /// Loads the persisted ids, or an empty set when absent/unreadable.
+    func load() -> Set<String> { backing.load() }
+
+    /// Persists `ids`. Best-effort: logs and swallows failures so a read-only
+    /// disk can never break sync.
+    func save(_ ids: Set<String>) { backing.save(ids) }
+}
+
+// MARK: - Sync checkpoint persistence
+
+/// Persists the last successful PLAUD sync time to `plaud-last-sync.json`, so
+/// each run only asks PLAUD for recordings newer than that (minus an overlap
+/// margin) instead of paging the full history every tick. Best-effort: a
+/// read-only disk degrades to "no checkpoint" (a full-history list), never a crash.
+struct PlaudSyncCheckpoint {
+
+    /// The fixed on-disk filename.
+    static let filename = "plaud-last-sync.json"
+
+    private let fileURL: URL
+
+    /// Default location under Application Support next to the other v2 state.
+    /// Pass `fileURL` (tests) to redirect it elsewhere.
+    init(fileURL: URL? = nil) {
+        self.fileURL = fileURL
+            ?? AppSupport.baseDirectory.appendingPathComponent(Self.filename, isDirectory: false)
+    }
+
+    /// The stored last-sync date, or nil when absent/unreadable (first run).
+    func load() -> Date? {
+        guard let data = try? Data(contentsOf: fileURL) else { return nil }
+        // Stored as a Unix-epoch seconds number for stability across coders.
+        if let seconds = try? JSONDecoder().decode(Double.self, from: data) {
+            return Date(timeIntervalSince1970: seconds)
+        }
+        return nil
+    }
+
+    /// Persists `date`. Best-effort: logs and swallows failures.
+    func save(_ date: Date) {
+        do {
+            try FileManager.default.createDirectory(
+                at: fileURL.deletingLastPathComponent(),
+                withIntermediateDirectories: true
+            )
+            let data = try JSONEncoder().encode(date.timeIntervalSince1970)
+            try data.write(to: fileURL, options: .atomic)
+        } catch {
+            NSLog("PlaudSyncCheckpoint: failed to save (%@)", String(describing: error))
+        }
+    }
+}

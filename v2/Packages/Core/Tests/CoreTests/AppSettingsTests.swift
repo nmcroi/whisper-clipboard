@@ -169,4 +169,41 @@ import Foundation
         #expect(decoded.autoExportFormat == "srt")
         #expect(decoded.watchedFolders == ["/Users/x/Inbox", "/Users/x/Recordings"])
     }
+
+    // MARK: - PLAUD sync fields
+
+    /// PLAUD sync defaults to OFF, 15-minute interval, no email (opt-in).
+    @Test func plaudDefaultsAreOff() {
+        let d = AppSettings()
+        #expect(d.plaudSyncEnabled == false)
+        #expect(d.plaudSyncIntervalMinutes == 15)
+        #expect(d.plaudEmail == "")
+    }
+
+    /// An older settings.json missing the PLAUD keys still decodes, each field
+    /// falling back to its default rather than failing the whole load.
+    @Test func plaudFieldsFallBackWhenMissingFromJSON() throws {
+        let json = """
+        {"hotkeyMode":"toggle","language":"nl","engine":"parakeet","cleanOutput":true,"replacements":[],"directInsertion":false,"insertionDeniedBundleIds":[],"saveRecordings":false,"saveCaptions":false,"initialPrompt":""}
+        """.data(using: .utf8)!
+        let decoded = try JSONDecoder().decode(AppSettings.self, from: json)
+        #expect(decoded.plaudSyncEnabled == false)
+        #expect(decoded.plaudSyncIntervalMinutes == 15)
+        #expect(decoded.plaudEmail == "")
+    }
+
+    /// Explicit PLAUD values round-trip through JSON coding.
+    @Test func plaudFieldsRoundTripThroughCoding() throws {
+        var settings = AppSettings()
+        settings.plaudSyncEnabled = true
+        settings.plaudSyncIntervalMinutes = 30
+        settings.plaudEmail = "niels@example.com"
+
+        let data = try JSONEncoder().encode(settings)
+        let decoded = try JSONDecoder().decode(AppSettings.self, from: data)
+
+        #expect(decoded.plaudSyncEnabled == true)
+        #expect(decoded.plaudSyncIntervalMinutes == 30)
+        #expect(decoded.plaudEmail == "niels@example.com")
+    }
 }

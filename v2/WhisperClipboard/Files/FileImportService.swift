@@ -78,12 +78,16 @@ final class ImportJob: Identifiable {
 
     let id = UUID()
     let url: URL
+    /// The history `source` tag for the resulting transcript ("file" for a normal
+    /// import, "plaud" for a PLAUD cloud sync). Defaults to "file".
+    let source: String
     /// Filename stem used as the history entry name.
     var displayName: String { url.deletingPathExtension().lastPathComponent }
     var state: State
 
-    init(url: URL, state: State = .waiting) {
+    init(url: URL, source: String = "file", state: State = .waiting) {
         self.url = url
+        self.source = source
         self.state = state
     }
 }
@@ -164,8 +168,11 @@ final class FileImportService {
     /// Enqueues `urls` for import. Unsupported files are rejected immediately with
     /// a Dutch notification. Refuses entirely (with a notification) while dictation
     /// is active. Returns the jobs actually enqueued.
+    ///
+    /// `source` tags the resulting history entries ("file" for a normal import,
+    /// "plaud" for a PLAUD cloud sync); it does not change the pipeline otherwise.
     @discardableResult
-    func importFiles(_ urls: [URL]) -> [ImportJob] {
+    func importFiles(_ urls: [URL], source: String = "file") -> [ImportJob] {
         if let reason = busyReason() {
             notify(reason)
             return []
@@ -177,7 +184,7 @@ final class FileImportService {
                 notify(FileImportError.unsupportedType.errorDescription ?? "Niet-ondersteund bestand.")
                 continue
             }
-            let job = ImportJob(url: url)
+            let job = ImportJob(url: url, source: source)
             jobs.append(job)
             enqueued.append(job)
         }
@@ -264,7 +271,7 @@ final class FileImportService {
                 duration: decoded.duration
             )
 
-            try store(text: text, segments: segments, duration: decoded.duration, name: job.displayName)
+            try store(text: text, segments: segments, duration: decoded.duration, name: job.displayName, source: job.source)
             copyToClipboard(text)
             job.state = .done
             notify("\(job.url.lastPathComponent) is getranscribeerd en gekopieerd")
@@ -321,7 +328,7 @@ final class FileImportService {
         }
     }
 
-    private func store(text: String, segments: [Core.TranscriptSegment], duration: Double, name: String) throws {
+    private func store(text: String, segments: [Core.TranscriptSegment], duration: Double, name: String, source: String = "file") throws {
         let entry = TranscriptEntry(
             id: UUID().uuidString,
             text: text,
@@ -330,7 +337,7 @@ final class FileImportService {
             pinned: false,
             language: locale().language.languageCode?.identifier ?? "nl",
             model: "parakeet-tdt-0.6b-v3",
-            source: "file",
+            source: source,
             duration: duration,
             segments: segments
         )
