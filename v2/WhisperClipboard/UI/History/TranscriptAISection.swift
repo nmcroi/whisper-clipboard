@@ -13,12 +13,18 @@ struct TranscriptAISection: View {
     /// Opens the Settings window (to the AI tab) so the user can add a key.
     var onOpenSettings: () -> Void
 
+    /// The free-form one-off prompt the user is typing.
+    @State private var promptDraft = ""
+    /// Confirmation feedback after saving a one-off prompt as a mode.
+    @State private var savedAsModeName: String?
+
     var body: some View {
         VStack(alignment: .leading, spacing: 14) {
             header
 
             if modes.hasAPIKey {
                 chipRow
+                freePromptField
                 // Live, in-progress runs for this transcript.
                 ForEach(activeRuns) { run in
                     AIRunCard(run: run)
@@ -58,31 +64,120 @@ struct TranscriptAISection: View {
     }
 
     private var chipRow: some View {
-        // Wrapping row of mode chips.
-        FlowLayout(spacing: 8) {
-            ForEach(modes.allModes) { mode in
-                Button {
-                    modes.run(mode: mode, on: entry)
-                } label: {
-                    HStack(spacing: 6) {
-                        Image(systemName: mode.icon).font(.system(size: 11))
-                        Text(mode.name)
+        // Mode chips grouped by category, each category on its own labelled row.
+        VStack(alignment: .leading, spacing: 10) {
+            ForEach(AIMode.grouped(modes.allModes), id: \.category) { group in
+                VStack(alignment: .leading, spacing: 6) {
+                    Text(group.category.rawValue.uppercased())
+                        .font(ThemeFont.ui(9, weight: .semibold))
+                        .foregroundStyle(Theme.textTertiary)
+                    FlowLayout(spacing: 8) {
+                        ForEach(group.modes) { mode in
+                            chip(for: mode)
+                        }
                     }
-                    .font(ThemeFont.ui(12, weight: .medium))
-                    .foregroundStyle(Theme.onAccent)
-                    .padding(.horizontal, 12)
-                    .padding(.vertical, 7)
-                    .background(Theme.accent)
-                    .clipShape(Capsule())
                 }
-                .buttonStyle(.plain)
-                .help(mode.name)
             }
         }
     }
 
+    private func chip(for mode: AIMode) -> some View {
+        Button {
+            modes.run(mode: mode, on: entry)
+        } label: {
+            HStack(spacing: 6) {
+                Image(systemName: mode.icon).font(.system(size: 11))
+                Text(mode.name)
+            }
+            .font(ThemeFont.ui(12, weight: .medium))
+            .foregroundStyle(Theme.onAccent)
+            .padding(.horizontal, 12)
+            .padding(.vertical, 7)
+            .background(Theme.accent)
+            .clipShape(Capsule())
+        }
+        .buttonStyle(.plain)
+        .help(mode.name)
+    }
+
+    // MARK: - Free-form prompt
+
+    private var trimmedPrompt: String {
+        promptDraft.trimmingCharacters(in: .whitespacesAndNewlines)
+    }
+
+    private var freePromptField: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            HStack(alignment: .top, spacing: 8) {
+                TextField(
+                    "Vraag iets over deze transcriptie… bv. 'maak een verslag voor de huisarts' of 'haal alle afspraken met datums eruit'",
+                    text: $promptDraft,
+                    axis: .vertical
+                )
+                .textFieldStyle(.plain)
+                .lineLimit(1...4)
+                .font(ThemeFont.ui(12))
+                .foregroundStyle(Theme.text)
+                .padding(.horizontal, 10)
+                .padding(.vertical, 8)
+                .background(Theme.surfaceHover)
+                .clipShape(RoundedRectangle(cornerRadius: Theme.Metrics.radius))
+                .overlay(RoundedRectangle(cornerRadius: Theme.Metrics.radius).strokeBorder(Theme.border, lineWidth: 1))
+                .onSubmit(runFreePrompt)
+
+                Button(action: runFreePrompt) {
+                    Image(systemName: "arrow.up")
+                        .font(.system(size: 12, weight: .bold))
+                        .foregroundStyle(Theme.onAccent)
+                        .frame(width: 32, height: 32)
+                        .background(trimmedPrompt.isEmpty ? Theme.accentSoft : Theme.accent)
+                        .clipShape(RoundedRectangle(cornerRadius: Theme.Metrics.radius))
+                }
+                .buttonStyle(.plain)
+                .disabled(trimmedPrompt.isEmpty)
+                .help("Voer deze opdracht uit")
+            }
+
+            if !trimmedPrompt.isEmpty {
+                Button {
+                    saveDraftAsMode()
+                } label: {
+                    Label("Bewaar als modus", systemImage: "bookmark")
+                        .font(ThemeFont.ui(11, weight: .medium))
+                        .foregroundStyle(Theme.textSecondary)
+                }
+                .buttonStyle(.plain)
+                .help("Bewaar deze opdracht als een herbruikbare modus")
+            } else if let name = savedAsModeName {
+                Label("Bewaard als \"\(name)\" — te vinden bij Instellingen", systemImage: "checkmark.circle.fill")
+                    .font(ThemeFont.ui(11))
+                    .foregroundStyle(Theme.accent)
+            }
+        }
+    }
+
+    private func runFreePrompt() {
+        let instruction = trimmedPrompt
+        guard !instruction.isEmpty else { return }
+        modes.run(instruction: instruction, on: entry)
+        promptDraft = ""
+        savedAsModeName = nil
+    }
+
+    private func saveDraftAsMode() {
+        let instruction = trimmedPrompt
+        guard !instruction.isEmpty else { return }
+        let name = ModesService.freePromptLabel(for: instruction)
+            .replacingOccurrences(of: "Eigen prompt: ", with: "")
+        let systemPrompt = ModesService.freeInstructionSystemPrompt(instruction)
+        if let mode = try? modes.addMode(name: name, systemPrompt: systemPrompt, icon: "sparkles") {
+            savedAsModeName = mode.name
+            promptDraft = ""
+        }
+    }
+
     private var emptyHint: some View {
-        Text("Kies een modus hierboven om deze transcriptie door Claude te laten verwerken.")
+        Text("Kies een modus hierboven of typ een eigen opdracht om deze transcriptie door Claude te laten verwerken.")
             .font(ThemeFont.ui(12))
             .foregroundStyle(Theme.textSecondary)
             .fixedSize(horizontal: false, vertical: true)

@@ -109,6 +109,68 @@ final class ModesService {
         )
     }
 
+    // MARK: - Free-form one-off instruction
+
+    /// The stable mode id used for free-form ("Eigen prompt") runs so they can
+    /// be recognised in history and never collide with a saved mode.
+    static let freePromptModeId = "builtin.free_prompt"
+
+    /// Builds the system prompt for a free-form instruction: a fixed framing that
+    /// tells Claude to execute the user's instruction against the transcript, in
+    /// Dutch, without preamble.
+    static func freeInstructionSystemPrompt(_ instruction: String) -> String {
+        """
+        Je bent een assistent die de volgende opdracht uitvoert op een \
+        transcriptie. Antwoord in de taal van het transcript (meestal Nederlands), \
+        zonder inleiding en zonder meta-opmerkingen — lever uitsluitend het \
+        gevraagde resultaat.
+
+        Opdracht: \(instruction.trimmingCharacters(in: .whitespacesAndNewlines))
+        """
+    }
+
+    /// A short, single-line label derived from a free-form instruction, used as
+    /// the result's `modeName` so history shows what was asked.
+    static func freePromptLabel(for instruction: String) -> String {
+        let flattened = instruction
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+            .replacingOccurrences(of: "\n", with: " ")
+        let collapsed = flattened
+            .split(whereSeparator: { $0 == " " })
+            .joined(separator: " ")
+        let prefix = "Eigen prompt: "
+        let maxInstruction = 60
+        if collapsed.count <= maxInstruction {
+            return prefix + collapsed
+        }
+        let clipped = String(collapsed.prefix(maxInstruction)).trimmingCharacters(in: .whitespaces)
+        return prefix + clipped + "…"
+    }
+
+    /// Builds a synthetic (non-builtin) ``AIMode`` that carries a free-form
+    /// instruction as its system prompt, so the same streaming/persistence path
+    /// as ``run(mode:on:)`` can drive it. The mode's `name` becomes the history
+    /// label showing what was asked.
+    static func freeInstructionMode(_ instruction: String) -> AIMode {
+        AIMode(
+            id: freePromptModeId,
+            name: freePromptLabel(for: instruction),
+            systemPrompt: freeInstructionSystemPrompt(instruction),
+            icon: "sparkles",
+            category: .schrijven,
+            isBuiltin: false
+        )
+    }
+
+    /// Runs an arbitrary user instruction against `transcript` (not a saved
+    /// mode), streaming into a returned ``AIRun`` and persisting the completed
+    /// result exactly like ``run(mode:on:)``. The stored result's `modeName`
+    /// reflects the instruction so history shows what was asked.
+    @discardableResult
+    func run(instruction: String, on transcript: TranscriptEntry) -> AIRun {
+        run(mode: Self.freeInstructionMode(instruction), on: transcript)
+    }
+
     // MARK: - Running a mode
 
     /// Runs `mode` against `transcript`, streaming into a returned ``AIRun``. On

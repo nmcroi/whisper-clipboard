@@ -125,16 +125,29 @@ struct AISettingsView: View {
                 }
                 .buttonStyle(AccentButtonStyle())
             }
+            Text("Ingebouwde modi zijn alleen-lezen; dupliceer er een om hem aan te passen.")
+                .font(ThemeFont.ui(11))
+                .foregroundStyle(Theme.textSecondary)
+                .fixedSize(horizontal: false, vertical: true)
 
-            VStack(spacing: 0) {
-                ForEach(Array(modes.allModes.enumerated()), id: \.element.id) { index, mode in
-                    modeRow(mode)
-                    if index < modes.allModes.count - 1 {
-                        Divider().overlay(Theme.border)
+            // Grouped by category, one card per category.
+            ForEach(AIMode.grouped(modes.allModes), id: \.category) { group in
+                VStack(alignment: .leading, spacing: 6) {
+                    Label(group.category.rawValue, systemImage: group.category.icon)
+                        .font(ThemeFont.ui(11, weight: .semibold))
+                        .foregroundStyle(Theme.textSecondary)
+
+                    VStack(spacing: 0) {
+                        ForEach(Array(group.modes.enumerated()), id: \.element.id) { index, mode in
+                            modeRow(mode)
+                            if index < group.modes.count - 1 {
+                                Divider().overlay(Theme.border)
+                            }
+                        }
                     }
+                    .themeCard()
                 }
             }
-            .themeCard()
         }
     }
 
