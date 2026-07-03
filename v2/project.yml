@@ -106,6 +106,8 @@ targets:
       - package: GRDB
         product: GRDB
       - package: Core
+      # FluidAudio is used by the gated diarization E2E test (SystemInfo guard).
+      - package: FluidAudio
     settings:
       base:
         PRODUCT_BUNDLE_IDENTIFIER: nl.nielscroiset.whisperclipboardTests

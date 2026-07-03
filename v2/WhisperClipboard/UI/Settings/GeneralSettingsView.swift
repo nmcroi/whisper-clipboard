@@ -22,6 +22,8 @@ struct GeneralSettingsView: View {
                 Divider().overlay(Theme.border)
                 captionsSection
                 Divider().overlay(Theme.border)
+                diarizationSection
+                Divider().overlay(Theme.border)
                 hudSection
                 Divider().overlay(Theme.border)
                 loginItemSection
@@ -129,6 +131,33 @@ struct GeneralSettingsView: View {
                         .font(ThemeFont.ui(13, weight: .medium))
                         .foregroundStyle(Theme.text)
                     Text("Bewaart het volledige transcript van een ondertitel-sessie in de geschiedenis wanneer je stopt.")
+                        .font(ThemeFont.ui(11))
+                        .foregroundStyle(Theme.textSecondary)
+                        .fixedSize(horizontal: false, vertical: true)
+                }
+            }
+            .toggleStyle(.switch)
+            .tint(Theme.accent)
+        }
+    }
+
+    // MARK: - Speaker diarization
+
+    private var diarizationSection: some View {
+        VStack(alignment: .leading, spacing: 10) {
+            Text("Sprekers")
+                .font(ThemeFont.ui(15, weight: .semibold))
+                .foregroundStyle(Theme.text)
+
+            Toggle(isOn: Binding(
+                get: { environment.settings.diarizeImports },
+                set: { environment.settings.diarizeImports = $0 }
+            )) {
+                VStack(alignment: .leading, spacing: 2) {
+                    Text("Sprekers herkennen bij bestandsimport")
+                        .font(ThemeFont.ui(13, weight: .medium))
+                        .foregroundStyle(Theme.text)
+                    Text("Labelt automatisch ‘Spreker 1’, ‘Spreker 2’ enz. bij geïmporteerde gesprekken en interviews. Bij het eerste gebruik wordt eenmalig een klein sprekermodel gedownload (±14 MB).")
                         .font(ThemeFont.ui(11))
                         .foregroundStyle(Theme.textSecondary)
                         .fixedSize(horizontal: false, vertical: true)

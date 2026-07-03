@@ -29,6 +29,9 @@ public struct AppSettings: Codable, Equatable, Sendable {
     public var saveRecordings: Bool
     /// Save the full transcript of a live-captions session to history on stop.
     public var saveCaptions: Bool
+    /// Detect speakers ("Spreker 1/2/…") when importing audio/video files.
+    /// Default on; runs an extra on-device diarization pass after transcription.
+    public var diarizeImports: Bool
     /// `nil` means unlimited history retention.
     public var historyRetention: Int?
     public var initialPrompt: String
@@ -47,6 +50,7 @@ public struct AppSettings: Codable, Equatable, Sendable {
         insertionDeniedBundleIds: [String] = [],
         saveRecordings: Bool = false,
         saveCaptions: Bool = false,
+        diarizeImports: Bool = true,
         historyRetention: Int? = nil,
         initialPrompt: String = "",
         hudLingerSeconds: Double = 3.0
@@ -60,6 +64,7 @@ public struct AppSettings: Codable, Equatable, Sendable {
         self.insertionDeniedBundleIds = insertionDeniedBundleIds
         self.saveRecordings = saveRecordings
         self.saveCaptions = saveCaptions
+        self.diarizeImports = diarizeImports
         self.historyRetention = historyRetention
         self.initialPrompt = initialPrompt
         self.hudLingerSeconds = hudLingerSeconds
@@ -71,6 +76,7 @@ public struct AppSettings: Codable, Equatable, Sendable {
     private enum CodingKeys: String, CodingKey {
         case hotkeyMode, language, engine, cleanOutput, replacements
         case directInsertion, insertionDeniedBundleIds, saveRecordings, saveCaptions
+        case diarizeImports
         case historyRetention, initialPrompt, hudLingerSeconds
     }
 
@@ -86,6 +92,7 @@ public struct AppSettings: Codable, Equatable, Sendable {
         self.insertionDeniedBundleIds = try c.decodeIfPresent([String].self, forKey: .insertionDeniedBundleIds) ?? d.insertionDeniedBundleIds
         self.saveRecordings = try c.decodeIfPresent(Bool.self, forKey: .saveRecordings) ?? d.saveRecordings
         self.saveCaptions = try c.decodeIfPresent(Bool.self, forKey: .saveCaptions) ?? d.saveCaptions
+        self.diarizeImports = try c.decodeIfPresent(Bool.self, forKey: .diarizeImports) ?? d.diarizeImports
         self.historyRetention = try c.decodeIfPresent(Int.self, forKey: .historyRetention) ?? d.historyRetention
         self.initialPrompt = try c.decodeIfPresent(String.self, forKey: .initialPrompt) ?? d.initialPrompt
         self.hudLingerSeconds = try c.decodeIfPresent(Double.self, forKey: .hudLingerSeconds) ?? d.hudLingerSeconds

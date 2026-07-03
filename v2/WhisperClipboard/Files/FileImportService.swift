@@ -62,13 +62,16 @@ final class ImportJob: Identifiable {
         case waiting
         case decoding(progress: Double)
         case transcribing
+        /// Running speaker diarization after transcription. `progress` is the
+        /// model-download fraction on first use, or nil once models are cached.
+        case diarizing(progress: Double?)
         case done
         case failed(message: String)
 
         var isTerminal: Bool {
             switch self {
             case .done, .failed: return true
-            case .waiting, .decoding, .transcribing: return false
+            case .waiting, .decoding, .transcribing, .diarizing: return false
             }
         }
     }
@@ -113,6 +116,9 @@ final class FileImportService {
 
     // Dependencies.
     private let engine: ParakeetEngine
+    /// Speaker diarization (who-spoke-when) for imports. Optional so tests and
+    /// non-Apple-Silicon builds can omit it; when nil, imports never diarize.
+    private let diarizer: DiarizationService?
     private let history: HistoryStore
     private let locale: () -> Locale
     /// Current app settings, read on demand so the personal woordenlijst
@@ -133,11 +139,13 @@ final class FileImportService {
         history: HistoryStore,
         locale: @escaping () -> Locale,
         busyReason: @escaping () -> String?,
+        diarizer: DiarizationService? = nil,
         settings: @escaping () -> AppSettings = { AppSettings() },
         notify: @escaping (String) -> Void = { Notifications.post($0) },
         copyToClipboard: @escaping (String) -> Void = { Clipboard.copy($0) }
     ) {
         self.engine = engine
+        self.diarizer = diarizer
         self.history = history
         self.locale = locale
         self.settings = settings
@@ -239,7 +247,16 @@ final class FileImportService {
                 throw FileImportError.emptyTranscript
             }
 
-            try store(text: text, segments: result.segments, duration: decoded.duration, name: job.displayName)
+            // Optional speaker diarization. Never fails the import: on any
+            // diarizer error we log and keep the transcript without speakers.
+            let segments = await diarizeIfEnabled(
+                job: job,
+                segments: result.segments,
+                samples: samples,
+                duration: decoded.duration
+            )
+
+            try store(text: text, segments: segments, duration: decoded.duration, name: job.displayName)
             copyToClipboard(text)
             job.state = .done
             notify("\(job.url.lastPathComponent) is getranscribeerd en gekopieerd")
@@ -251,6 +268,48 @@ final class FileImportService {
         }
         if let tempURL {
             try? FileManager.default.removeItem(at: tempURL)
+        }
+    }
+
+    /// Minimum source duration (seconds) worth diarizing. Short clips rarely
+    /// have multiple speakers and diarization on <10s is unreliable.
+    private static let minDiarizeDuration: Double = 10
+
+    /// Runs speaker diarization + merge when enabled and applicable, returning
+    /// the (possibly speaker-labelled) segments. Guarantees it never throws:
+    /// any failure logs and returns the original segments unchanged.
+    private func diarizeIfEnabled(
+        job: ImportJob,
+        segments: [Core.TranscriptSegment],
+        samples: [Float],
+        duration: Double
+    ) async -> [Core.TranscriptSegment] {
+        guard settings().diarizeImports else { return segments }
+        guard let diarizer else { return segments }
+        guard duration >= Self.minDiarizeDuration else { return segments }
+        guard !segments.isEmpty else { return segments }
+
+        job.state = .diarizing(progress: nil)
+
+        // Only surface a download fraction on first use (models not yet cached).
+        let needsDownload = !DiarizationService.modelsPresentOnDisk
+        let jobId = job.id
+        let progressHandler: @Sendable (Double) -> Void = { [weak self] fraction in
+            guard needsDownload else { return }
+            Task { @MainActor [weak self] in
+                guard let self, let job = self.jobs.first(where: { $0.id == jobId }) else { return }
+                if case .diarizing = job.state { job.state = .diarizing(progress: fraction) }
+            }
+        }
+
+        do {
+            let turns = try await diarizer.diarize(samples: samples, progress: progressHandler)
+            guard !turns.isEmpty else { return segments }
+            return SpeakerMerge.assign(segments: segments, turns: turns)
+        } catch {
+            // Keep the transcript without speakers — diarization is best-effort.
+            NSLog("Diarization failed for %@: %@", job.displayName, String(describing: error))
+            return segments
         }
     }
 

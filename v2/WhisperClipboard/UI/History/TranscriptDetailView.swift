@@ -83,6 +83,10 @@ struct TranscriptDetailView: View {
             if entry.pinned {
                 metaItem(icon: "pin.fill", text: "Vastgezet", tint: Theme.accent)
             }
+            if speakerCount > 0 {
+                metaItem(icon: "person.2.fill",
+                         text: speakerCount == 1 ? "1 spreker" : "\(speakerCount) sprekers")
+            }
             Spacer(minLength: 0)
         }
         .font(ThemeFont.ui(11, weight: .medium))
@@ -171,11 +175,16 @@ struct TranscriptDetailView: View {
                             .font(ThemeFont.ui(11, weight: .medium).monospaced())
                             .foregroundStyle(Theme.accent)
                             .frame(width: 44, alignment: .leading)
-                        Text(seg.text)
-                            .font(ThemeFont.ui(13))
-                            .foregroundStyle(Theme.text)
-                            .textSelection(.enabled)
-                            .frame(maxWidth: .infinity, alignment: .leading)
+                        VStack(alignment: .leading, spacing: 4) {
+                            if let speaker = seg.speaker, !speaker.isEmpty {
+                                speakerChip(speaker)
+                            }
+                            Text(seg.text)
+                                .font(ThemeFont.ui(13))
+                                .foregroundStyle(Theme.text)
+                                .textSelection(.enabled)
+                                .frame(maxWidth: .infinity, alignment: .leading)
+                        }
                     }
                     .padding(.vertical, 8)
                     .padding(.horizontal, 12)
@@ -188,10 +197,50 @@ struct TranscriptDetailView: View {
         }
     }
 
+    /// A small colored chip labelling the speaker for a segment.
+    private func speakerChip(_ speaker: String) -> some View {
+        Text(speaker)
+            .font(ThemeFont.ui(10, weight: .semibold))
+            .foregroundStyle(Theme.window)
+            .padding(.horizontal, 7)
+            .padding(.vertical, 2)
+            .background(Self.speakerColor(for: speaker))
+            .clipShape(Capsule())
+    }
+
     // MARK: - Helpers
 
     private var resolvedSegments: [TranscriptSegment] {
         entry.segments.filter { !$0.text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty }
+    }
+
+    /// Number of distinct speakers labelled across the segments.
+    private var speakerCount: Int {
+        Set(entry.segments.compactMap { seg -> String? in
+            guard let s = seg.speaker, !s.isEmpty else { return nil }
+            return s
+        }).count
+    }
+
+    /// Deterministic warm color per speaker label (yellows / oranges / warm
+    /// grays — deliberately no blue, matching the app's black/yellow/red theme).
+    private static let speakerPalette: [Color] = [
+        Color(red: 0.98, green: 0.78, blue: 0.20),  // amber-yellow (accent-ish)
+        Color(red: 0.92, green: 0.52, blue: 0.18),  // warm orange
+        Color(red: 0.85, green: 0.68, blue: 0.42),  // tan
+        Color(red: 0.95, green: 0.62, blue: 0.35),  // apricot
+        Color(red: 0.72, green: 0.64, blue: 0.52),  // warm gray
+        Color(red: 0.90, green: 0.72, blue: 0.30),  // gold
+    ]
+
+    static func speakerColor(for speaker: String) -> Color {
+        // Prefer the trailing number ("Spreker 1" → 0) so colors track speaker
+        // order; fall back to a stable hash for any non-numbered label.
+        if let n = Int(speaker.split(separator: " ").last ?? "") {
+            return speakerPalette[(n - 1 + speakerPalette.count) % speakerPalette.count]
+        }
+        let idx = abs(speaker.hashValue) % speakerPalette.count
+        return speakerPalette[idx]
     }
 
     private func commitTitle() {

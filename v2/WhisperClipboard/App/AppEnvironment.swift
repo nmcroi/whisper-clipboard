@@ -53,6 +53,9 @@ final class AppEnvironment: ObservableObject {
     let appleSpeechEngine = AppleSpeechEngine()
     let parakeetEngine = ParakeetEngine()
 
+    /// Speaker diarization for file imports (loaded lazily on first use).
+    let diarizationService = DiarizationService()
+
     /// The engine actually driving dictation this launch.
     let activeEngine: any TranscriptionEngine
 
@@ -135,6 +138,7 @@ final class AppEnvironment: ObservableObject {
                     return nil
                 }
             },
+            diarizer: diarizationService,
             settings: { settingsRef() }
         )
 

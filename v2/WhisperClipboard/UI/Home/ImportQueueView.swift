@@ -85,7 +85,7 @@ private struct ImportJobRow: View {
 
     @ViewBuilder private var trailing: some View {
         switch job.state {
-        case .transcribing:
+        case .transcribing, .diarizing:
             ProgressView()
                 .controlSize(.small)
                 .tint(Theme.accent)
@@ -123,6 +123,9 @@ private struct ImportJobRow: View {
         case .waiting: return "In wachtrij…"
         case .decoding(let p): return "Bestand lezen… \(Int((p * 100).rounded()))%"
         case .transcribing: return "Transcriberen…"
+        case .diarizing(let p):
+            if let p { return "Sprekermodel downloaden… \(Int((p * 100).rounded()))%" }
+            return "Sprekers herkennen…"
         case .done: return "Getranscribeerd en gekopieerd"
         case .failed(let message): return message
         }

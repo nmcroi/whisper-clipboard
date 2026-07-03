@@ -123,20 +123,39 @@ public enum Exporter {
     /// text) triples to render, falling back to a single synthetic segment
     /// spanning the whole entry when no real segments carry text.
     static func resolvedSegments(for entry: TranscriptEntry) -> [(start: Double, end: Double, text: String)] {
-        var result: [(start: Double, end: Double, text: String)] = []
+        resolvedSpeakerSegments(for: entry).map { ($0.start, $0.end, $0.text) }
+    }
+
+    /// Speaker-aware variant of ``resolvedSegments(for:)``: the same effective
+    /// segment list, but preserving each segment's optional `speaker` label.
+    /// The synthetic full-range fallback (no real segments) carries no speaker.
+    static func resolvedSpeakerSegments(
+        for entry: TranscriptEntry
+    ) -> [(start: Double, end: Double, text: String, speaker: String?)] {
+        var result: [(start: Double, end: Double, text: String, speaker: String?)] = []
         for segment in entry.segments {
             let text = segment.text.trimmingCharacters(in: .whitespacesAndNewlines)
             if !text.isEmpty {
-                result.append((segment.start, segment.end, text))
+                result.append((segment.start, segment.end, text, segment.speaker))
             }
         }
         if result.isEmpty {
             let trimmedText = entry.text.trimmingCharacters(in: .whitespacesAndNewlines)
             if !trimmedText.isEmpty {
-                result.append((0.0, max(entry.duration, 1.0), trimmedText))
+                result.append((0.0, max(entry.duration, 1.0), trimmedText, nil))
             }
         }
         return result
+    }
+
+    /// True when any resolved segment carries a speaker label. Speaker-aware
+    /// renderers only alter their output when this holds; otherwise output
+    /// stays byte-identical to the pre-diarization format.
+    static func hasSpeakers(_ entry: TranscriptEntry) -> Bool {
+        entry.segments.contains { segment in
+            guard let speaker = segment.speaker, !speaker.isEmpty else { return false }
+            return !segment.text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+        }
     }
 
     /// Mirrors `_timecode`.
@@ -154,17 +173,55 @@ public enum Exporter {
 
     // MARK: - Renderers
 
-    /// Mirrors `to_txt`.
+    /// Mirrors `to_txt`. When the entry carries speaker labels, the body is
+    /// rendered as speaker-grouped turns ("Spreker 1: …") instead of the raw
+    /// flat text; without speakers the output is byte-identical to before.
     public static func toText(_ entry: TranscriptEntry) -> String {
-        rstrip(entry.text) + "\n"
+        guard hasSpeakers(entry) else {
+            return rstrip(entry.text) + "\n"
+        }
+        let body = speakerTurns(for: entry)
+            .map { "\($0.speaker): \($0.text)" }
+            .joined(separator: "\n\n")
+        return rstrip(body) + "\n"
     }
 
-    /// Mirrors `to_markdown`.
+    /// Mirrors `to_markdown`. With speaker labels the body becomes bold
+    /// speaker-turn paragraphs ("**Spreker 1:** …"); without them the output
+    /// is byte-identical to the pre-diarization format.
     public static func toMarkdown(_ entry: TranscriptEntry) -> String {
         let moment = markdownTimestamp(for: entry)
         let trimmedName = entry.name.trimmingCharacters(in: .whitespacesAndNewlines)
         let title = trimmedName.isEmpty ? moment : trimmedName
-        return "# \(title)\n\n_\(moment)_\n\n\(rstrip(entry.text))\n"
+        let body: String
+        if hasSpeakers(entry) {
+            body = speakerTurns(for: entry)
+                .map { "**\($0.speaker):** \($0.text)" }
+                .joined(separator: "\n\n")
+        } else {
+            body = entry.text
+        }
+        return "# \(title)\n\n_\(moment)_\n\n\(rstrip(body))\n"
+    }
+
+    /// Groups resolved segments into consecutive same-speaker turns, joining a
+    /// turn's segment texts with a single space. Only called when the entry has
+    /// speakers; segments with no speaker fall under a "Spreker ?" turn so no
+    /// text is dropped (should not occur once merge assigns a label to overlaps).
+    private static func speakerTurns(
+        for entry: TranscriptEntry
+    ) -> [(speaker: String, text: String)] {
+        var turns: [(speaker: String, text: String)] = []
+        for segment in resolvedSpeakerSegments(for: entry) {
+            let speaker = segment.speaker ?? "Spreker ?"
+            if var last = turns.last, last.speaker == speaker {
+                last.text += " " + segment.text
+                turns[turns.count - 1] = last
+            } else {
+                turns.append((speaker, segment.text))
+            }
+        }
+        return turns
     }
 
     private static func markdownTimestamp(for entry: TranscriptEntry) -> String {
@@ -199,7 +256,14 @@ public enum Exporter {
                 lines.append("    {")
                 lines.append("      \"start\": \(jsonNumber(segment.start)),")
                 lines.append("      \"end\": \(jsonNumber(segment.end)),")
-                lines.append("      \"text\": \(jsonString(segment.text))")
+                // The `speaker` field is only emitted when present, so segments
+                // without a speaker stay byte-identical to the pre-diarization JSON.
+                if let speaker = segment.speaker {
+                    lines.append("      \"text\": \(jsonString(segment.text)),")
+                    lines.append("      \"speaker\": \(jsonString(speaker))")
+                } else {
+                    lines.append("      \"text\": \(jsonString(segment.text))")
+                }
                 lines.append(isLast ? "    }" : "    },")
             }
             lines.append("  ]")
@@ -208,26 +272,37 @@ public enum Exporter {
         return lines.joined(separator: "\n") + "\n"
     }
 
-    /// Mirrors `to_srt`.
+    /// Mirrors `to_srt`. When a segment carries a speaker, the cue text is
+    /// prefixed "Spreker 1: tekst"; speaker-less cues are unchanged.
     public static func toSRT(_ entry: TranscriptEntry) -> String {
         var blocks: [String] = []
-        for (index, segment) in resolvedSegments(for: entry).enumerated() {
+        for (index, segment) in resolvedSpeakerSegments(for: entry).enumerated() {
             let start = timecode(segment.start, separator: ",")
             let end = timecode(max(segment.end, segment.start), separator: ",")
-            blocks.append("\(index + 1)\n\(start) --> \(end)\n\(segment.text)\n")
+            let cue = cueText(text: segment.text, speaker: segment.speaker)
+            blocks.append("\(index + 1)\n\(start) --> \(end)\n\(cue)\n")
         }
         return blocks.joined(separator: "\n")
     }
 
-    /// Mirrors `to_vtt`.
+    /// Mirrors `to_vtt`. When a segment carries a speaker, the cue text is
+    /// prefixed "Spreker 1: tekst"; speaker-less cues are unchanged.
     public static func toVTT(_ entry: TranscriptEntry) -> String {
         var blocks: [String] = ["WEBVTT\n"]
-        for segment in resolvedSegments(for: entry) {
+        for segment in resolvedSpeakerSegments(for: entry) {
             let start = timecode(segment.start, separator: ".")
             let end = timecode(max(segment.end, segment.start), separator: ".")
-            blocks.append("\(start) --> \(end)\n\(segment.text)\n")
+            let cue = cueText(text: segment.text, speaker: segment.speaker)
+            blocks.append("\(start) --> \(end)\n\(cue)\n")
         }
         return blocks.joined(separator: "\n")
+    }
+
+    /// Prefixes cue text with the speaker label when present ("Spreker 1: …"),
+    /// otherwise returns the text unchanged (byte-parity for speaker-less cues).
+    private static func cueText(text: String, speaker: String?) -> String {
+        guard let speaker, !speaker.isEmpty else { return text }
+        return "\(speaker): \(text)"
     }
 
     /// Renders `entry` in the given format. This is the Swift equivalent
