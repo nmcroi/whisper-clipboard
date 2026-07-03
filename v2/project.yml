@@ -71,6 +71,7 @@ targets:
       properties:
         CFBundleDevelopmentRegion: nl
         CFBundleDisplayName: Whisper Clipboard
+        CFBundleIconFile: AppIcon
         CFBundleShortVersionString: $(MARKETING_VERSION)
         CFBundleVersion: $(CURRENT_PROJECT_VERSION)
         LSMinimumSystemVersion: $(MACOSX_DEPLOYMENT_TARGET)

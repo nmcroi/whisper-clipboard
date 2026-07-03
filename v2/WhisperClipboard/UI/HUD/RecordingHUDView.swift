@@ -1,3 +1,4 @@
+import AppKit
 import SwiftUI
 
 /// Dark floating HUD content shown while dictating.
@@ -13,10 +14,17 @@ struct RecordingHUDView: View {
     /// Whether to show the latency debug line (UserDefaults `showLatencyHUD`).
     let showLatency: Bool
 
+    /// Drives the entrance scale: starts slightly shrunk and settles to 1.0
+    /// as soon as the view appears, echoing the panel's own fade/drift-in so
+    /// the two read as one coordinated arrival rather than two effects.
+    @State private var appeared = false
+
     var body: some View {
         VStack(alignment: .leading, spacing: 10) {
             header
+                .animation(.easeOut(duration: 0.15), value: controller.phase)
             transcript
+                .animation(.easeOut(duration: 0.15), value: controller.phase)
             // Detailed three-part breakdown stays behind the debug flag, and
             // only once a run has completed (so it doesn't clutter recording).
             if showLatency, controller.phase == .finished || controller.phase == .idle {
@@ -34,7 +42,14 @@ struct RecordingHUDView: View {
             RoundedRectangle(cornerRadius: 16, style: .continuous)
                 .strokeBorder(borderColor, lineWidth: 1)
         )
+        .animation(.easeOut(duration: 0.15), value: controller.phase)
         .shadow(color: .black.opacity(0.5), radius: 24, x: 0, y: 12)
+        .scaleEffect(appeared ? 1.0 : 0.97)
+        .onAppear {
+            withAnimation(.easeOut(duration: 0.2)) {
+                appeared = true
+            }
+        }
     }
 
     private var borderColor: Color {
@@ -57,6 +72,7 @@ struct RecordingHUDView: View {
                     .foregroundStyle(Theme.text)
                 Spacer()
                 LevelBars(level: levelMeter.level)
+                StopButton { controller.stop() }
             }
         case .transcribing:
             HStack(spacing: 10) {
@@ -135,6 +151,40 @@ private struct PulsingDot: View {
             .opacity(pulsing ? 1.0 : 0.6)
             .animation(.easeInOut(duration: 0.7).repeatForever(autoreverses: true), value: pulsing)
             .onAppear { pulsing = true }
+    }
+}
+
+/// A small round stop button shown while recording. Echoes the app icon's
+/// motif: a yellow ring with a centered yellow rounded square.
+private struct StopButton: View {
+    let action: () -> Void
+
+    @State private var hovering = false
+
+    var body: some View {
+        Button(action: action) {
+            ZStack {
+                Circle()
+                    .strokeBorder(Theme.accent, lineWidth: 1.6)
+                    .background(Circle().fill(hovering ? Theme.accent.opacity(0.12) : .clear))
+                RoundedRectangle(cornerRadius: 2.5, style: .continuous)
+                    .fill(Theme.accent)
+                    .frame(width: 8, height: 8)
+            }
+            .frame(width: 22, height: 22)
+        }
+        .buttonStyle(.plain)
+        .scaleEffect(hovering ? 1.08 : 1.0)
+        .animation(.easeOut(duration: 0.12), value: hovering)
+        .onHover { isHovering in
+            hovering = isHovering
+            if isHovering {
+                NSCursor.pointingHand.push()
+            } else {
+                NSCursor.pop()
+            }
+        }
+        .help("Stop dicteren")
     }
 }
 

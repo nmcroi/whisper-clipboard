@@ -22,6 +22,8 @@ struct GeneralSettingsView: View {
                 Divider().overlay(Theme.border)
                 captionsSection
                 Divider().overlay(Theme.border)
+                hudSection
+                Divider().overlay(Theme.border)
                 loginItemSection
             }
             .padding(24)
@@ -135,6 +137,47 @@ struct GeneralSettingsView: View {
             .toggleStyle(.switch)
             .tint(Theme.accent)
         }
+    }
+
+    // MARK: - HUD
+
+    private var hudSection: some View {
+        VStack(alignment: .leading, spacing: 10) {
+            Text("HUD")
+                .font(ThemeFont.ui(15, weight: .semibold))
+                .foregroundStyle(Theme.text)
+
+            HStack {
+                Text("HUD zichtbaar na dicteren")
+                    .font(ThemeFont.ui(13))
+                    .foregroundStyle(Theme.text)
+                Spacer()
+                Text(Self.dutchSeconds(environment.settings.hudLingerSeconds))
+                    .font(ThemeFont.ui(13, weight: .medium).monospaced())
+                    .foregroundStyle(Theme.accent)
+                    .frame(width: 52, alignment: .trailing)
+            }
+
+            Slider(
+                value: Binding(
+                    get: { environment.settings.hudLingerSeconds },
+                    set: { environment.settings.hudLingerSeconds = $0 }
+                ),
+                in: 1...10,
+                step: 0.5
+            )
+            .tint(Theme.accent)
+
+            Text("Hoe lang de bevestiging in beeld blijft nadat een dictaat is afgerond.")
+                .font(ThemeFont.ui(11))
+                .foregroundStyle(Theme.textSecondary)
+                .fixedSize(horizontal: false, vertical: true)
+        }
+    }
+
+    /// Formats seconds with a Dutch decimal comma, e.g. `3.0` → "3,0 s".
+    private static func dutchSeconds(_ value: Double) -> String {
+        String(format: "%.1f s", value).replacingOccurrences(of: ".", with: ",")
     }
 
     // MARK: - Login item

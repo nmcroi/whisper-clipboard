@@ -22,6 +22,7 @@
 		3187F580E057EB363029E28E /* CaptionsService.swift in Sources */ = {isa = PBXBuildFile; fileRef = 025A133BB37DDFFB2C710193 /* CaptionsService.swift */; };
 		3652CA95FB7BC8C2740AD346 /* GRDB in Frameworks */ = {isa = PBXBuildFile; productRef = EA364E37D34A41885017BD79 /* GRDB */; };
 		37AC8EBC86F80F24F85960F3 /* InsertionService.swift in Sources */ = {isa = PBXBuildFile; fileRef = 5FC4B7A680996810C9521A5B /* InsertionService.swift */; };
+		3DFEB87A2A4A1264EC41C50A /* AppIcon.icns in Resources */ = {isa = PBXBuildFile; fileRef = DA15579BF0EBF93B72100A28 /* AppIcon.icns */; };
 		415027E4686279437E6D7E7E /* FileImportService.swift in Sources */ = {isa = PBXBuildFile; fileRef = 4AF207F0E44317781D32F908 /* FileImportService.swift */; };
 		4491BB563114BD6C7986AE49 /* SystemAudioTap.swift in Sources */ = {isa = PBXBuildFile; fileRef = FD66A6B9C9D7987E145C8B2D /* SystemAudioTap.swift */; };
 		455381B87F0069B573A6D83C /* Modes.swift in Sources */ = {isa = PBXBuildFile; fileRef = BF80A78C93D4A47BCA27E998 /* Modes.swift */; };
@@ -144,6 +145,7 @@
 		D77F38A853624AFEE009BDEF /* ClaudeClient.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ClaudeClient.swift; sourceTree = "<group>"; };
 		D944573CECBC9CB639BCE279 /* HistoryStore.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = HistoryStore.swift; sourceTree = "<group>"; };
 		D99C5C480B3384990D920B39 /* E2ECaptionsSmokeTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = E2ECaptionsSmokeTests.swift; sourceTree = "<group>"; };
+		DA15579BF0EBF93B72100A28 /* AppIcon.icns */ = {isa = PBXFileReference; lastKnownFileType = image.icns; path = AppIcon.icns; sourceTree = "<group>"; };
 		DCB334E92B82F0FFEDB89656 /* LatencyMetrics.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = LatencyMetrics.swift; sourceTree = "<group>"; };
 		DDDECC86EDC33F1B2C84B7E5 /* TranscriptAISection.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TranscriptAISection.swift; sourceTree = "<group>"; };
 		E06A7C66B070227464AECBE6 /* AppEnvironment.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AppEnvironment.swift; sourceTree = "<group>"; };
@@ -341,6 +343,7 @@
 		93452812D30AC6726B146D90 /* Resources */ = {
 			isa = PBXGroup;
 			children = (
+				DA15579BF0EBF93B72100A28 /* AppIcon.icns */,
 			);
 			path = Resources;
 			sourceTree = "<group>";
@@ -475,6 +478,7 @@
 			buildPhases = (
 				3E7FB730867AA4DF3D687F72 /* Sources */,
 				5C67D17D2B4E673AF3C7B0A3 /* Copy bundled fonts into Resources/Fonts */,
+				3E6B259D3E5EDED4430AA934 /* Resources */,
 				F69C6A07BEE82C7E9AC6B326 /* Frameworks */,
 			);
 			buildRules = (
@@ -534,6 +538,17 @@
 			);
 		};
 /* End PBXProject section */
+
+/* Begin PBXResourcesBuildPhase section */
+		3E6B259D3E5EDED4430AA934 /* Resources */ = {
+			isa = PBXResourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+				3DFEB87A2A4A1264EC41C50A /* AppIcon.icns in Resources */,
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+/* End PBXResourcesBuildPhase section */
 
 /* Begin PBXShellScriptBuildPhase section */
 		5C67D17D2B4E673AF3C7B0A3 /* Copy bundled fonts into Resources/Fonts */ = {

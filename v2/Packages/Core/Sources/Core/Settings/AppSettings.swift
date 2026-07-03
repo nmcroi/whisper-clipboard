@@ -32,6 +32,10 @@ public struct AppSettings: Codable, Equatable, Sendable {
     /// `nil` means unlimited history retention.
     public var historyRetention: Int?
     public var initialPrompt: String
+    /// How long (seconds) the HUD lingers on its "finished" confirmation state
+    /// after a successful dictation before auto-hiding. Clamped to 1...10 at
+    /// the call site; error linger stays a fixed, shorter duration.
+    public var hudLingerSeconds: Double
 
     public init(
         hotkeyMode: HotkeyMode = .toggle,
@@ -44,7 +48,8 @@ public struct AppSettings: Codable, Equatable, Sendable {
         saveRecordings: Bool = false,
         saveCaptions: Bool = false,
         historyRetention: Int? = nil,
-        initialPrompt: String = ""
+        initialPrompt: String = "",
+        hudLingerSeconds: Double = 3.0
     ) {
         self.hotkeyMode = hotkeyMode
         self.language = language
@@ -57,6 +62,7 @@ public struct AppSettings: Codable, Equatable, Sendable {
         self.saveCaptions = saveCaptions
         self.historyRetention = historyRetention
         self.initialPrompt = initialPrompt
+        self.hudLingerSeconds = hudLingerSeconds
     }
 
     // Tolerant decoding: any key missing from an older/newer on-disk settings.json
@@ -65,7 +71,7 @@ public struct AppSettings: Codable, Equatable, Sendable {
     private enum CodingKeys: String, CodingKey {
         case hotkeyMode, language, engine, cleanOutput, replacements
         case directInsertion, insertionDeniedBundleIds, saveRecordings, saveCaptions
-        case historyRetention, initialPrompt
+        case historyRetention, initialPrompt, hudLingerSeconds
     }
 
     public init(from decoder: Decoder) throws {
@@ -82,5 +88,6 @@ public struct AppSettings: Codable, Equatable, Sendable {
         self.saveCaptions = try c.decodeIfPresent(Bool.self, forKey: .saveCaptions) ?? d.saveCaptions
         self.historyRetention = try c.decodeIfPresent(Int.self, forKey: .historyRetention) ?? d.historyRetention
         self.initialPrompt = try c.decodeIfPresent(String.self, forKey: .initialPrompt) ?? d.initialPrompt
+        self.hudLingerSeconds = try c.decodeIfPresent(Double.self, forKey: .hudLingerSeconds) ?? d.hudLingerSeconds
     }
 }

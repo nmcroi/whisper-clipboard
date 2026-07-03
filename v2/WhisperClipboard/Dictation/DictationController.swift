@@ -350,8 +350,15 @@ final class DictationController: ObservableObject {
         phase = .finished
         // Reset to idle after the HUD's brief confirmation window.
         hudDismissTask?.cancel()
-        // Linger ~3s so the user can read the completion state (their request).
-        let lingerMs = success ? 3000 : 1500
+        // Success linger is user-configurable (Settings); error linger stays a
+        // fixed, shorter duration regardless of that preference.
+        let lingerMs: Int
+        if success {
+            let seconds = min(10.0, max(1.0, settingsProvider().hudLingerSeconds))
+            lingerMs = Int(seconds * 1000)
+        } else {
+            lingerMs = 1500
+        }
         hudDismissTask = Task { [weak self] in
             try? await Task.sleep(for: .milliseconds(lingerMs))
             guard let self, !Task.isCancelled else { return }

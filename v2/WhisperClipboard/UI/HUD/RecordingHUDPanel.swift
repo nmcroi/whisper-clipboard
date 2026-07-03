@@ -34,23 +34,52 @@ final class RecordingHUDController {
         }
     }
 
+    /// Vertical drift used on entrance/exit: the panel starts slightly below
+    /// (and ends slightly below, on exit) its resting position for a subtle
+    /// upward-arrival / downward-departure motion.
+    private static let entranceDrift: CGFloat = 8
+
     // MARK: - Panel
 
     private func showPanel() {
+        let isFreshShow = panel == nil
         if panel == nil {
             panel = makePanel()
         }
         guard let panel else { return }
-        positionAtBottomCenter(panel)
-        panel.alphaValue = 1
-        panel.orderFrontRegardless()
+
+        let restingOrigin = restingOrigin(for: panel)
+        panel.layoutIfNeeded()
+
+        if isFreshShow {
+            // Start slightly below and transparent, then animate up + fade in.
+            panel.setFrameOrigin(NSPoint(x: restingOrigin.x, y: restingOrigin.y - Self.entranceDrift))
+            panel.alphaValue = 0
+            panel.orderFrontRegardless()
+
+            NSAnimationContext.runAnimationGroup { context in
+                context.duration = 0.2
+                context.timingFunction = CAMediaTimingFunction(name: .easeOut)
+                panel.animator().alphaValue = 1
+                panel.animator().setFrameOrigin(restingOrigin)
+            }
+        } else {
+            // Already visible (e.g. recording → transcribing → finished):
+            // just make sure it's positioned and fully opaque.
+            panel.setFrameOrigin(restingOrigin)
+            panel.alphaValue = 1
+            panel.orderFrontRegardless()
+        }
     }
 
     private func hidePanel() {
         guard let panel else { return }
+        let restingOrigin = panel.frame.origin
         NSAnimationContext.runAnimationGroup { context in
-            context.duration = 0.3
+            context.duration = 0.2
+            context.timingFunction = CAMediaTimingFunction(name: .easeOut)
             panel.animator().alphaValue = 0
+            panel.animator().setFrameOrigin(NSPoint(x: restingOrigin.x, y: restingOrigin.y - Self.entranceDrift))
         } completionHandler: { [weak self] in
             self?.panel?.orderOut(nil)
         }
@@ -85,14 +114,14 @@ final class RecordingHUDController {
         return panel
     }
 
-    private func positionAtBottomCenter(_ panel: NSPanel) {
+    /// The panel's resting position: bottom-center of the active screen.
+    private func restingOrigin(for panel: NSPanel) -> NSPoint {
         let screen = Self.activeScreen()
         let visible = screen.visibleFrame
-        panel.layoutIfNeeded()
         let size = panel.frame.size
         let x = visible.midX - size.width / 2
         let y = visible.minY + 80
-        panel.setFrameOrigin(NSPoint(x: x, y: y))
+        return NSPoint(x: x, y: y)
     }
 
     /// Screen containing the mouse, falling back to the main screen.
