@@ -138,6 +138,23 @@ struct GeneralSettingsView: View {
             }
             .toggleStyle(.switch)
             .tint(Theme.accent)
+
+            Toggle(isOn: Binding(
+                get: { environment.settings.translateCaptionsToDutch },
+                set: { environment.settings.translateCaptionsToDutch = $0 }
+            )) {
+                VStack(alignment: .leading, spacing: 2) {
+                    Text("Live vertalen naar Nederlands")
+                        .font(ThemeFont.ui(13, weight: .medium))
+                        .foregroundStyle(Theme.text)
+                    Text("Vertaalt afgeronde ondertitelregels live naar het Nederlands met Apple Vertalen. De originele tekst blijft klein en gedimd boven de vertaling staan. Bij het eerste gebruik vraagt macOS om het Nederlandse taalpakket te downloaden.")
+                        .font(ThemeFont.ui(11))
+                        .foregroundStyle(Theme.textSecondary)
+                        .fixedSize(horizontal: false, vertical: true)
+                }
+            }
+            .toggleStyle(.switch)
+            .tint(Theme.accent)
         }
     }
 

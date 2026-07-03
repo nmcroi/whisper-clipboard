@@ -29,6 +29,9 @@ public struct AppSettings: Codable, Equatable, Sendable {
     public var saveRecordings: Bool
     /// Save the full transcript of a live-captions session to history on stop.
     public var saveCaptions: Bool
+    /// Translate live-caption FINAL lines to Dutch via Apple's Translation
+    /// framework. Volatile (in-progress) lines are never translated.
+    public var translateCaptionsToDutch: Bool
     /// Detect speakers ("Spreker 1/2/…") when importing audio/video files.
     /// Default on; runs an extra on-device diarization pass after transcription.
     public var diarizeImports: Bool
@@ -50,6 +53,7 @@ public struct AppSettings: Codable, Equatable, Sendable {
         insertionDeniedBundleIds: [String] = [],
         saveRecordings: Bool = false,
         saveCaptions: Bool = false,
+        translateCaptionsToDutch: Bool = false,
         diarizeImports: Bool = true,
         historyRetention: Int? = nil,
         initialPrompt: String = "",
@@ -64,6 +68,7 @@ public struct AppSettings: Codable, Equatable, Sendable {
         self.insertionDeniedBundleIds = insertionDeniedBundleIds
         self.saveRecordings = saveRecordings
         self.saveCaptions = saveCaptions
+        self.translateCaptionsToDutch = translateCaptionsToDutch
         self.diarizeImports = diarizeImports
         self.historyRetention = historyRetention
         self.initialPrompt = initialPrompt
@@ -76,6 +81,7 @@ public struct AppSettings: Codable, Equatable, Sendable {
     private enum CodingKeys: String, CodingKey {
         case hotkeyMode, language, engine, cleanOutput, replacements
         case directInsertion, insertionDeniedBundleIds, saveRecordings, saveCaptions
+        case translateCaptionsToDutch
         case diarizeImports
         case historyRetention, initialPrompt, hudLingerSeconds
     }
@@ -92,6 +98,7 @@ public struct AppSettings: Codable, Equatable, Sendable {
         self.insertionDeniedBundleIds = try c.decodeIfPresent([String].self, forKey: .insertionDeniedBundleIds) ?? d.insertionDeniedBundleIds
         self.saveRecordings = try c.decodeIfPresent(Bool.self, forKey: .saveRecordings) ?? d.saveRecordings
         self.saveCaptions = try c.decodeIfPresent(Bool.self, forKey: .saveCaptions) ?? d.saveCaptions
+        self.translateCaptionsToDutch = try c.decodeIfPresent(Bool.self, forKey: .translateCaptionsToDutch) ?? d.translateCaptionsToDutch
         self.diarizeImports = try c.decodeIfPresent(Bool.self, forKey: .diarizeImports) ?? d.diarizeImports
         self.historyRetention = try c.decodeIfPresent(Int.self, forKey: .historyRetention) ?? d.historyRetention
         self.initialPrompt = try c.decodeIfPresent(String.self, forKey: .initialPrompt) ?? d.initialPrompt

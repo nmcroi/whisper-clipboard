@@ -1,4 +1,5 @@
 import Foundation
+import NaturalLanguage
 
 /// One displayed caption line: transcribed text plus the wall-clock moment it
 /// was produced.
@@ -13,16 +14,30 @@ struct CaptionLine: Identifiable, Equatable, Sendable {
     var timestamp: Date
     /// `false` while the line's window is open and still being re-transcribed.
     var isFinal: Bool
+    /// The Dutch translation of ``text``, filled in asynchronously when live
+    /// translation is enabled (Part B). `nil` until (and unless) a translation
+    /// arrives; only ever set on FINAL lines.
+    var translation: String?
 
-    init(id: UUID = UUID(), text: String, timestamp: Date = Date(), isFinal: Bool = true) {
+    init(
+        id: UUID = UUID(),
+        text: String,
+        timestamp: Date = Date(),
+        isFinal: Bool = true,
+        translation: String? = nil
+    ) {
         self.id = id
         self.text = text
         self.timestamp = timestamp
         self.isFinal = isFinal
+        self.translation = translation
     }
 
     static func == (lhs: CaptionLine, rhs: CaptionLine) -> Bool {
-        lhs.id == rhs.id && lhs.text == rhs.text && lhs.isFinal == rhs.isFinal
+        lhs.id == rhs.id
+            && lhs.text == rhs.text
+            && lhs.isFinal == rhs.isFinal
+            && lhs.translation == rhs.translation
     }
 }
 
@@ -36,7 +51,7 @@ struct CaptionLine: Identifiable, Equatable, Sendable {
 ///
 /// - **Time cut:** once the window reaches ``maxWindowSeconds`` (~3 s) it is cut
 ///   so captions keep flowing even during continuous speech.
-/// - **Silence cut:** if the trailing ``silenceSeconds`` (~0.7 s) of audio are
+/// - **Silence cut:** if the trailing ``silenceSeconds`` (~0.55 s) of audio are
 ///   below the RMS ``silenceThreshold``, the window is cut at a natural pause —
 ///   this yields cleaner sentence boundaries than a hard time cut.
 /// - **Hard cap:** windows never exceed ``hardCapSeconds`` (~10 s) regardless.
@@ -54,7 +69,7 @@ struct CaptionWindowAccumulator {
     /// Cut the window once it reaches this many seconds of audio.
     var maxWindowSeconds: Double = 3.0
     /// Trailing quiet duration that triggers an early (natural-pause) cut.
-    var silenceSeconds: Double = 0.7
+    var silenceSeconds: Double = 0.55
     /// Absolute hard ceiling on window length.
     var hardCapSeconds: Double = 10.0
     /// RMS below this counts as silence.
@@ -76,6 +91,11 @@ struct CaptionWindowAccumulator {
     /// Appends captured samples to the current window.
     mutating func append(_ chunk: [Float]) {
         samples.append(contentsOf: chunk)
+    }
+
+    /// Seconds of audio currently buffered in the open window.
+    var secondsBuffered: Double {
+        Double(samples.count) / sampleRate
     }
 
     /// Whether the current window should be cut *now*, per the rules above.
@@ -181,12 +201,12 @@ struct CaptionLineBuffer: Equatable {
 ///   still in flight (``inFlight``), so slow transcriptions can never queue up.
 struct CaptionTickPlanner {
     /// Minimum seconds between volatile re-transcriptions.
-    var interval: Double = 0.9
+    var interval: Double = 0.6
 
     /// When the current window opened / last volatile tick fired.
     private var lastTick: Date?
 
-    init(interval: Double = 0.9) {
+    init(interval: Double = 0.6) {
         self.interval = interval
     }
 
@@ -207,5 +227,146 @@ struct CaptionTickPlanner {
     /// Resets the cadence for a freshly opened window.
     mutating func reset(at time: Date = Date()) {
         lastTick = time
+    }
+}
+
+/// Pure text-hygiene rules that keep the caption stream calm ("minder rommelig").
+///
+/// All functions are static and side-effect free so they are trivially unit
+/// tested. ``CaptionsService`` calls them; ``CaptionWindowAccumulator`` remains
+/// purely about audio timing.
+enum CaptionText {
+
+    /// Sentence-final punctuation that lets a window close eagerly.
+    private static let sentenceFinal: Set<Character> = [".", "!", "?", "。", "！", "？"]
+
+    /// Minimum buffered audio before an eager sentence-final close may fire.
+    static let eagerCloseMinSeconds: Double = 1.2
+
+    /// A window with a volatile transcription of `text` should be closed *now*
+    /// (rather than waiting for the ~3 s soft cut) when the model has produced a
+    /// sentence-final punctuation mark AND enough audio has accumulated that this
+    /// is a real sentence, not a stray "Uh." — avoids chopping mid-thought while
+    /// still snapping cleanly on natural sentence ends.
+    ///
+    /// - Parameters:
+    ///   - text: the latest volatile transcription of the open window.
+    ///   - secondsBuffered: seconds of audio currently in the open window.
+    ///   - minSeconds: minimum audio (default 1.2 s) before an eager close fires.
+    static func shouldEagerClose(
+        after text: String,
+        secondsBuffered: Double,
+        minSeconds: Double = CaptionText.eagerCloseMinSeconds
+    ) -> Bool {
+        guard secondsBuffered >= minSeconds else { return false }
+        let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard let last = trimmed.last else { return false }
+        return sentenceFinal.contains(last)
+    }
+
+    /// Whether `text` carries no real content: empty, whitespace-only, or nothing
+    /// but punctuation/symbols (e.g. "...", "?", "-"). Such results are dropped
+    /// rather than shown as caption lines.
+    static func isJunk(_ text: String) -> Bool {
+        let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty else { return true }
+        // Junk if it contains no letter or number at all.
+        return !trimmed.unicodeScalars.contains { scalar in
+            CharacterSet.alphanumerics.contains(scalar)
+        }
+    }
+
+    /// Normalised form for equality comparisons: lowercased, trimmed, internal
+    /// whitespace collapsed, and surrounding punctuation ignored. Used for the
+    /// near-duplicate suppression rule.
+    static func normalized(_ text: String) -> String {
+        let lowered = text.lowercased()
+        let words = lowered.split(whereSeparator: { $0.isWhitespace })
+            .map { $0.trimmingCharacters(in: .punctuationCharacters) }
+            .filter { !$0.isEmpty }
+        return words.joined(separator: " ")
+    }
+
+    /// A freshly finalized line that is a near-duplicate of the previous final
+    /// line should be dropped (the model re-emitting the same window's text).
+    static func isNearDuplicate(_ text: String, of previous: String?) -> Bool {
+        guard let previous else { return false }
+        let a = normalized(text)
+        guard !a.isEmpty else { return true }
+        return a == normalized(previous)
+    }
+
+    /// Conservative boundary-artifact trim. When two adjacent windows overlap at
+    /// the seam, the model can repeat the last word(s) of the previous final line
+    /// at the start of the new one. This trims an *exact* duplicated leading word
+    /// sequence (case-insensitive) from `text` where it matches the trailing words
+    /// of `previous`. Deliberately unfancy: it only removes whole-word runs that
+    /// match exactly, never partial-word "Whisperk/Flipboard"-style fusions.
+    ///
+    /// Returns the (possibly shortened) text; never returns an empty string —
+    /// if the entire line is a duplicated seam it is returned unchanged so the
+    /// near-duplicate rule can decide to drop it instead.
+    static func trimSeamOverlap(_ text: String, previousFinal previous: String?) -> String {
+        guard let previous else { return text }
+        let newWords = splitWords(text)
+        let prevWords = splitWords(previous)
+        guard !newWords.isEmpty, !prevWords.isEmpty else { return text }
+
+        // Try the longest possible overlap first (up to min of both / a small cap).
+        let maxOverlap = min(newWords.count, prevWords.count, 6)
+        var overlap = 0
+        var k = maxOverlap
+        while k >= 1 {
+            let newHead = newWords.prefix(k).map { normalizedWord($0) }
+            let prevTail = prevWords.suffix(k).map { normalizedWord($0) }
+            if newHead == prevTail {
+                overlap = k
+                break
+            }
+            k -= 1
+        }
+        guard overlap > 0, overlap < newWords.count else { return text }
+        return newWords.dropFirst(overlap).joined(separator: " ")
+    }
+
+    /// The volatile line should only be replaced with `candidate` when it does not
+    /// *regress* — i.e. the new text is longer, or materially different from the
+    /// current one. This prevents flicker where a shorter re-transcription briefly
+    /// replaces a longer, more complete line.
+    static func shouldReplaceVolatile(current: String?, with candidate: String) -> Bool {
+        guard let current, !current.isEmpty else { return true }
+        if candidate.count >= current.count { return true }
+        // Shorter candidate: only accept if it is materially different (not just a
+        // truncated prefix of the current line).
+        let a = normalized(candidate)
+        let b = normalized(current)
+        if a.isEmpty { return false }
+        if b.hasPrefix(a) { return false }   // pure truncation → keep the longer line
+        return a != b
+    }
+
+    /// Cheap on-device language detection: whether `text` is (dominantly) Dutch.
+    /// Used to skip translating lines that are already in the target language.
+    /// Conservative — returns `false` for very short/ambiguous text so we don't
+    /// wrongly skip translation.
+    static func detectedIsDutch(_ text: String) -> Bool {
+        let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
+        // Too little text to detect reliably; don't skip.
+        guard trimmed.count >= 12 else { return false }
+        let recognizer = NLLanguageRecognizer()
+        recognizer.processString(trimmed)
+        guard let dominant = recognizer.dominantLanguage else { return false }
+        return dominant == .dutch
+    }
+
+    // MARK: - Helpers
+
+    private static func splitWords(_ text: String) -> [String] {
+        text.split(whereSeparator: { $0.isWhitespace }).map(String.init)
+    }
+
+    /// Lowercased, punctuation-stripped word for overlap comparison.
+    private static func normalizedWord(_ word: String) -> String {
+        word.lowercased().trimmingCharacters(in: .punctuationCharacters)
     }
 }

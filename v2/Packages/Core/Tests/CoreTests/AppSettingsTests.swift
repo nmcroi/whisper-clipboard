@@ -60,4 +60,30 @@ import Foundation
 
         #expect(decoded.hudLingerSeconds == 6.5)
     }
+
+    /// Live caption translation is OFF by default (opt-in).
+    @Test func defaultTranslateCaptionsIsOff() {
+        #expect(AppSettings().translateCaptionsToDutch == false)
+    }
+
+    /// An older settings.json missing `translateCaptionsToDutch` still decodes,
+    /// falling back to the default rather than failing the whole load.
+    @Test func translateCaptionsFallsBackToDefaultWhenMissingFromJSON() throws {
+        let json = """
+        {"hotkeyMode":"toggle","language":"nl","engine":"parakeet","cleanOutput":true,"replacements":[],"directInsertion":false,"insertionDeniedBundleIds":[],"saveRecordings":false,"saveCaptions":false,"initialPrompt":""}
+        """.data(using: .utf8)!
+        let decoded = try JSONDecoder().decode(AppSettings.self, from: json)
+        #expect(decoded.translateCaptionsToDutch == false)
+    }
+
+    /// An explicit translate-captions value round-trips through JSON coding.
+    @Test func translateCaptionsRoundTripsThroughCoding() throws {
+        var settings = AppSettings()
+        settings.translateCaptionsToDutch = true
+
+        let data = try JSONEncoder().encode(settings)
+        let decoded = try JSONDecoder().decode(AppSettings.self, from: data)
+
+        #expect(decoded.translateCaptionsToDutch == true)
+    }
 }

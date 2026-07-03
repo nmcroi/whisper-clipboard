@@ -97,6 +97,7 @@ final class AppEnvironment: ObservableObject {
         // that resolve against the (soon-to-be-fully-initialized) instance.
         var settingsRef: (() -> AppSettings)!
         var stateSink: ((AppState) -> Void)!
+        var translateToggleSink: ((Bool) -> Void)!
 
         let dictation = DictationController(
             engine: engine,
@@ -162,7 +163,9 @@ final class AppEnvironment: ObservableObject {
                 }
                 return nil
             },
-            replacements: { settingsRef().replacements }
+            replacements: { settingsRef().replacements },
+            translateToDutch: { settingsRef().translateCaptionsToDutch },
+            onTranslateToggle: { translateToggleSink($0) }
         )
         self.captions = captions
         self.captionOverlay = CaptionOverlayController(service: captions)
@@ -170,6 +173,7 @@ final class AppEnvironment: ObservableObject {
         // Now that stored properties exist, bind the closures to `self`.
         settingsRef = { [weak self] in self?.settings ?? AppSettings() }
         stateSink = { [weak self] state in self?.appState = state }
+        translateToggleSink = { [weak self] enabled in self?.settings.translateCaptionsToDutch = enabled }
         retentionRef = { [weak self] in self?.settings.historyRetention }
 
         // Persist every completed dictation.

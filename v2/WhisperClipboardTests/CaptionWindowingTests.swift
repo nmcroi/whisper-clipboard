@@ -41,8 +41,22 @@ final class CaptionWindowingTests: XCTestCase {
     func testCutsOnTrailingSilence() {
         var acc = CaptionWindowAccumulator(sampleRate: sampleRate)
         acc.append(loud(1.0))     // enough audio to be worth a window
-        acc.append(silent(0.8))   // > 0.7s of trailing quiet
+        acc.append(silent(0.6))   // > 0.55s of trailing quiet
         XCTAssertTrue(acc.shouldCut)
+    }
+
+    /// The tightened silence window (0.55s) does not cut on a shorter pause.
+    func testDoesNotCutBelowSilenceWindow() {
+        var acc = CaptionWindowAccumulator(sampleRate: sampleRate)
+        acc.append(loud(1.0))
+        acc.append(silent(0.4))   // < 0.55s trailing quiet
+        XCTAssertFalse(acc.shouldCut)
+    }
+
+    func testSecondsBufferedTracksAppend() {
+        var acc = CaptionWindowAccumulator(sampleRate: sampleRate)
+        acc.append(loud(1.5))
+        XCTAssertEqual(acc.secondsBuffered, 1.5, accuracy: 1e-6)
     }
 
     func testNoCutBelowMinWindowEvenIfSilent() {
@@ -209,6 +223,144 @@ final class CaptionLineBufferTests: XCTestCase {
     }
 }
 
+/// Tests for the tightened default cadence.
+final class CaptionTickPlannerDefaultsTests: XCTestCase {
+    func testDefaultIntervalIsFasterAt06() {
+        var planner = CaptionTickPlanner()
+        let t0 = Date(timeIntervalSince1970: 4000)
+        planner.didTick(at: t0)
+        // 0.5s < 0.6s default → no tick yet.
+        XCTAssertFalse(planner.shouldTick(now: t0.addingTimeInterval(0.5), inFlight: false))
+        // 0.65s ≥ 0.6s → tick.
+        XCTAssertTrue(planner.shouldTick(now: t0.addingTimeInterval(0.65), inFlight: false))
+    }
+}
+
+/// Tests for the pure caption text-hygiene rules (Part A "calmer" fixes).
+final class CaptionTextTests: XCTestCase {
+
+    // MARK: - Eager punctuation close
+
+    func testEagerCloseOnSentenceFinalWithEnoughAudio() {
+        XCTAssertTrue(CaptionText.shouldEagerClose(after: "Hallo daar.", secondsBuffered: 1.5))
+        XCTAssertTrue(CaptionText.shouldEagerClose(after: "Echt waar?", secondsBuffered: 2.0))
+        XCTAssertTrue(CaptionText.shouldEagerClose(after: "Geweldig!", secondsBuffered: 1.3))
+    }
+
+    func testNoEagerCloseWithTooLittleAudio() {
+        // Sentence-final punctuation but < 1.2s buffered → keep filling.
+        XCTAssertFalse(CaptionText.shouldEagerClose(after: "Ja.", secondsBuffered: 0.8))
+    }
+
+    func testNoEagerCloseWithoutSentenceFinalPunctuation() {
+        XCTAssertFalse(CaptionText.shouldEagerClose(after: "en toen ging ik", secondsBuffered: 2.0))
+        XCTAssertFalse(CaptionText.shouldEagerClose(after: "een komma,", secondsBuffered: 2.0))
+    }
+
+    func testEagerCloseIgnoresTrailingWhitespace() {
+        XCTAssertTrue(CaptionText.shouldEagerClose(after: "Klaar.  \n", secondsBuffered: 1.5))
+    }
+
+    // MARK: - Junk suppression
+
+    func testJunkDetection() {
+        XCTAssertTrue(CaptionText.isJunk(""))
+        XCTAssertTrue(CaptionText.isJunk("   "))
+        XCTAssertTrue(CaptionText.isJunk("..."))
+        XCTAssertTrue(CaptionText.isJunk("?!"))
+        XCTAssertTrue(CaptionText.isJunk(" - — "))
+        XCTAssertFalse(CaptionText.isJunk("Hallo"))
+        XCTAssertFalse(CaptionText.isJunk("a."))
+    }
+
+    // MARK: - Near-duplicate suppression
+
+    func testNearDuplicateIgnoresCaseAndPunctuation() {
+        XCTAssertTrue(CaptionText.isNearDuplicate("Hallo wereld.", of: "hallo wereld"))
+        XCTAssertTrue(CaptionText.isNearDuplicate("  De kat,  ", of: "de kat"))
+    }
+
+    func testNotNearDuplicateForDifferentText() {
+        XCTAssertFalse(CaptionText.isNearDuplicate("Hallo wereld", of: "Tot ziens"))
+    }
+
+    func testNearDuplicateWithNoPreviousIsFalse() {
+        XCTAssertFalse(CaptionText.isNearDuplicate("iets", of: nil))
+    }
+
+    // MARK: - Seam-overlap trim
+
+    func testSeamOverlapTrimsDuplicatedLeadingWords() {
+        // Previous ended with "naar de winkel"; new repeats "de winkel" at the seam.
+        let trimmed = CaptionText.trimSeamOverlap(
+            "de winkel om melk te kopen",
+            previousFinal: "ik ging naar de winkel"
+        )
+        XCTAssertEqual(trimmed, "om melk te kopen")
+    }
+
+    func testSeamOverlapSingleWord() {
+        let trimmed = CaptionText.trimSeamOverlap("wereld is groot", previousFinal: "hallo wereld")
+        XCTAssertEqual(trimmed, "is groot")
+    }
+
+    func testSeamOverlapCaseInsensitive() {
+        let trimmed = CaptionText.trimSeamOverlap("Winkel is dicht", previousFinal: "de winkel")
+        XCTAssertEqual(trimmed, "is dicht")
+    }
+
+    func testSeamOverlapNoOverlapUnchanged() {
+        let trimmed = CaptionText.trimSeamOverlap("iets heel anders", previousFinal: "de winkel")
+        XCTAssertEqual(trimmed, "iets heel anders")
+    }
+
+    func testSeamOverlapEntireLineDuplicatedReturnsUnchanged() {
+        // If the whole new line duplicates the seam, leave it for the near-dup rule.
+        let trimmed = CaptionText.trimSeamOverlap("de winkel", previousFinal: "ik ging naar de winkel")
+        XCTAssertEqual(trimmed, "de winkel")
+    }
+
+    func testSeamOverlapNilPreviousUnchanged() {
+        XCTAssertEqual(CaptionText.trimSeamOverlap("hallo", previousFinal: nil), "hallo")
+    }
+
+    // MARK: - Volatile no-regress rule
+
+    func testVolatileReplacesWhenLonger() {
+        XCTAssertTrue(CaptionText.shouldReplaceVolatile(current: "hallo", with: "hallo wereld"))
+    }
+
+    func testVolatileDoesNotRegressToTruncatedPrefix() {
+        // Shorter candidate that is a prefix of the current line → keep the longer.
+        XCTAssertFalse(CaptionText.shouldReplaceVolatile(current: "hallo wereld", with: "hallo"))
+    }
+
+    func testVolatileReplacesWhenMateriallyDifferent() {
+        // Shorter but genuinely different wording → accept.
+        XCTAssertTrue(CaptionText.shouldReplaceVolatile(current: "hallo wereld daar", with: "tot ziens"))
+    }
+
+    func testVolatileReplacesWhenNoCurrent() {
+        XCTAssertTrue(CaptionText.shouldReplaceVolatile(current: nil, with: "iets"))
+        XCTAssertTrue(CaptionText.shouldReplaceVolatile(current: "", with: "iets"))
+    }
+
+    // MARK: - Dutch detection (translation skip)
+
+    func testDetectsDutchSkipsTranslation() {
+        XCTAssertTrue(CaptionText.detectedIsDutch("Ik ga vanavond naar de bioscoop met mijn vrienden."))
+    }
+
+    func testDetectsEnglishAsNotDutch() {
+        XCTAssertFalse(CaptionText.detectedIsDutch("I am going to the cinema with my friends tonight."))
+    }
+
+    func testShortTextNotTreatedAsDutch() {
+        // Too short to detect reliably → don't skip translation.
+        XCTAssertFalse(CaptionText.detectedIsDutch("Ja hoor"))
+    }
+}
+
 /// Tests for the volatile/final caption-line model.
 final class CaptionLineTests: XCTestCase {
     func testDefaultsToFinal() {
@@ -225,5 +377,16 @@ final class CaptionLineTests: XCTestCase {
         let volatile = CaptionLine(id: id, text: "x", isFinal: false)
         let final = CaptionLine(id: id, text: "x", isFinal: true)
         XCTAssertNotEqual(volatile, final)
+    }
+
+    func testEqualityConsidersTranslation() {
+        let id = UUID()
+        let untranslated = CaptionLine(id: id, text: "hello", isFinal: true)
+        let translated = CaptionLine(id: id, text: "hello", isFinal: true, translation: "hallo")
+        XCTAssertNotEqual(untranslated, translated)
+    }
+
+    func testTranslationDefaultsToNil() {
+        XCTAssertNil(CaptionLine(text: "x").translation)
     }
 }

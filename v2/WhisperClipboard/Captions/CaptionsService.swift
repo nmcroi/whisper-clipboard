@@ -2,6 +2,7 @@ import AVFoundation
 import Combine
 import Core
 import Foundation
+import NaturalLanguage
 
 /// @MainActor orchestrator for live captions from system audio (M6).
 ///
@@ -36,6 +37,31 @@ final class CaptionsService: ObservableObject {
     /// the UI can offer a "Open Systeeminstellingen" button.
     @Published private(set) var permissionDenied = false
 
+    // MARK: - Translation (Part B)
+
+    /// Whether live translation of FINAL lines to Dutch is on. Initialised from
+    /// settings; the overlay header toggle flips it live (and persists via
+    /// ``onTranslateToggle``).
+    @Published var translateEnabled = false {
+        didSet {
+            guard translateEnabled != oldValue else { return }
+            if !translateEnabled { translationHint = nil }
+            onTranslateToggle(translateEnabled)
+        }
+    }
+    /// A one-line Dutch hint shown once when translation is unavailable (missing
+    /// language pack). Cleared when translation succeeds or is turned off.
+    @Published private(set) var translationHint: String?
+    /// FINAL lines awaiting translation, drained by the overlay's `.translationTask`
+    /// (which owns the `TranslationSession`). Each entry is a line id + its text.
+    @Published private(set) var pendingTranslations: [PendingTranslation] = []
+
+    /// A caption line queued for Dutch translation.
+    struct PendingTranslation: Identifiable, Equatable, Sendable {
+        let id: UUID       // matches the CaptionLine id
+        let text: String
+    }
+
     // MARK: - Dependencies
 
     /// A dedicated engine instance — never the dictation engine — so caption
@@ -51,6 +77,11 @@ final class CaptionsService: ObservableObject {
     /// case-insensitive). Read on demand so edits take effect immediately.
     private let replacements: () -> [Replacement]
     private let notify: (String) -> Void
+    /// Reads the persisted translate-to-Dutch setting (refreshed on each start).
+    private let translateToDutch: () -> Bool
+    /// Persists the live translate toggle back to settings when flipped in the
+    /// overlay header. No-op by default (tests / previews).
+    private let onTranslateToggle: (Bool) -> Void
 
     // MARK: - Session state
 
@@ -66,6 +97,13 @@ final class CaptionsService: ObservableObject {
     private var volatileTask: Task<Void, Never>?
     /// True while a volatile re-transcription is running (non-overlap guard).
     private var isTranscribingVolatile = false
+    /// Set by a completed volatile pass when its text ends on sentence-final
+    /// punctuation with enough audio buffered; consumed on the next loop turn to
+    /// close the window eagerly (Part A). Only read/written on the consume task.
+    private var pendingEagerClose = false
+    /// The most recent FINAL line's text, for near-duplicate suppression and
+    /// seam-overlap trimming (Part A hygiene).
+    private var previousFinalText: String?
 
     init(
         history: HistoryStore,
@@ -73,6 +111,8 @@ final class CaptionsService: ObservableObject {
         saveToHistory: @escaping () -> Bool,
         busyReason: @escaping () -> String?,
         replacements: @escaping () -> [Replacement] = { [] },
+        translateToDutch: @escaping () -> Bool = { false },
+        onTranslateToggle: @escaping (Bool) -> Void = { _ in },
         engine: ParakeetEngine = ParakeetEngine(),
         notify: @escaping (String) -> Void = { Notifications.post($0) }
     ) {
@@ -82,7 +122,12 @@ final class CaptionsService: ObservableObject {
         self.saveToHistory = saveToHistory
         self.busyReason = busyReason
         self.replacements = replacements
+        self.translateToDutch = translateToDutch
+        self.onTranslateToggle = onTranslateToggle
         self.notify = notify
+        // NB: do NOT call `translateToDutch()` here — the provider may resolve
+        // against not-yet-initialised state (see AppEnvironment's deferred binding
+        // pattern). The real value is picked up on the first `start()`.
     }
 
     // MARK: - Lifecycle
@@ -104,6 +149,14 @@ final class CaptionsService: ObservableObject {
         lines = []
         volatileLineID = nil
         isTranscribingVolatile = false
+        pendingEagerClose = false
+        previousFinalText = nil
+        pendingTranslations = []
+        translationHint = nil
+        // Refresh the toggle from persisted settings (may have changed while the
+        // overlay was down). Assign only on change so we don't re-persist.
+        let persisted = translateToDutch()
+        if translateEnabled != persisted { translateEnabled = persisted }
 
         let tap = SystemAudioTap()
         let stream: AsyncStream<AudioBufferBox>
@@ -157,12 +210,12 @@ final class CaptionsService: ObservableObject {
 
     /// Drains the tap stream with pseudo-streaming captioning:
     ///
-    /// - While a window is OPEN, every ~0.9 s (and never overlapping) it snapshots
+    /// - While a window is OPEN, every ~0.6 s (and never overlapping) it snapshots
     ///   the accumulated samples and re-transcribes them, updating the current
     ///   caption line IN PLACE as a volatile (dimmed) line.
-    /// - When the window CLOSES (silence / max / hard cap), it transcribes the full
-    ///   window one last time and replaces the volatile line as FINAL (full white),
-    ///   then starts the next window.
+    /// - When the window CLOSES (silence / max / hard cap / eager sentence-final
+    ///   punctuation), it transcribes the full window one last time and replaces
+    ///   the volatile line as FINAL (full white), then starts the next window.
     ///
     /// Parakeet runs many times realtime, so re-transcribing a ≤10 s window every
     /// second is cheap; the non-overlap guard skips a tick if the previous
@@ -177,7 +230,16 @@ final class CaptionsService: ObservableObject {
             guard let chunk = Self.floatSamples(from: box.buffer) else { continue }
             accumulator.append(chunk)
 
-            if accumulator.shouldCut, let window = accumulator.cut() {
+            // Eager close (Part A): a completed volatile pass may have flagged that
+            // its text ends on sentence-final punctuation with enough audio buffered.
+            // Honour that here, on the loop, so the accumulator is only ever mutated
+            // from this task.
+            let eagerClose = pendingEagerClose
+            pendingEagerClose = false
+
+            if (eagerClose && accumulator.secondsBuffered >= CaptionText.eagerCloseMinSeconds)
+                || accumulator.shouldCut,
+               let window = accumulator.cut() {
                 // Window closed: cancel any in-flight volatile pass and finalize.
                 volatileTask?.cancel()
                 isTranscribingVolatile = false
@@ -187,7 +249,7 @@ final class CaptionsService: ObservableObject {
                       let snapshot = accumulator.snapshot() {
                 // Window still open: fire a non-blocking volatile re-transcription.
                 planner.didTick()
-                startVolatileTranscription(of: snapshot)
+                startVolatileTranscription(of: snapshot, secondsBuffered: accumulator.secondsBuffered)
             }
         }
 
@@ -202,14 +264,18 @@ final class CaptionsService: ObservableObject {
     /// Re-transcribes an open window's snapshot and updates the current volatile
     /// line in place. Runs as a detached-from-the-loop task so the consume loop
     /// keeps ingesting audio; the non-overlap flag prevents pile-ups.
-    private func startVolatileTranscription(of window: [Float]) {
+    private func startVolatileTranscription(of window: [Float], secondsBuffered: Double) {
         isTranscribingVolatile = true
         volatileTask = Task { [weak self] in
             guard let self else { return }
             defer { self.isTranscribingVolatile = false }
             let text = await self.transcribe(window)
-            guard !Task.isCancelled, self.isRunning, let text, !text.isEmpty else { return }
+            guard !Task.isCancelled, self.isRunning, let text, !CaptionText.isJunk(text) else { return }
             self.updateVolatileLine(text)
+            // Flag an eager sentence-final close for the consume loop to honour.
+            if CaptionText.shouldEagerClose(after: text, secondsBuffered: secondsBuffered) {
+                self.pendingEagerClose = true
+            }
         }
     }
 
@@ -239,13 +305,17 @@ final class CaptionsService: ObservableObject {
 
     // MARK: - Line emission
 
-    /// Max caption lines kept on screen (newest last).
+    /// Max caption lines kept on screen (newest last): up to 2 final lines plus
+    /// at most one trailing volatile line.
     private static let displayCapacity = 3
 
-    /// Updates (or creates) the current volatile line's text in place.
+    /// Updates (or creates) the current volatile line's text in place. Applies the
+    /// no-regress rule so a shorter re-transcription can't flicker over a longer
+    /// one. The volatile line is ALWAYS the last row (never reordered).
     private func updateVolatileLine(_ text: String) {
         guard isRunning else { return }
         if let id = volatileLineID, let index = lines.firstIndex(where: { $0.id == id }) {
+            guard CaptionText.shouldReplaceVolatile(current: lines[index].text, with: text) else { return }
             lines[index].text = text
         } else {
             let line = CaptionLine(text: text, isFinal: false)
@@ -254,19 +324,40 @@ final class CaptionsService: ObservableObject {
         }
     }
 
-    /// Commits `text` as a final line: promotes the volatile line in place if
-    /// present, else appends a fresh final line. Records it in the session
+    /// Commits `text` as a final line, applying Part-A hygiene:
+    ///
+    /// 1. Trim any exact seam-overlap with the previous final line.
+    /// 2. Drop junk (empty / punctuation-only) results.
+    /// 3. Drop near-duplicates of the previous final line.
+    ///
+    /// Surviving text promotes the volatile line in place (never reordered) if one
+    /// is showing, else appends a fresh final line, and records it in the session
     /// transcript for the optional saved history entry.
-    private func commitFinalLine(_ text: String) {
+    private func commitFinalLine(_ rawText: String) {
         guard isRunning else { return }
+
+        let trimmed = CaptionText.trimSeamOverlap(rawText, previousFinal: previousFinalText)
+        if CaptionText.isJunk(trimmed) || CaptionText.isNearDuplicate(trimmed, of: previousFinalText) {
+            // Nothing new to show: drop the dangling volatile line so it doesn't
+            // linger as a half-finalized artifact.
+            clearVolatileLine()
+            return
+        }
+
+        let finalID: UUID
         if let id = volatileLineID, let index = lines.firstIndex(where: { $0.id == id }) {
-            lines[index].text = text
+            lines[index].text = trimmed
             lines[index].isFinal = true
+            finalID = id
         } else {
-            appendBounded(CaptionLine(text: text, isFinal: true))
+            let line = CaptionLine(text: trimmed, isFinal: true)
+            finalID = line.id
+            appendBounded(line)
         }
         volatileLineID = nil
-        sessionLines.append(text)
+        previousFinalText = trimmed
+        sessionLines.append(trimmed)
+        translateFinalIfEnabled(lineID: finalID, text: trimmed)
     }
 
     /// Appends a line and trims the display to ``displayCapacity`` (newest last).
@@ -284,6 +375,37 @@ final class CaptionsService: ObservableObject {
         guard let id = volatileLineID else { return }
         lines.removeAll { $0.id == id }
         volatileLineID = nil
+    }
+
+    // MARK: - Translation (Part B)
+
+    /// Queues a finalized line for Dutch translation when the toggle is on and the
+    /// text is not already Dutch. The overlay's `.translationTask` drains
+    /// ``pendingTranslations`` with its `TranslationSession`.
+    private func translateFinalIfEnabled(lineID: UUID, text: String) {
+        guard translateEnabled else { return }
+        guard !CaptionText.detectedIsDutch(text) else { return }
+        pendingTranslations.append(PendingTranslation(id: lineID, text: text))
+    }
+
+    /// Called by the overlay after its session has translated a queued line.
+    /// Applies the Dutch text to the matching line (kept in place) and dequeues it.
+    func applyTranslation(lineID: UUID, dutch: String) {
+        if let index = lines.firstIndex(where: { $0.id == lineID }) {
+            lines[index].translation = dutch
+        }
+        pendingTranslations.removeAll { $0.id == lineID }
+        translationHint = nil
+    }
+
+    /// Called by the overlay when a queued translation could not be produced
+    /// (typically the language pack is not installed). Dequeues the line, leaves
+    /// the original text intact, and surfaces a one-time Dutch hint.
+    func failTranslation(lineID: UUID, unavailable: Bool) {
+        pendingTranslations.removeAll { $0.id == lineID }
+        if unavailable, translationHint == nil {
+            translationHint = "Vertaling niet beschikbaar. Installeer het Nederlandse taalpakket via Systeeminstellingen › Algemeen › Taal en regio › Vertaaltalen."
+        }
     }
 
     // MARK: - History
