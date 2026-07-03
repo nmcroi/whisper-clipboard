@@ -96,4 +96,79 @@ import Foundation
         let result = TextProcessor.applyReplacements("foo", [Replacement(find: "foo", replace: "$1 and \\1")])
         #expect(result == "$1 and \\1")
     }
+
+    // MARK: - Filler-word removal (M7)
+
+    /// The headline case from the spec: hesitation sounds are stripped and the
+    /// resulting extra spaces collapse cleanly.
+    @Test func removeFillersStripsDutchHesitationSounds() {
+        let result = TextProcessor.removeFillers("Dit is eh een test met uh stopwoorden", language: "nl")
+        #expect(result == "Dit is een test met stopwoorden")
+    }
+
+    /// Matching is case-insensitive and covers the ehm/uhm variants.
+    @Test func removeFillersIsCaseInsensitive() {
+        let result = TextProcessor.removeFillers("Ehm dit is UHM prima", language: "nl")
+        #expect(result == "dit is prima")
+    }
+
+    /// A filler right before a comma must not leave a dangling " ," seam.
+    @Test func removeFillersFixesPunctuationSpacing() {
+        let result = TextProcessor.removeFillers("Nou eh, dat klopt", language: "nl")
+        #expect(result == "Nou, dat klopt")
+    }
+
+    /// A sentence-INITIAL filler must not leave a stray leading . ! ? , ; :
+    @Test func removeFillersStripsLeadingOrphanPunctuation() {
+        #expect(TextProcessor.removeFillers("eh. Dit is een test", fillers: ["eh"]) == "Dit is een test")
+        #expect(TextProcessor.removeFillers("uh! Kijk daar", fillers: ["uh"]) == "Kijk daar")
+        #expect(TextProcessor.removeFillers("ehm, dus we gaan", fillers: ["ehm"]) == "dus we gaan")
+    }
+
+    /// Meaningful words that merely resemble fillers (or that were explicitly
+    /// excluded from the conservative list) are kept.
+    @Test func removeFillersKeepsMeaningfulWords() {
+        // "eigenlijk", "gewoon", "nou", "ja" are intentionally NOT fillers.
+        let text = "Ik ga eigenlijk gewoon door, nou ja."
+        #expect(TextProcessor.removeFillers(text, language: "nl") == text)
+        // Whole-word only: "uhr" / "ehandel" contain filler letters but are words.
+        #expect(TextProcessor.removeFillers("de uhrwerk staat", language: "nl") == "de uhrwerk staat")
+    }
+
+    /// Multi-word fillers are removed as a phrase, not leaving a component word.
+    @Test func removeFillersHandlesMultiWordFillers() {
+        let result = TextProcessor.removeFillers("Dat is zeg maar prima", language: "nl")
+        #expect(result == "Dat is prima")
+    }
+
+    /// Custom list overload removes exactly what it is given and nothing more.
+    @Test func removeFillersWithExplicitListIsExact() {
+        let result = TextProcessor.removeFillers("keep drop keep", fillers: ["drop"])
+        #expect(result == "keep keep")
+    }
+
+    /// An empty filler list is a no-op.
+    @Test func removeFillersEmptyListIsNoOp() {
+        #expect(TextProcessor.removeFillers("niks verandert hier", fillers: []) == "niks verandert hier")
+    }
+
+    /// `process` only strips fillers when the flag is set, and leaves output
+    /// untouched otherwise (respecting the flag).
+    @Test func processRespectsRemoveFillersFlag() {
+        let input = "Dit is eh een test met uh stopwoorden"
+        // Flag off: fillers stay (cleanText still capitalizes/normalizes).
+        let off = TextProcessor.process(input, clean: true, removeFillers: false)
+        #expect(off.contains(" eh ") && off.contains(" uh "))
+        // Flag on: fillers gone, sentence cleaned + capitalized.
+        let on = TextProcessor.process(input, clean: true, removeFillers: true, language: "nl")
+        #expect(on == "Dit is een test met stopwoorden")
+    }
+
+    /// English gets its extra bare hesitation tokens ("er"), which are gated off
+    /// for Dutch to avoid clobbering meaning.
+    @Test func removeFillersEnglishListAddsBareTokens() {
+        #expect(TextProcessor.removeFillers("this is er fine", language: "en") == "this is fine")
+        // Dutch must NOT strip a bare "er" (a real, meaningful Dutch word).
+        #expect(TextProcessor.removeFillers("er staat een er", language: "nl") == "er staat een er")
+    }
 }

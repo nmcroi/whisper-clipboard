@@ -43,6 +43,24 @@ public struct AppSettings: Codable, Equatable, Sendable {
     /// the call site; error linger stays a fixed, shorter duration.
     public var hudLingerSeconds: Double
 
+    // MARK: - Automation (M7)
+
+    /// Remove conservative filler words/sounds ("eh", "uh", "ehm"…) from every
+    /// transcript (dictation, import, captions). Off by default. See
+    /// ``TextProcessor/removeFillers(_:language:)`` for the exact list.
+    public var removeFillers: Bool
+    /// Automatically write every newly completed transcript to a folder on disk.
+    public var autoExportEnabled: Bool
+    /// Destination directory for auto-export (a plain filesystem path; the app is
+    /// non-sandboxed). Empty disables the export even when the toggle is on.
+    public var autoExportDirectory: String
+    /// Export format for auto-export: one of `txt`, `md`, `srt`, `vtt`, `json`.
+    /// Stored as the ``ExportFormat`` raw value; falls back to `md` when unknown.
+    public var autoExportFormat: String
+    /// Filesystem paths of folders watched for new audio/video files to
+    /// auto-transcribe. Empty = watching disabled.
+    public var watchedFolders: [String]
+
     public init(
         hotkeyMode: HotkeyMode = .toggle,
         language: String = "nl",
@@ -57,7 +75,12 @@ public struct AppSettings: Codable, Equatable, Sendable {
         diarizeImports: Bool = true,
         historyRetention: Int? = nil,
         initialPrompt: String = "",
-        hudLingerSeconds: Double = 3.0
+        hudLingerSeconds: Double = 3.0,
+        removeFillers: Bool = false,
+        autoExportEnabled: Bool = false,
+        autoExportDirectory: String = "",
+        autoExportFormat: String = "md",
+        watchedFolders: [String] = []
     ) {
         self.hotkeyMode = hotkeyMode
         self.language = language
@@ -73,6 +96,11 @@ public struct AppSettings: Codable, Equatable, Sendable {
         self.historyRetention = historyRetention
         self.initialPrompt = initialPrompt
         self.hudLingerSeconds = hudLingerSeconds
+        self.removeFillers = removeFillers
+        self.autoExportEnabled = autoExportEnabled
+        self.autoExportDirectory = autoExportDirectory
+        self.autoExportFormat = autoExportFormat
+        self.watchedFolders = watchedFolders
     }
 
     // Tolerant decoding: any key missing from an older/newer on-disk settings.json
@@ -84,6 +112,7 @@ public struct AppSettings: Codable, Equatable, Sendable {
         case translateCaptionsToDutch
         case diarizeImports
         case historyRetention, initialPrompt, hudLingerSeconds
+        case removeFillers, autoExportEnabled, autoExportDirectory, autoExportFormat, watchedFolders
     }
 
     public init(from decoder: Decoder) throws {
@@ -103,5 +132,10 @@ public struct AppSettings: Codable, Equatable, Sendable {
         self.historyRetention = try c.decodeIfPresent(Int.self, forKey: .historyRetention) ?? d.historyRetention
         self.initialPrompt = try c.decodeIfPresent(String.self, forKey: .initialPrompt) ?? d.initialPrompt
         self.hudLingerSeconds = try c.decodeIfPresent(Double.self, forKey: .hudLingerSeconds) ?? d.hudLingerSeconds
+        self.removeFillers = try c.decodeIfPresent(Bool.self, forKey: .removeFillers) ?? d.removeFillers
+        self.autoExportEnabled = try c.decodeIfPresent(Bool.self, forKey: .autoExportEnabled) ?? d.autoExportEnabled
+        self.autoExportDirectory = try c.decodeIfPresent(String.self, forKey: .autoExportDirectory) ?? d.autoExportDirectory
+        self.autoExportFormat = try c.decodeIfPresent(String.self, forKey: .autoExportFormat) ?? d.autoExportFormat
+        self.watchedFolders = try c.decodeIfPresent([String].self, forKey: .watchedFolders) ?? d.watchedFolders
     }
 }

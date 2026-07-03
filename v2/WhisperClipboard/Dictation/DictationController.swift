@@ -250,7 +250,9 @@ final class DictationController: ObservableObject {
         let processed = TextProcessor.process(
             trimmed,
             replacements: settings.replacements,
-            clean: settings.cleanOutput
+            clean: settings.cleanOutput,
+            removeFillers: settings.removeFillers,
+            language: settings.language.isEmpty ? "nl" : settings.language
         )
 
         Clipboard.copy(processed)

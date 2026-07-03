@@ -131,6 +131,11 @@ final class FileImportService {
     private let notify: (String) -> Void
     private let copyToClipboard: (String) -> Void
 
+    /// Invoked with each transcript entry just after it is stored in history, so
+    /// a completed import can trigger auto-export (M7). Nil-safe. Runs on the main
+    /// actor; must never throw (auto-export is best-effort).
+    var onTranscriptStored: ((TranscriptEntry) -> Void)?
+
     /// Seconds a finished job lingers in the queue before auto-clearing.
     static let autoClearDelay: Double = 4
 
@@ -236,12 +241,15 @@ final class FileImportService {
             let result = try await engine.transcribeSamples(samples, locale: locale())
 
             // Apply the same post-processing as dictation: the personal
-            // woordenlijst (whole-word replacements) first, then optional cleanup.
+            // woordenlijst (whole-word replacements) first, optional filler
+            // removal, then optional cleanup.
             let config = settings()
             let text = TextProcessor.process(
                 result.text,
                 replacements: config.replacements,
-                clean: config.cleanOutput
+                clean: config.cleanOutput,
+                removeFillers: config.removeFillers,
+                language: locale().language.languageCode?.identifier ?? "nl"
             ).trimmingCharacters(in: .whitespacesAndNewlines)
             guard !text.isEmpty else {
                 throw FileImportError.emptyTranscript
@@ -327,6 +335,9 @@ final class FileImportService {
             segments: segments
         )
         try history.add(entry)
+        // Fire the post-store hook (auto-export). Best-effort; the entry is
+        // already safely persisted regardless of what this does.
+        onTranscriptStored?(entry)
     }
 
     private func scheduleAutoClear(_ job: ImportJob) {

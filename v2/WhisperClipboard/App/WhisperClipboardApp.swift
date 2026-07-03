@@ -50,8 +50,9 @@ private struct WindowConfigurator: NSViewRepresentable {
 }
 
 /// Tabbed settings window: "Algemeen" (hotkey, taal, opstarten), "Woordenlijst"
-/// (personal find→replace dictionary), "Invoegen" (direct text insertion) and
-/// "AI" (Claude API key + custom mode editor).
+/// (personal find→replace dictionary), "Invoegen" (direct text insertion),
+/// "Automatisering" (filler removal, auto-export, watched folders) and "AI"
+/// (Claude API key + custom mode editor).
 struct SettingsView: View {
     @EnvironmentObject private var environment: AppEnvironment
 
@@ -65,6 +66,9 @@ struct SettingsView: View {
 
             InsertionSettingsView()
                 .tabItem { Label("Invoegen", systemImage: "text.cursor") }
+
+            AutomationSettingsView()
+                .tabItem { Label("Automatisering", systemImage: "gearshape.2") }
 
             AISettingsView(modes: environment.modes)
                 .tabItem { Label("AI", systemImage: "sparkles") }

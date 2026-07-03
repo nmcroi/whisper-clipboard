@@ -76,6 +76,9 @@ final class CaptionsService: ObservableObject {
     /// The personal woordenlijst applied to every caption line (whole-word,
     /// case-insensitive). Read on demand so edits take effect immediately.
     private let replacements: () -> [Replacement]
+    /// Whether to strip conservative filler words ("eh", "uh"…) from each caption
+    /// line. Read on demand so the toggle takes effect immediately.
+    private let removeFillers: () -> Bool
     private let notify: (String) -> Void
     /// Reads the persisted translate-to-Dutch setting (refreshed on each start).
     private let translateToDutch: () -> Bool
@@ -111,6 +114,7 @@ final class CaptionsService: ObservableObject {
         saveToHistory: @escaping () -> Bool,
         busyReason: @escaping () -> String?,
         replacements: @escaping () -> [Replacement] = { [] },
+        removeFillers: @escaping () -> Bool = { false },
         translateToDutch: @escaping () -> Bool = { false },
         onTranslateToggle: @escaping (Bool) -> Void = { _ in },
         engine: ParakeetEngine = ParakeetEngine(),
@@ -122,6 +126,7 @@ final class CaptionsService: ObservableObject {
         self.saveToHistory = saveToHistory
         self.busyReason = busyReason
         self.replacements = replacements
+        self.removeFillers = removeFillers
         self.translateToDutch = translateToDutch
         self.onTranslateToggle = onTranslateToggle
         self.notify = notify
@@ -296,11 +301,26 @@ final class CaptionsService: ObservableObject {
     private func transcribe(_ window: [Float]) async -> String? {
         do {
             let result = try await engine.transcribeSamples(window, locale: locale())
-            let processed = TextProcessor.applyReplacements(result.text, replacements())
+            let processed = applyCaptionProcessing(result.text)
             return processed.trimmingCharacters(in: .whitespacesAndNewlines)
         } catch {
             return nil
         }
+    }
+
+    /// Applies the caption line pipeline: personal woordenlijst first, then
+    /// optional conservative filler removal. Captions never run the full
+    /// `cleanText` sentence pass (lines are short, streaming fragments), so this
+    /// mirrors the two steps that are meaningful per-window.
+    private func applyCaptionProcessing(_ text: String) -> String {
+        var processed = TextProcessor.applyReplacements(text, replacements())
+        if removeFillers() {
+            processed = TextProcessor.removeFillers(
+                processed,
+                language: locale().language.languageCode?.identifier ?? "nl"
+            )
+        }
+        return processed
     }
 
     // MARK: - Line emission
@@ -470,7 +490,7 @@ final class CaptionsService: ObservableObject {
 
         func transcribe(_ window: [Float]) async -> String? {
             guard let result = try? await engine.transcribeSamples(window, locale: locale()) else { return nil }
-            let processed = TextProcessor.applyReplacements(result.text, replacements())
+            let processed = applyCaptionProcessing(result.text)
             let text = processed.trimmingCharacters(in: .whitespacesAndNewlines)
             return text.isEmpty ? nil : text
         }

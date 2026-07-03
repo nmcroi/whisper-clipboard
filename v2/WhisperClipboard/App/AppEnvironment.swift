@@ -72,6 +72,10 @@ final class AppEnvironment: ObservableObject {
     private let captionOverlay: CaptionOverlayController
     /// Direct text insertion (M5): pastes into the frontmost app when enabled.
     let insertion = InsertionService()
+    /// Auto-export of completed transcripts to a folder (M7).
+    let autoExport: AutoExportService
+    /// Watched-folder auto-transcribe (M7).
+    let watchedFolders: WatchedFolderService
 
     private var locale: Locale {
         Locale(identifier: settings.language.isEmpty ? "nl-NL" : settings.language)
@@ -164,11 +168,36 @@ final class AppEnvironment: ObservableObject {
                 return nil
             },
             replacements: { settingsRef().replacements },
+            removeFillers: { settingsRef().removeFillers },
             translateToDutch: { settingsRef().translateCaptionsToDutch },
             onTranslateToggle: { translateToggleSink($0) }
         )
         self.captions = captions
         self.captionOverlay = CaptionOverlayController(service: captions)
+
+        // Automation (M7): auto-export writes each completed transcript to disk;
+        // the watched-folder service scans configured folders and feeds new,
+        // stable media files into the (existing) file-import pipeline, respecting
+        // its one-job-at-a-time busy guard.
+        let autoExport = AutoExportService(settings: { settingsRef() })
+        self.autoExport = autoExport
+        self.watchedFolders = WatchedFolderService(
+            foldersProvider: { settingsRef().watchedFolders },
+            importer: { [weak fileImport] urls in fileImport?.importFiles(urls) },
+            isBusy: { [weak dictation, weak fileImport, weak modelManager] in
+                // Hold watched files back until the transcription model is ready:
+                // otherwise files present at launch could be enqueued before the
+                // model finishes downloading, fail, and — because they'd be marked
+                // processed — never be retried. Treating "not ready" as busy leaves
+                // them eligible for a later tick once the model installs.
+                if modelManager?.status.isReady != true { return true }
+                switch dictation?.phase {
+                case .recording, .transcribing: return true
+                default: break
+                }
+                return fileImport?.isBusy ?? false
+            }
+        )
 
         // Now that stored properties exist, bind the closures to `self`.
         settingsRef = { [weak self] in self?.settings ?? AppSettings() }
@@ -179,6 +208,10 @@ final class AppEnvironment: ObservableObject {
         // Persist every completed dictation.
         dictation.onTranscriptCompleted = { [weak self] completion in
             self?.saveCompletedTranscript(completion)
+        }
+        // Auto-export each completed file import once it is stored (M7).
+        fileImport.onTranscriptStored = { [weak self] entry in
+            self?.autoExport.exportIfEnabled(entry)
         }
         // Refuse dictation while a file import is running.
         dictation.importBusyProvider = { [weak self] in self?.fileImport.isBusy ?? false }
@@ -227,6 +260,9 @@ final class AppEnvironment: ObservableObject {
         )
         do {
             try history.add(entry)
+            // Auto-export the completed dictation (M7). Best-effort; never blocks
+            // or fails the dictation flow.
+            autoExport.exportIfEnabled(entry)
         } catch {
             NSLog("AppEnvironment: failed to save transcript: %@", String(describing: error))
         }
@@ -237,6 +273,11 @@ final class AppEnvironment: ObservableObject {
         // One-time import of the old Python history.json (reads only; the JSON
         // is left untouched as a backup). No-op after the first successful run.
         history.migrateFromV3IfNeeded()
+
+        // Start watching configured folders for new media (M7). Safe to start
+        // unconditionally: with no folders configured each scan is a no-op, and
+        // the service picks up folders added later via `watchedFolders.refresh()`.
+        watchedFolders.start()
 
         Task {
             await resolveEngineSelection()

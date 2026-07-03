@@ -86,4 +86,49 @@ import Foundation
 
         #expect(decoded.translateCaptionsToDutch == true)
     }
+
+    // MARK: - Automation fields (M7)
+
+    /// All automation features default to OFF / empty (opt-in).
+    @Test func automationDefaultsAreOff() {
+        let d = AppSettings()
+        #expect(d.removeFillers == false)
+        #expect(d.autoExportEnabled == false)
+        #expect(d.autoExportDirectory == "")
+        #expect(d.autoExportFormat == "md")
+        #expect(d.watchedFolders == [])
+    }
+
+    /// An older settings.json missing all the new automation keys still decodes,
+    /// each falling back to its default rather than failing the whole load.
+    @Test func automationFieldsFallBackWhenMissingFromJSON() throws {
+        let json = """
+        {"hotkeyMode":"toggle","language":"nl","engine":"parakeet","cleanOutput":true,"replacements":[],"directInsertion":false,"insertionDeniedBundleIds":[],"saveRecordings":false,"saveCaptions":false,"initialPrompt":""}
+        """.data(using: .utf8)!
+        let decoded = try JSONDecoder().decode(AppSettings.self, from: json)
+        #expect(decoded.removeFillers == false)
+        #expect(decoded.autoExportEnabled == false)
+        #expect(decoded.autoExportDirectory == "")
+        #expect(decoded.autoExportFormat == "md")
+        #expect(decoded.watchedFolders == [])
+    }
+
+    /// Explicit automation values round-trip through JSON coding.
+    @Test func automationFieldsRoundTripThroughCoding() throws {
+        var settings = AppSettings()
+        settings.removeFillers = true
+        settings.autoExportEnabled = true
+        settings.autoExportDirectory = "/Users/x/Transcripts"
+        settings.autoExportFormat = "srt"
+        settings.watchedFolders = ["/Users/x/Inbox", "/Users/x/Recordings"]
+
+        let data = try JSONEncoder().encode(settings)
+        let decoded = try JSONDecoder().decode(AppSettings.self, from: data)
+
+        #expect(decoded.removeFillers == true)
+        #expect(decoded.autoExportEnabled == true)
+        #expect(decoded.autoExportDirectory == "/Users/x/Transcripts")
+        #expect(decoded.autoExportFormat == "srt")
+        #expect(decoded.watchedFolders == ["/Users/x/Inbox", "/Users/x/Recordings"])
+    }
 }

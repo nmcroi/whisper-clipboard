@@ -61,17 +61,123 @@ public enum TextProcessor {
     }
 
     /// Runs the full post-transcription text pipeline: replacements first,
-    /// then (optionally) cleanup. Mirrors Python's `process`.
+    /// then optional filler-word removal, then (optionally) cleanup. Mirrors
+    /// Python's `process`, extended with the conservative stopword pass.
+    ///
+    /// Order matters: replacements run against the raw recognizer output first
+    /// (so a personal woordenlijst still sees the original tokens), then fillers
+    /// are stripped, and finally `cleanText` collapses the whitespace/punctuation
+    /// the removals leave behind and re-capitalizes sentence starts.
     public static func process(
         _ text: String,
         replacements: [Replacement] = [],
-        clean: Bool = true
+        clean: Bool = true,
+        removeFillers: Bool = false,
+        language: String = "nl"
     ) -> String {
         var result = applyReplacements(text, replacements)
+        if removeFillers {
+            result = self.removeFillers(result, language: language)
+        }
         if clean {
             result = cleanText(result)
         }
         return result
+    }
+
+    // MARK: - Filler-word removal
+
+    /// The conservative default list of filler words/sounds removed by
+    /// ``removeFillers(_:language:)`` when the feature is enabled. Kept
+    /// deliberately small and unambiguous: only hesitation sounds and a couple
+    /// of clearly-filler discourse markers, so meaningful words are never
+    /// dropped.
+    ///
+    /// - Dutch/shared hesitation sounds: `eh`, `ehm`, `ehh`, `uh`, `uhm`, `uhh`,
+    ///   `hm`, `hmm`, `mmm`.
+    /// - Dutch discourse fillers (safe, common): `zeg maar`, `weet je wel`.
+    /// - Common English hesitation sounds (also heard in Dutch speech): `um`,
+    ///   `uhh`, `er`, `err`. `um` is included; the bare English `er`/`err` are
+    ///   *only* added for English to avoid clobbering Dutch words.
+    ///
+    /// Words the list intentionally does NOT contain because they carry meaning
+    /// in normal Dutch sentences: `eigenlijk`, `gewoon`, `dus`, `nou`, `ja`,
+    /// `weet je` (bare), `nou ja`.
+    public static func defaultFillers(language: String) -> [String] {
+        // Shared hesitation sounds — safe in any language, never real words.
+        var fillers = [
+            "eh", "ehm", "ehh", "uh", "uhm", "uhh", "um",
+            "hm", "hmm", "mmm",
+            // Multi-word Dutch discourse fillers that are unambiguous.
+            "zeg maar", "weet je wel",
+        ]
+        // English-only bare hesitation tokens. `er`/`err` collide with nothing
+        // meaningful in English but WOULD be risky in Dutch, so gate them.
+        if language.lowercased().hasPrefix("en") {
+            fillers.append(contentsOf: ["er", "err", "uhh"])
+        }
+        return fillers
+    }
+
+    /// Removes whole-word, case-insensitive filler tokens from `text` using the
+    /// conservative default list for `language`, then repairs the spacing and
+    /// punctuation the removals leave behind. Pure and side-effect-free.
+    ///
+    /// - Multi-word fillers (e.g. "zeg maar") are matched as phrases.
+    /// - Only whole-word matches are removed, so "uh" never touches "uhr" or
+    ///   words that merely contain the letters.
+    /// - After removal, runs of whitespace are collapsed, a space left dangling
+    ///   before punctuation is fixed, and stray leading punctuation is dropped,
+    ///   so "Dit is eh, een test" → "Dit is een test" and "Dit is eh een test"
+    ///   → "Dit is een test". Capitalization/cleanup beyond this is left to
+    ///   ``cleanText(_:)`` (called by ``process(_:replacements:clean:removeFillers:language:)``).
+    public static func removeFillers(_ text: String, language: String) -> String {
+        removeFillers(text, fillers: defaultFillers(language: language))
+    }
+
+    /// Filler removal against an explicit list (the testable core). Longer
+    /// phrases are removed before shorter ones so multi-word fillers win over a
+    /// component word. Returns `text` unchanged when the list is empty.
+    public static func removeFillers(_ text: String, fillers: [String]) -> String {
+        guard !fillers.isEmpty, !text.isEmpty else { return text }
+
+        var result = text
+        // Remove longer (multi-word) fillers first so "weet je wel" is stripped
+        // as a unit rather than leaving "wel" behind from a shorter match.
+        let ordered = fillers
+            .map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }
+            .filter { !$0.isEmpty }
+            .sorted { $0.count > $1.count }
+
+        for filler in ordered {
+            let pattern = "\\b\(NSRegularExpression.escapedPattern(for: filler))\\b"
+            guard let regex = try? NSRegularExpression(pattern: pattern, options: [.caseInsensitive]) else {
+                continue
+            }
+            let nsResult = result as NSString
+            let range = NSRange(location: 0, length: nsResult.length)
+            result = regex.stringByReplacingMatches(in: result, options: [], range: range, withTemplate: "")
+        }
+
+        // Repair the seams: a filler removed from the middle leaves a double
+        // space; one removed before a comma/period leaves " ,". Collapse runs of
+        // spaces, drop whitespace before punctuation, and strip any punctuation
+        // that a removal orphaned at the very start of the text.
+        result = collapseSpaces(result)
+        result = replace(pattern: "\\s+([,.!?;:])", in: result, with: "$1")
+        // A leading orphaned punctuation mark left by a sentence-initial filler:
+        // "eh, dus" → ", dus" → "dus"; "eh. Dit" → ". Dit" → "Dit". Covers the
+        // full sentence/clause punctuation set (, ; : . ! ?) so no stray mark
+        // survives at the very start of the text.
+        result = replace(pattern: "^\\s*[,;:.!?]+\\s*", in: result, with: "")
+        return result.trimmingCharacters(in: .whitespacesAndNewlines)
+    }
+
+    /// Collapses runs of spaces/tabs to a single space but preserves newlines
+    /// (unlike ``collapseWhitespace(_:)``, which flattens everything). Filler
+    /// removal must not merge separate lines together.
+    private static func collapseSpaces(_ text: String) -> String {
+        replace(pattern: "[ \\t]+", in: text, with: " ")
     }
 
     // MARK: - Helpers
