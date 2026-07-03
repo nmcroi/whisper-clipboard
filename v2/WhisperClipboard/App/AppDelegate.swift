@@ -60,6 +60,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         downloadMenuItem = download
 
         menu.addItem(
+            makeItem(title: "Bestand importeren…", action: #selector(importFile), key: "i")
+        )
+
+        menu.addItem(
             makeItem(title: "Open Whisper Clipboard", action: #selector(openHome), key: "o")
         )
         menu.addItem(
@@ -259,6 +263,16 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
     @objc private func downloadModel() {
         environment.downloadModel()
+    }
+
+    @objc private func importFile() {
+        // Bring the window forward so the queue panel is visible, then present
+        // the open panel and enqueue the chosen files.
+        environment.menuNavigationRequest = .home
+        showMainWindow()
+        MediaOpenPanel.present { [weak self] urls in
+            self?.environment.fileImport.importFiles(urls)
+        }
     }
 
     @objc private func openHome() {

@@ -227,6 +227,25 @@ actor ParakeetEngine: TranscriptionEngine {
         samples.removeAll(keepingCapacity: false)
     }
 
+    /// Transcribes pre-decoded 16 kHz mono Float32 samples (M3 file import).
+    /// FluidAudio chunks long input internally via its sliding-window pipeline,
+    /// so no manual chunking is needed even for hour-long recordings.
+    func transcribeSamples(_ samples: [Float], locale: Locale) async throws -> TranscriptionResult {
+        guard Self.isSupportedHardware else { throw ParakeetEngineError.unsupportedHardware }
+        try await loadModelsIfNeeded()
+        guard let manager else { throw ParakeetEngineError.modelNotLoaded }
+
+        guard samples.count >= Int(Self.sampleRate * 0.3) else { return .empty }
+
+        do {
+            var state = TdtDecoderState.make(decoderLayers: 2)
+            let result = try await manager.transcribe(samples, decoderState: &state, language: nil)
+            return TranscriptionResult(text: result.text, segments: Self.segments(from: result))
+        } catch {
+            throw ParakeetEngineError.transcriptionFailed(error.localizedDescription)
+        }
+    }
+
     func transcribeFile(at url: URL, locale: Locale) async throws -> TranscriptionResult {
         guard Self.isSupportedHardware else { throw ParakeetEngineError.unsupportedHardware }
         try await loadModelsIfNeeded()

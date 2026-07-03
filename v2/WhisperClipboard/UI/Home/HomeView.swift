@@ -1,5 +1,7 @@
+import AppKit
 import Core
 import SwiftUI
+import UniformTypeIdentifiers
 
 /// The main window root: a dark `NavigationSplitView` with a tight sidebar
 /// (Home / Geschiedenis) and a detail pane per tab.
@@ -109,6 +111,7 @@ private struct HomeContent: View {
                     modelDownloadCard
                 }
                 actionGrid
+                ImportQueueView(service: environment.fileImport)
                 recentSection
             }
             .padding(28)
@@ -116,6 +119,44 @@ private struct HomeContent: View {
             .frame(maxWidth: .infinity, alignment: .leading)
         }
         .background(Theme.window)
+        .onDrop(of: [.fileURL], isTargeted: $isDropTargeted, perform: handleDrop)
+        .overlay {
+            if isDropTargeted {
+                RoundedRectangle(cornerRadius: 0)
+                    .strokeBorder(Theme.accent, lineWidth: 2)
+                    .allowsHitTesting(false)
+            }
+        }
+    }
+
+    @State private var isDropTargeted = false
+
+    private func openFiles() {
+        MediaOpenPanel.present { urls in
+            environment.fileImport.importFiles(urls)
+        }
+    }
+
+    /// Handles files dropped on the window: loads each provider's URL, then
+    /// enqueues the supported ones (the service rejects unsupported types).
+    private func handleDrop(_ providers: [NSItemProvider]) -> Bool {
+        let group = DispatchGroup()
+        var urls: [URL] = []
+        let lock = NSLock()
+        for provider in providers {
+            group.enter()
+            _ = provider.loadObject(ofClass: URL.self) { url, _ in
+                if let url {
+                    lock.lock(); urls.append(url); lock.unlock()
+                }
+                group.leave()
+            }
+        }
+        group.notify(queue: .main) {
+            guard !urls.isEmpty else { return }
+            environment.fileImport.importFiles(urls)
+        }
+        return true
     }
 
     // MARK: Header
@@ -223,8 +264,8 @@ private struct HomeContent: View {
                 symbol: "folder",
                 title: "Bestanden openen",
                 subtitle: "Transcribeer audio- of videobestanden",
-                enabled: false,
-                badge: "M3"
+                enabled: true,
+                action: { openFiles() }
             )
             ActionCard(
                 symbol: "captions.bubble",

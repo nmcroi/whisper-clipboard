@@ -44,6 +44,9 @@ final class DictationController: ObservableObject {
     /// Invoked with the finished, post-processed transcript so a completed
     /// dictation can be persisted to the history store. Nil-safe (M0/M1 wiring).
     var onTranscriptCompleted: ((TranscriptCompletion) -> Void)?
+    /// Returns true when a file import is running, so dictation refuses to start
+    /// (mirrors the Python "one job at a time" guard). Nil-safe.
+    var importBusyProvider: (() -> Bool)?
 
     /// The payload handed to `onTranscriptCompleted` after a successful run.
     struct TranscriptCompletion {
@@ -113,6 +116,12 @@ final class DictationController: ObservableObject {
         // Guard: model still loading/downloading → notify, mirror Python.
         guard modelManager.status.isReady else {
             Notifications.post("Spraakmodel wordt nog geladen")
+            return
+        }
+
+        // Guard: a file import is running → refuse, mirror Python one-job-at-a-time.
+        if importBusyProvider?() == true {
+            Notifications.post("Wacht tot de huidige opname of transcriptie klaar is")
             return
         }
 

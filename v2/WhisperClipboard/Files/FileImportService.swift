@@ -1,0 +1,420 @@
+import AVFoundation
+import Core
+import Foundation
+import Observation
+import UniformTypeIdentifiers
+
+// MARK: - Supported media types
+
+/// The media container/codec types the file-import pipeline accepts. Mirrors the
+/// Python app's `SUPPORTED_MEDIA_SUFFIXES` (mp3/mp4/m4a/wav/mov) plus a few extra
+/// audio containers AVFoundation decodes trivially (aac/aiff/caf).
+enum SupportedMedia {
+    /// Lower-cased file extensions (no leading dot) the importer accepts.
+    static let extensions: Set<String> = [
+        "mp3", "mp4", "m4a", "wav", "mov", "aac", "aiff", "aif", "caf",
+    ]
+
+    /// `UTType`s for the `NSOpenPanel` allowed-content-types and drop validation.
+    static let contentTypes: [UTType] = [
+        .mp3, .mpeg4Movie, .mpeg4Audio, .wav, .quickTimeMovie, .aiff,
+        UTType("public.aac-audio"), UTType(filenameExtension: "caf"),
+    ].compactMap { $0 }
+
+    /// Whether `url`'s extension is supported (pure, case-insensitive).
+    static func isSupported(_ url: URL) -> Bool {
+        extensions.contains(url.pathExtension.lowercased())
+    }
+}
+
+// MARK: - Import errors (Dutch, user-facing)
+
+enum FileImportError: LocalizedError {
+    case unsupportedType
+    case fileMissing
+    case decodeFailed(String)
+    case transcriptionFailed(String)
+    case emptyTranscript
+
+    var errorDescription: String? {
+        switch self {
+        case .unsupportedType:
+            return "Kies een mp3-, mp4-, m4a-, wav- of mov-bestand."
+        case .fileMissing:
+            return "Het gekozen audio- of videobestand bestaat niet meer."
+        case .decodeFailed(let detail):
+            return "Het bestand kon niet worden gelezen: \(detail)"
+        case .transcriptionFailed(let detail):
+            return "Transcriptie mislukte: \(detail)"
+        case .emptyTranscript:
+            return "Geen spraak herkend in dit bestand."
+        }
+    }
+}
+
+// MARK: - Job model
+
+/// One queued import job, observable so the Home queue panel reflects live state.
+@MainActor
+@Observable
+final class ImportJob: Identifiable {
+    enum State: Equatable {
+        case waiting
+        case decoding(progress: Double)
+        case transcribing
+        case done
+        case failed(message: String)
+
+        var isTerminal: Bool {
+            switch self {
+            case .done, .failed: return true
+            case .waiting, .decoding, .transcribing: return false
+            }
+        }
+    }
+
+    let id = UUID()
+    let url: URL
+    /// Filename stem used as the history entry name.
+    var displayName: String { url.deletingPathExtension().lastPathComponent }
+    var state: State
+
+    init(url: URL, state: State = .waiting) {
+        self.url = url
+        self.state = state
+    }
+}
+
+// MARK: - Service
+
+/// Sequential file-import → transcription pipeline.
+///
+/// Jobs are queued and processed one at a time (matching the Python app's
+/// "one job at a time" guard). Each job is decoded to 16 kHz mono Float32 via
+/// AVFoundation, transcribed by Parakeet, stored in history, and copied to the
+/// clipboard with a Dutch notification.
+///
+/// ## Long audio
+/// FluidAudio's `AsrManager.transcribe(_ samples:)` chunks long input internally
+/// via its sliding-window pipeline (see `AsrManager+Transcription`), so a 1-hour
+/// recording needs no manual chunking here — we hand it the full sample array and
+/// let FluidAudio window it. Decoding itself streams frame-by-frame with a bounded
+/// converter buffer, so memory stays proportional to the decoded PCM, not to any
+/// intermediate copies.
+@MainActor
+@Observable
+final class FileImportService {
+
+    /// The live job queue (newest last). The UI renders this directly.
+    private(set) var jobs: [ImportJob] = []
+
+    /// True while a job is decoding or transcribing.
+    private(set) var isBusy = false
+
+    // Dependencies.
+    private let engine: ParakeetEngine
+    private let history: HistoryStore
+    private let locale: () -> Locale
+    /// Guard predicate: returns a Dutch reason string when import must be refused
+    /// (e.g. dictation is recording/transcribing), or nil when clear to proceed.
+    private let busyReason: () -> String?
+    private let notify: (String) -> Void
+    private let copyToClipboard: (String) -> Void
+
+    /// Seconds a finished job lingers in the queue before auto-clearing.
+    static let autoClearDelay: Double = 4
+
+    init(
+        engine: ParakeetEngine,
+        history: HistoryStore,
+        locale: @escaping () -> Locale,
+        busyReason: @escaping () -> String?,
+        notify: @escaping (String) -> Void = { Notifications.post($0) },
+        copyToClipboard: @escaping (String) -> Void = { Clipboard.copy($0) }
+    ) {
+        self.engine = engine
+        self.history = history
+        self.locale = locale
+        self.busyReason = busyReason
+        self.notify = notify
+        self.copyToClipboard = copyToClipboard
+    }
+
+    // MARK: - Public entry points
+
+    /// Enqueues `urls` for import. Unsupported files are rejected immediately with
+    /// a Dutch notification. Refuses entirely (with a notification) while dictation
+    /// is active. Returns the jobs actually enqueued.
+    @discardableResult
+    func importFiles(_ urls: [URL]) -> [ImportJob] {
+        if let reason = busyReason() {
+            notify(reason)
+            return []
+        }
+
+        var enqueued: [ImportJob] = []
+        for url in urls {
+            guard SupportedMedia.isSupported(url) else {
+                notify(FileImportError.unsupportedType.errorDescription ?? "Niet-ondersteund bestand.")
+                continue
+            }
+            let job = ImportJob(url: url)
+            jobs.append(job)
+            enqueued.append(job)
+        }
+
+        if !enqueued.isEmpty {
+            drainQueue()
+        }
+        return enqueued
+    }
+
+    /// Re-runs a failed job (retry button).
+    func retry(_ job: ImportJob) {
+        guard case .failed = job.state else { return }
+        job.state = .waiting
+        drainQueue()
+    }
+
+    /// Removes a job from the queue (manual dismiss).
+    func remove(_ job: ImportJob) {
+        jobs.removeAll { $0.id == job.id }
+    }
+
+    // MARK: - Queue processing
+
+    private var isDraining = false
+
+    /// Processes waiting jobs one at a time until none remain.
+    private func drainQueue() {
+        guard !isDraining else { return }
+        isDraining = true
+        Task { [weak self] in
+            await self?.runDrainLoop()
+        }
+    }
+
+    private func runDrainLoop() async {
+        defer { isDraining = false; isBusy = false }
+        while let job = jobs.first(where: { $0.state == .waiting }) {
+            isBusy = true
+            await process(job)
+        }
+    }
+
+    private func process(_ job: ImportJob) async {
+        var tempURL: URL?
+        do {
+            job.state = .decoding(progress: 0)
+            // AVAssetReader-based decode: handles both audio-only containers and
+            // the audio track of video containers (mp4/mov), streaming to a
+            // temporary 16 kHz mono Float32 WAV (constant memory regardless of
+            // file length).
+            let decoded = try await AudioFileDecoder.decodeToTemporaryWAV(from: job.url) { [weak job] fraction in
+                Task { @MainActor in
+                    if case .decoding = job?.state { job?.state = .decoding(progress: fraction) }
+                }
+            }
+            tempURL = decoded.url
+
+            job.state = .transcribing
+            let samples = try AudioSampleConverter.readSamples(fromWAV: decoded.url)
+            let result = try await engine.transcribeSamples(samples, locale: locale())
+
+            let text = result.text.trimmingCharacters(in: .whitespacesAndNewlines)
+            guard !text.isEmpty else {
+                throw FileImportError.emptyTranscript
+            }
+
+            try store(text: text, segments: result.segments, duration: decoded.duration, name: job.displayName)
+            copyToClipboard(text)
+            job.state = .done
+            notify("\(job.url.lastPathComponent) is getranscribeerd en gekopieerd")
+            scheduleAutoClear(job)
+        } catch {
+            let message = (error as? LocalizedError)?.errorDescription ?? error.localizedDescription
+            job.state = .failed(message: message)
+            notify(message)
+        }
+        if let tempURL {
+            try? FileManager.default.removeItem(at: tempURL)
+        }
+    }
+
+    private func store(text: String, segments: [Core.TranscriptSegment], duration: Double, name: String) throws {
+        let entry = TranscriptEntry(
+            id: UUID().uuidString,
+            text: text,
+            createdAt: Self.timestampString(from: Date()),
+            name: name,
+            pinned: false,
+            language: locale().language.languageCode?.identifier ?? "nl",
+            model: "parakeet-tdt-0.6b-v3",
+            source: "file",
+            duration: duration,
+            segments: segments
+        )
+        try history.add(entry)
+    }
+
+    private func scheduleAutoClear(_ job: ImportJob) {
+        Task { [weak self] in
+            try? await Task.sleep(for: .seconds(Self.autoClearDelay))
+            guard let self else { return }
+            if job.state == .done { self.remove(job) }
+        }
+    }
+
+    /// ISO-8601 timestamp matching the history store's format (no fractional seconds).
+    static func timestampString(from date: Date) -> String {
+        let formatter = ISO8601DateFormatter()
+        formatter.formatOptions = [.withInternetDateTime]
+        formatter.timeZone = .current
+        return formatter.string(from: date)
+    }
+}
+
+// MARK: - Audio decoding
+
+/// Reads a mono Float32 WAV (as produced by ``AudioFileDecoder``) back into a
+/// flat sample array for handing to the transcription engine. Kept `nonisolated`
+/// so it's usable from tests without the `@MainActor` service.
+///
+/// The actual media decode (including video-track extraction for mp4/mov) is
+/// owned by ``AudioFileDecoder``, which streams to a temporary 16 kHz mono
+/// Float32 WAV via `AVAssetReader`; plain `AVAudioFile` cannot open video
+/// containers directly, so that decode must happen first.
+enum AudioSampleConverter {
+    static func readSamples(fromWAV url: URL) throws -> [Float] {
+        let file: AVAudioFile
+        do {
+            file = try AVAudioFile(forReading: url)
+        } catch {
+            throw FileImportError.decodeFailed(error.localizedDescription)
+        }
+        let format = file.processingFormat
+        let frameCount = AVAudioFrameCount(file.length)
+        guard frameCount > 0, let buffer = AVAudioPCMBuffer(pcmFormat: format, frameCapacity: frameCount) else {
+            return []
+        }
+        do {
+            try file.read(into: buffer)
+        } catch {
+            throw FileImportError.decodeFailed(error.localizedDescription)
+        }
+        guard let channelData = buffer.floatChannelData else { return [] }
+        let frameLength = Int(buffer.frameLength)
+        guard frameLength > 0 else { return [] }
+        return Array(UnsafeBufferPointer(start: channelData[0], count: frameLength))
+    }
+}
+
+/// Result of a media decode: a temporary 16 kHz mono Float32 WAV and the source
+/// audio duration. The caller owns the temp file and must delete it.
+struct DecodedMedia: Sendable {
+    var url: URL
+    var duration: Double
+}
+
+/// Decodes any supported media file — including the audio track of video
+/// containers (mp4/mov) — to a temporary 16 kHz mono Float32 WAV using
+/// `AVAssetReader`. Streaming, so memory stays bounded regardless of file length.
+///
+/// `AVAssetReader` reads the first audio track and outputs decompressed PCM at the
+/// target format directly (16 kHz mono Float32), which we write to disk block by
+/// block. Plain `AVAudioFile(forReading:)` cannot open mp4/mov, so this path is
+/// the general decoder for the importer.
+enum AudioFileDecoder {
+
+    static let targetSampleRate: Double = 16_000
+
+    /// Decodes `url` to a temp WAV. `progress` receives a 0…1 fraction as the
+    /// reader advances. Non-isolated so tests can call it directly.
+    static func decodeToTemporaryWAV(
+        from url: URL,
+        progress: @escaping @Sendable (Double) -> Void = { _ in }
+    ) async throws -> DecodedMedia {
+        guard FileManager.default.fileExists(atPath: url.path) else {
+            throw FileImportError.fileMissing
+        }
+
+        let asset = AVURLAsset(url: url)
+        let tracks = try await asset.loadTracks(withMediaType: .audio)
+        guard let track = tracks.first else {
+            throw FileImportError.decodeFailed("Het bestand bevat geen audiospoor.")
+        }
+
+        let durationCM = try await asset.load(.duration)
+        let duration = CMTimeGetSeconds(durationCM)
+
+        let reader = try AVAssetReader(asset: asset)
+        let outputSettings: [String: Any] = [
+            AVFormatIDKey: kAudioFormatLinearPCM,
+            AVSampleRateKey: targetSampleRate,
+            AVNumberOfChannelsKey: 1,
+            AVLinearPCMBitDepthKey: 32,
+            AVLinearPCMIsFloatKey: true,
+            AVLinearPCMIsBigEndianKey: false,
+            AVLinearPCMIsNonInterleaved: false,
+        ]
+        let output = AVAssetReaderTrackOutput(track: track, outputSettings: outputSettings)
+        output.alwaysCopiesSampleData = false
+        guard reader.canAdd(output) else {
+            throw FileImportError.decodeFailed("Kon de audio niet uitlezen.")
+        }
+        reader.add(output)
+
+        let outURL = FileManager.default.temporaryDirectory
+            .appendingPathComponent("wc_import_\(UUID().uuidString).wav")
+        guard let outFormat = AVAudioFormat(
+            commonFormat: .pcmFormatFloat32,
+            sampleRate: targetSampleRate,
+            channels: 1,
+            interleaved: false
+        ) else {
+            throw FileImportError.decodeFailed("Kon het doelformaat niet aanmaken.")
+        }
+        let outFile = try AVAudioFile(forWriting: outURL, settings: outFormat.settings)
+
+        guard reader.startReading() else {
+            throw FileImportError.decodeFailed(reader.error?.localizedDescription ?? "Lezen mislukte.")
+        }
+
+        while reader.status == .reading {
+            guard let sampleBuffer = output.copyNextSampleBuffer() else { break }
+            defer { CMSampleBufferInvalidate(sampleBuffer) }
+            try appendSamples(from: sampleBuffer, to: outFile, format: outFormat)
+
+            let pts = CMTimeGetSeconds(CMSampleBufferGetPresentationTimeStamp(sampleBuffer))
+            if duration > 0 { progress(min(max(pts / duration, 0), 1)) }
+        }
+
+        if reader.status == .failed {
+            try? FileManager.default.removeItem(at: outURL)
+            throw FileImportError.decodeFailed(reader.error?.localizedDescription ?? "Decoderen mislukte.")
+        }
+
+        progress(1.0)
+        return DecodedMedia(url: outURL, duration: duration > 0 ? duration : Double(outFile.length) / targetSampleRate)
+    }
+
+    /// Copies the PCM Float32 samples from a CMSampleBuffer into `outFile`.
+    private static func appendSamples(
+        from sampleBuffer: CMSampleBuffer,
+        to outFile: AVAudioFile,
+        format: AVAudioFormat
+    ) throws {
+        guard let blockBuffer = CMSampleBufferGetDataBuffer(sampleBuffer) else { return }
+        let length = CMBlockBufferGetDataLength(blockBuffer)
+        guard length > 0 else { return }
+        let frameCount = AVAudioFrameCount(length / MemoryLayout<Float>.size)
+        guard frameCount > 0, let buffer = AVAudioPCMBuffer(pcmFormat: format, frameCapacity: frameCount) else { return }
+        buffer.frameLength = frameCount
+        guard let dst = buffer.floatChannelData?[0] else { return }
+        let status = CMBlockBufferCopyDataBytes(blockBuffer, atOffset: 0, dataLength: length, destination: dst)
+        guard status == kCMBlockBufferNoErr else {
+            throw FileImportError.decodeFailed("Kon audio-samples niet kopiëren.")
+        }
+        try outFile.write(from: buffer)
+    }
+}

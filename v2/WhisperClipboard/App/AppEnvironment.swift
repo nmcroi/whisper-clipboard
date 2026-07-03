@@ -50,6 +50,7 @@ final class AppEnvironment: ObservableObject {
     let dictation: DictationController
     let hotkeys: HotkeyManager
     let history: HistoryStore
+    let fileImport: FileImportService
     private let hud: RecordingHUDController
 
     private var locale: Locale {
@@ -97,7 +98,24 @@ final class AppEnvironment: ObservableObject {
         // throwaway in-memory queue so the rest of the app keeps working
         // (non-persistent, but dictation + clipboard are unaffected).
         var retentionRef: (() -> Int?)!
-        self.history = Self.makeHistoryStore(retentionProvider: { retentionRef() })
+        let history = Self.makeHistoryStore(retentionProvider: { retentionRef() })
+        self.history = history
+
+        // File-import pipeline. Refuses while dictation is recording/transcribing,
+        // mirroring the Python "one job at a time" guard.
+        self.fileImport = FileImportService(
+            engine: parakeetEngine,
+            history: history,
+            locale: { Locale(identifier: settingsRef().language.isEmpty ? "nl-NL" : settingsRef().language) },
+            busyReason: { [weak dictation] in
+                switch dictation?.phase {
+                case .recording, .transcribing:
+                    return "Wacht tot de huidige opname of transcriptie klaar is"
+                default:
+                    return nil
+                }
+            }
+        )
 
         // Now that stored properties exist, bind the closures to `self`.
         settingsRef = { [weak self] in self?.settings ?? AppSettings() }
@@ -108,6 +126,8 @@ final class AppEnvironment: ObservableObject {
         dictation.onTranscriptCompleted = { [weak self] completion in
             self?.saveCompletedTranscript(completion)
         }
+        // Refuse dictation while a file import is running.
+        dictation.importBusyProvider = { [weak self] in self?.fileImport.isBusy ?? false }
     }
 
     /// Opens the on-disk history store, degrading through an in-memory queue if
