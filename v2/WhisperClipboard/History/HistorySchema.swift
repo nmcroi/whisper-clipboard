@@ -80,6 +80,15 @@ enum HistorySchema {
             )
         }
 
+        migrator.registerMigration("v4_speaker_names") { db in
+            // Per-transcript speaker rename map, JSON-encoded [String: String]
+            // (raw diarization label → user-chosen display name). Defaults to an
+            // empty object so existing rows need no backfill.
+            try db.alter(table: "transcripts") { t in
+                t.add(column: "speaker_names", .text).notNull().defaults(to: "{}")
+            }
+        }
+
         return migrator
     }
 }

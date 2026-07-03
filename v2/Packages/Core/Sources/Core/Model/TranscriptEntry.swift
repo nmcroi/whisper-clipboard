@@ -18,6 +18,13 @@ public struct TranscriptEntry: Codable, Equatable, Sendable {
     public var source: String
     public var duration: Double
     public var segments: [TranscriptSegment]
+    /// Per-transcript speaker rename map: raw diarization label ("Spreker 1") →
+    /// user-chosen display name ("Autoverkoper"). Empty when the user has not
+    /// renamed anyone. **Display/export only** — it is not part of the v3 JSON
+    /// schema and is deliberately omitted from this type's `Codable` encoding so
+    /// the golden export fixtures and v3 round-trip stay byte-identical; it is
+    /// persisted separately in its own DB column.
+    public var speakerNames: [String: String]
 
     public init(
         id: String,
@@ -29,7 +36,8 @@ public struct TranscriptEntry: Codable, Equatable, Sendable {
         model: String = "",
         source: String = "mic",
         duration: Double = 0.0,
-        segments: [TranscriptSegment] = []
+        segments: [TranscriptSegment] = [],
+        speakerNames: [String: String] = [:]
     ) {
         self.id = id
         self.text = text
@@ -41,6 +49,15 @@ public struct TranscriptEntry: Codable, Equatable, Sendable {
         self.source = source
         self.duration = duration
         self.segments = segments
+        self.speakerNames = speakerNames
+    }
+
+    /// The display name for a raw speaker label, or the raw label itself when the
+    /// user has not renamed it. E.g. `displayName(for: "Spreker 1")` → "Autoverkoper".
+    public func displayName(forSpeaker rawSpeaker: String) -> String {
+        let mapped = speakerNames[rawSpeaker]?.trimmingCharacters(in: .whitespacesAndNewlines)
+        if let mapped, !mapped.isEmpty { return mapped }
+        return rawSpeaker
     }
 
     /// Best-effort parse of `createdAt` as an ISO-8601 date, mirroring the
@@ -86,6 +103,8 @@ public struct TranscriptEntry: Codable, Equatable, Sendable {
         source = try container.decodeIfPresent(String.self, forKey: .source) ?? "mic"
         duration = try container.decodeIfPresent(Double.self, forKey: .duration) ?? 0.0
         segments = try container.decodeIfPresent([TranscriptSegment].self, forKey: .segments) ?? []
+        // Not part of the v3 JSON schema: never decoded here, persisted separately.
+        speakerNames = [:]
     }
 
     public func encode(to encoder: Encoder) throws {

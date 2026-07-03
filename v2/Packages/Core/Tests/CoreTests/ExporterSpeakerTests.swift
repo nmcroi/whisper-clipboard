@@ -68,6 +68,53 @@ import Foundation
         #expect(json.contains("\"text\": \"Dank je wel.\",\n      \"speaker\": \"Spreker 2\""))
     }
 
+    // MARK: - Speaker rename map (display names)
+
+    /// The same two-speaker entry, but with Spreker 1 renamed "Verkoper".
+    private func renamedEntry() -> TranscriptEntry {
+        var entry = speakerEntry()
+        entry.speakerNames = ["Spreker 1": "Verkoper"]
+        return entry
+    }
+
+    @Test func txtUsesRenamedSpeaker() {
+        let expected =
+            "Verkoper: Goedemorgen allemaal. Fijn dat jullie er zijn.\n\n"
+            + "Spreker 2: Dank je wel.\n\n"
+            + "Verkoper: Zullen we beginnen?\n"
+        #expect(Exporter.toText(renamedEntry()) == expected)
+    }
+
+    @Test func markdownUsesRenamedSpeaker() {
+        let md = Exporter.toMarkdown(renamedEntry())
+        #expect(md.contains("**Verkoper:** Goedemorgen allemaal. Fijn dat jullie er zijn."))
+        #expect(md.contains("**Spreker 2:** Dank je wel."))
+        #expect(!md.contains("**Spreker 1:**"))
+    }
+
+    @Test func srtAndVttUseRenamedSpeaker() {
+        let srt = Exporter.toSRT(renamedEntry())
+        #expect(srt.contains("Verkoper: Goedemorgen allemaal."))
+        #expect(!srt.contains("Spreker 1:"))
+        let vtt = Exporter.toVTT(renamedEntry())
+        #expect(vtt.contains("Verkoper: Zullen we beginnen?"))
+    }
+
+    @Test func jsonKeepsRawSpeakerLabelsNotDisplayNames() {
+        // JSON is the machine format: it carries the raw diarization label, not
+        // the user's rename (which is a UI/text-export concern).
+        let json = Exporter.toJSON(renamedEntry())
+        #expect(json.contains("\"speaker\": \"Spreker 1\""))
+        #expect(!json.contains("Verkoper"))
+    }
+
+    @Test func emptyRenameMapIsByteIdenticalToNoMap() {
+        // A present-but-empty map must not change any output.
+        var entry = speakerEntry()
+        entry.speakerNames = [:]
+        #expect(Exporter.toText(entry) == Exporter.toText(speakerEntry()))
+    }
+
     /// A mixed entry where some segments have a speaker and some do not: the
     /// speaker-less segments must still render (grouped under "Spreker ?" in
     /// txt/md, unprefixed in srt/vtt), and JSON omits the speaker key for them.

@@ -21,6 +21,8 @@ struct TranscriptRecord: Codable, FetchableRecord, PersistableRecord {
     var segments: String
     /// Epoch seconds derived from `createdAt` for fast newest-first ordering.
     var sortKey: Double
+    /// JSON-encoded `[String: String]` speaker rename map (raw label → name).
+    var speakerNames: String
 
     enum CodingKeys: String, CodingKey {
         case id
@@ -34,6 +36,7 @@ struct TranscriptRecord: Codable, FetchableRecord, PersistableRecord {
         case duration
         case segments
         case sortKey = "sort_key"
+        case speakerNames = "speaker_names"
     }
 }
 
@@ -60,6 +63,13 @@ extension TranscriptRecord {
             self.segments = "[]"
         }
         self.sortKey = entry.timestamp?.timeIntervalSince1970 ?? 0
+        if !entry.speakerNames.isEmpty,
+           let data = try? Self.segmentEncoder.encode(entry.speakerNames),
+           let json = String(data: data, encoding: .utf8) {
+            self.speakerNames = json
+        } else {
+            self.speakerNames = "{}"
+        }
     }
 
     /// Reconstructs the Core entry, decoding the segments JSON.
@@ -71,6 +81,13 @@ extension TranscriptRecord {
         } else {
             decodedSegments = []
         }
+        let decodedNames: [String: String]
+        if let data = speakerNames.data(using: .utf8),
+           let parsed = try? Self.segmentDecoder.decode([String: String].self, from: data) {
+            decodedNames = parsed
+        } else {
+            decodedNames = [:]
+        }
         return TranscriptEntry(
             id: id,
             text: text,
@@ -81,7 +98,8 @@ extension TranscriptRecord {
             model: model,
             source: source,
             duration: duration,
-            segments: decodedSegments
+            segments: decodedSegments,
+            speakerNames: decodedNames
         )
     }
 }

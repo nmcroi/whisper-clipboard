@@ -176,12 +176,13 @@ public enum Exporter {
     /// Mirrors `to_txt`. When the entry carries speaker labels, the body is
     /// rendered as speaker-grouped turns ("Spreker 1: …") instead of the raw
     /// flat text; without speakers the output is byte-identical to before.
+    /// Renamed speakers use their display name (e.g. "Autoverkoper: …").
     public static func toText(_ entry: TranscriptEntry) -> String {
         guard hasSpeakers(entry) else {
             return rstrip(entry.text) + "\n"
         }
         let body = speakerTurns(for: entry)
-            .map { "\($0.speaker): \($0.text)" }
+            .map { "\($0.displayName): \($0.text)" }
             .joined(separator: "\n\n")
         return rstrip(body) + "\n"
     }
@@ -196,7 +197,7 @@ public enum Exporter {
         let body: String
         if hasSpeakers(entry) {
             body = speakerTurns(for: entry)
-                .map { "**\($0.speaker):** \($0.text)" }
+                .map { "**\($0.displayName):** \($0.text)" }
                 .joined(separator: "\n\n")
         } else {
             body = entry.text
@@ -208,17 +209,19 @@ public enum Exporter {
     /// turn's segment texts with a single space. Only called when the entry has
     /// speakers; segments with no speaker fall under a "Spreker ?" turn so no
     /// text is dropped (should not occur once merge assigns a label to overlaps).
+    /// `displayName` applies the entry's per-transcript rename map, falling back
+    /// to the raw label when the speaker was not renamed.
     private static func speakerTurns(
         for entry: TranscriptEntry
-    ) -> [(speaker: String, text: String)] {
-        var turns: [(speaker: String, text: String)] = []
+    ) -> [(speaker: String, displayName: String, text: String)] {
+        var turns: [(speaker: String, displayName: String, text: String)] = []
         for segment in resolvedSpeakerSegments(for: entry) {
             let speaker = segment.speaker ?? "Spreker ?"
             if var last = turns.last, last.speaker == speaker {
                 last.text += " " + segment.text
                 turns[turns.count - 1] = last
             } else {
-                turns.append((speaker, segment.text))
+                turns.append((speaker, entry.displayName(forSpeaker: speaker), segment.text))
             }
         }
         return turns
@@ -279,7 +282,7 @@ public enum Exporter {
         for (index, segment) in resolvedSpeakerSegments(for: entry).enumerated() {
             let start = timecode(segment.start, separator: ",")
             let end = timecode(max(segment.end, segment.start), separator: ",")
-            let cue = cueText(text: segment.text, speaker: segment.speaker)
+            let cue = cueText(text: segment.text, speaker: segment.speaker, entry: entry)
             blocks.append("\(index + 1)\n\(start) --> \(end)\n\(cue)\n")
         }
         return blocks.joined(separator: "\n")
@@ -292,7 +295,7 @@ public enum Exporter {
         for segment in resolvedSpeakerSegments(for: entry) {
             let start = timecode(segment.start, separator: ".")
             let end = timecode(max(segment.end, segment.start), separator: ".")
-            let cue = cueText(text: segment.text, speaker: segment.speaker)
+            let cue = cueText(text: segment.text, speaker: segment.speaker, entry: entry)
             blocks.append("\(start) --> \(end)\n\(cue)\n")
         }
         return blocks.joined(separator: "\n")
@@ -300,9 +303,10 @@ public enum Exporter {
 
     /// Prefixes cue text with the speaker label when present ("Spreker 1: …"),
     /// otherwise returns the text unchanged (byte-parity for speaker-less cues).
-    private static func cueText(text: String, speaker: String?) -> String {
+    /// The label is the entry's display name for the speaker (rename map applied).
+    private static func cueText(text: String, speaker: String?, entry: TranscriptEntry) -> String {
         guard let speaker, !speaker.isEmpty else { return text }
-        return "\(speaker): \(text)"
+        return "\(entry.displayName(forSpeaker: speaker)): \(text)"
     }
 
     /// Renders `entry` in the given format. This is the Swift equivalent

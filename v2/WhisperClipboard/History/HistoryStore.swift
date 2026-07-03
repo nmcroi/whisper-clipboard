@@ -104,6 +104,92 @@ final class HistoryStore: ObservableObject {
         bump()
     }
 
+    /// Overwrites the transcript's plain `text` (inline editing) and **clears the
+    /// word-level `segments`**.
+    ///
+    /// Edited-text policy (see `TranscriptDetailView`): once the user hand-edits
+    /// the body, the original word-level timing no longer lines up with the new
+    /// text, so we drop the segments and treat the edited `text` as the single
+    /// source of truth for display, copy, and export. Timecodes and speaker
+    /// grouping therefore disappear for a manually-edited entry — a deliberate,
+    /// simple, robust choice over trying to keep stale timings in sync. (Trimming,
+    /// which *does* keep text and segments consistent, goes through
+    /// ``updateSegments(id:segments:)`` instead and preserves timing.)
+    ///
+    /// The FTS index updates automatically via the sync triggers.
+    func updateText(id: String, text: String) throws {
+        try dbQueue.write { db in
+            if var record = try TranscriptRecord.fetchOne(db, key: id) {
+                record.text = text
+                record.segments = "[]"
+                try record.update(db)
+            }
+        }
+        bump()
+    }
+
+    /// Replaces the transcript's word-level `segments` and rebuilds `text` from
+    /// them (transcript trimming). Passing the kept words after deleting a
+    /// sentence/turn persists both the shortened segment list and the matching
+    /// body text. The rebuilt text is speaker-aware (grouped turns) when the kept
+    /// segments carry speakers, matching the export format.
+    func updateSegments(id: String, segments: [TranscriptSegment]) throws {
+        try dbQueue.write { db in
+            if var record = try TranscriptRecord.fetchOne(db, key: id) {
+                let rebuilt = Self.rebuildText(from: segments)
+                var rebuiltEntry = record.entry
+                rebuiltEntry.segments = segments
+                rebuiltEntry.text = rebuilt
+                // Re-derive the record so segments JSON + text + FTS stay in sync,
+                // preserving the existing speaker-name map and pinned/sort fields.
+                var updated = TranscriptRecord(entry: rebuiltEntry)
+                updated.pinned = record.pinned
+                updated.speakerNames = record.speakerNames
+                try updated.update(db)
+            }
+        }
+        bump()
+    }
+
+    /// Sets (or clears) the display name for one raw speaker label in a
+    /// transcript's rename map. An empty/blank `name` removes the mapping so the
+    /// raw label ("Spreker 1") shows again.
+    func setSpeakerName(transcriptId: String, rawSpeaker: String, name: String) throws {
+        let clean = name.trimmingCharacters(in: .whitespacesAndNewlines)
+        try dbQueue.write { db in
+            if var record = try TranscriptRecord.fetchOne(db, key: transcriptId) {
+                var map = record.entry.speakerNames
+                if clean.isEmpty {
+                    map.removeValue(forKey: rawSpeaker)
+                } else {
+                    map[rawSpeaker] = clean
+                }
+                if let data = try? JSONEncoder().encode(map),
+                   let json = String(data: data, encoding: .utf8) {
+                    record.speakerNames = json
+                } else {
+                    record.speakerNames = "{}"
+                }
+                try record.update(db)
+            }
+        }
+        bump()
+    }
+
+    /// Rebuilds a transcript's plain `text` from (possibly trimmed) segments by
+    /// joining the word texts with single spaces — matching how the `text` field
+    /// is originally produced (a plain transcript, no speaker labels). Speaker
+    /// labels are intentionally NOT baked into `text`: they live on the segments,
+    /// which stay the single source for grouped display and speaker-aware export
+    /// (`Exporter.toText`), so copy/body text stays plain and consistent whether
+    /// or not the entry was trimmed. Empty segments → empty string.
+    static func rebuildText(from segments: [TranscriptSegment]) -> String {
+        segments
+            .map { $0.text.trimmingCharacters(in: .whitespacesAndNewlines) }
+            .filter { !$0.isEmpty }
+            .joined(separator: " ")
+    }
+
     /// Removes every entry (used by "wis geschiedenis" flows).
     func deleteAll() throws {
         _ = try dbQueue.write { db in

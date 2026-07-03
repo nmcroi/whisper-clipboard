@@ -81,6 +81,102 @@ final class HistoryStoreTests: XCTestCase {
         XCTAssertEqual(fetched?.segments, segs)
     }
 
+    // MARK: - Inline editing / trimming / speaker naming (M-detail)
+
+    func testUpdateTextOverwritesBodyAndIsSearchable() throws {
+        let store = try makeStore()
+        try store.add(entry(id: "e1", text: "oude tekst hier"))
+        try store.updateText(id: "e1", text: "compleet nieuwe inhoud")
+        let fetched = try store.entries().first
+        XCTAssertEqual(fetched?.text, "compleet nieuwe inhoud")
+        // FTS index tracks the new text, not the old.
+        XCTAssertEqual(try store.entries(query: "nieuwe").map(\.id), ["e1"])
+        XCTAssertTrue(try store.entries(query: "oude").isEmpty)
+    }
+
+    func testUpdateTextClearsSegments() throws {
+        // Edited-text policy: a manual body edit drops the now-misaligned
+        // word-level timing so the edited text is the single source of truth.
+        let store = try makeStore()
+        let segs = [
+            TranscriptSegment(start: 0, end: 1, text: "een"),
+            TranscriptSegment(start: 1, end: 2, text: "twee"),
+        ]
+        try store.add(entry(id: "e1", text: "een twee", segments: segs))
+        try store.updateText(id: "e1", text: "handmatig bewerkt")
+        let fetched = try store.entries().first
+        XCTAssertEqual(fetched?.text, "handmatig bewerkt")
+        XCTAssertEqual(fetched?.segments, [])
+    }
+
+    func testUpdateSegmentsRebuildsTextNoSpeakers() throws {
+        let store = try makeStore()
+        let segs = [
+            TranscriptSegment(start: 0, end: 1, text: "een"),
+            TranscriptSegment(start: 1, end: 2, text: "twee."),
+            TranscriptSegment(start: 2, end: 3, text: "drie"),
+        ]
+        try store.add(entry(id: "e1", text: "een twee. drie", segments: segs))
+        // Drop the middle word (simulating a trim).
+        let kept = [segs[0], segs[2]]
+        try store.updateSegments(id: "e1", segments: kept)
+        let fetched = try store.entries().first
+        XCTAssertEqual(fetched?.segments, kept)
+        XCTAssertEqual(fetched?.text, "een drie")
+    }
+
+    func testUpdateSegmentsRebuildsPlainTextKeepingSpeakerSegments() throws {
+        // The rebuilt `text` stays plain (no "Spreker N:" labels); the speaker
+        // labels live on the segments, which the exporter/grouped view read.
+        let store = try makeStore()
+        let segs = [
+            TranscriptSegment(start: 0, end: 1, text: "Hallo.", speaker: "Spreker 1"),
+            TranscriptSegment(start: 1, end: 2, text: "Dank.", speaker: "Spreker 2"),
+        ]
+        try store.add(entry(id: "e1", text: "x", segments: segs))
+        try store.updateSegments(id: "e1", segments: segs)
+        let fetched = try store.entries().first
+        XCTAssertEqual(fetched?.text, "Hallo. Dank.")
+        // Speaker labels are preserved on the segments.
+        XCTAssertEqual(fetched?.segments.compactMap(\.speaker), ["Spreker 1", "Spreker 2"])
+    }
+
+    func testUpdateSegmentsPreservesSpeakerNamesAndPinned() throws {
+        let store = try makeStore()
+        let segs = [TranscriptSegment(start: 0, end: 1, text: "Hallo.", speaker: "Spreker 1")]
+        try store.add(entry(id: "e1", text: "x", pinned: true, segments: segs))
+        try store.setSpeakerName(transcriptId: "e1", rawSpeaker: "Spreker 1", name: "Baas")
+        try store.updateSegments(id: "e1", segments: segs)
+        let fetched = try store.entries().first
+        XCTAssertEqual(fetched?.speakerNames["Spreker 1"], "Baas")
+        XCTAssertTrue(fetched?.pinned ?? false)
+    }
+
+    func testSetSpeakerNameRoundTripsAndTrims() throws {
+        let store = try makeStore()
+        try store.add(entry(id: "e1", text: "x",
+                            segments: [TranscriptSegment(start: 0, end: 1, text: "a", speaker: "Spreker 1")]))
+        try store.setSpeakerName(transcriptId: "e1", rawSpeaker: "Spreker 1", name: "  Autoverkoper  ")
+        var fetched = try store.entries().first
+        XCTAssertEqual(fetched?.speakerNames["Spreker 1"], "Autoverkoper") // trimmed
+        XCTAssertEqual(fetched?.displayName(forSpeaker: "Spreker 1"), "Autoverkoper")
+
+        // Blank name clears the mapping (raw label shows again).
+        try store.setSpeakerName(transcriptId: "e1", rawSpeaker: "Spreker 1", name: "   ")
+        fetched = try store.entries().first
+        XCTAssertNil(fetched?.speakerNames["Spreker 1"])
+        XCTAssertEqual(fetched?.displayName(forSpeaker: "Spreker 1"), "Spreker 1")
+    }
+
+    func testSpeakerNamesRoundTripThroughInsert() throws {
+        let store = try makeStore()
+        try store.add(entry(id: "e1", text: "x"))
+        try store.setSpeakerName(transcriptId: "e1", rawSpeaker: "Spreker 2", name: "Klant")
+        // Re-fetch fresh (exercises the DB column decode path).
+        let fetched = try store.entries(query: nil).first { $0.id == "e1" }
+        XCTAssertEqual(fetched?.speakerNames, ["Spreker 2": "Klant"])
+    }
+
     // MARK: - Ordering (newest first)
 
     func testNewestFirstOrdering() throws {
