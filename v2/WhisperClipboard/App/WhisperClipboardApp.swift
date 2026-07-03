@@ -8,7 +8,11 @@ struct WhisperClipboardApp: App {
         Window("Whisper Clipboard", id: "main") {
             HomeView()
                 .environmentObject(appDelegate.environment)
+                .frame(minWidth: 700, minHeight: 480)
+                // AppKit remembers the size/position per autosave name.
+                .background(WindowConfigurator(autosaveName: "WhisperClipboardMain"))
         }
+        .defaultSize(width: 900, height: 600)
         .windowResizability(.contentMinSize)
 
         Settings {
@@ -18,24 +22,49 @@ struct WhisperClipboardApp: App {
     }
 }
 
-/// Placeholder settings pane for M0.
+/// Applies a frame-autosave name to the host window so macOS remembers its
+/// size and position across launches, and sets a sensible default size the
+/// first time it appears.
+private struct WindowConfigurator: NSViewRepresentable {
+    let autosaveName: String
+
+    func makeNSView(context: Context) -> NSView {
+        let view = NSView()
+        DispatchQueue.main.async {
+            guard let window = view.window else { return }
+            if window.frameAutosaveName.isEmpty {
+                let hasSaved = UserDefaults.standard.string(forKey: "NSWindow Frame \(autosaveName)") != nil
+                window.setFrameAutosaveName(autosaveName)
+                if !hasSaved {
+                    window.setContentSize(NSSize(width: 900, height: 600))
+                    window.center()
+                }
+            }
+        }
+        return view
+    }
+
+    func updateNSView(_ nsView: NSView, context: Context) {}
+}
+
+/// Placeholder settings pane (full settings arrive in a later milestone).
 struct SettingsView: View {
     var body: some View {
         VStack(alignment: .leading, spacing: 12) {
             (
                 Text("Instellingen")
-                    .foregroundStyle(NightStory.marine)
+                    .foregroundStyle(Theme.text)
                 + Text(".")
-                    .foregroundStyle(NightStory.terra)
+                    .foregroundStyle(Theme.accent)
             )
-            .font(NightStoryFont.heading(size: 20, weight: .bold))
+            .font(ThemeFont.ui(20, weight: .bold))
 
             Text("Instellingen komen in een latere versie.")
-                .font(NightStoryFont.body(size: 13))
-                .foregroundStyle(.secondary)
+                .font(ThemeFont.ui(13))
+                .foregroundStyle(Theme.textSecondary)
         }
         .padding(28)
         .frame(width: 380, height: 200, alignment: .topLeading)
-        .background(NightStory.bg)
+        .background(Theme.window)
     }
 }

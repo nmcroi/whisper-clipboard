@@ -1,11 +1,11 @@
 import SwiftUI
 
-/// NightStory-styled floating HUD content shown while dictating.
+/// Dark floating HUD content shown while dictating.
 ///
-/// Dark marine translucent background, terra/white accents. Shows a pulsing
-/// recording dot + elapsed time + live level bars while recording, the live
-/// transcript (finalized white, volatile 60% opacity) while streaming, and a
-/// brief "✓ Op klembord" confirmation on completion.
+/// Near-black translucent panel, white text, a red pulsing record dot and
+/// yellow level bars while recording; live transcript (finalized white,
+/// volatile 55% opacity) while streaming; a brief yellow "Op klembord ✓"
+/// confirmation on completion.
 struct RecordingHUDView: View {
     @ObservedObject var controller: DictationController
     @ObservedObject var levelMeter: AudioLevelMeter
@@ -17,10 +17,12 @@ struct RecordingHUDView: View {
         VStack(alignment: .leading, spacing: 10) {
             header
             transcript
-            if showLatency {
+            // Detailed three-part breakdown stays behind the debug flag, and
+            // only once a run has completed (so it doesn't clutter recording).
+            if showLatency, controller.phase == .finished || controller.phase == .idle {
                 Text(controller.lastMetrics.debugLine)
                     .font(.system(size: 9, weight: .regular, design: .monospaced))
-                    .foregroundStyle(.white.opacity(0.45))
+                    .foregroundStyle(Theme.textTertiary)
             }
         }
         .padding(.horizontal, 18)
@@ -30,9 +32,16 @@ struct RecordingHUDView: View {
         .clipShape(RoundedRectangle(cornerRadius: 16, style: .continuous))
         .overlay(
             RoundedRectangle(cornerRadius: 16, style: .continuous)
-                .strokeBorder(NightStory.terra.opacity(0.35), lineWidth: 1)
+                .strokeBorder(borderColor, lineWidth: 1)
         )
-        .shadow(color: .black.opacity(0.35), radius: 20, x: 0, y: 10)
+        .shadow(color: .black.opacity(0.5), radius: 24, x: 0, y: 12)
+    }
+
+    private var borderColor: Color {
+        switch controller.phase {
+        case .recording: return Theme.danger.opacity(0.5)
+        default: return Theme.border
+        }
     }
 
     // MARK: - Sections
@@ -45,7 +54,7 @@ struct RecordingHUDView: View {
                 PulsingDot()
                 Text(Self.timeString(controller.elapsed))
                     .font(.system(size: 13, weight: .semibold, design: .monospaced))
-                    .foregroundStyle(.white)
+                    .foregroundStyle(Theme.text)
                 Spacer()
                 LevelBars(level: levelMeter.level)
             }
@@ -53,19 +62,25 @@ struct RecordingHUDView: View {
             HStack(spacing: 10) {
                 ProgressView()
                     .controlSize(.small)
-                    .tint(NightStory.warm)
-                Text("Transcriberen…")
-                    .font(.system(size: 13, weight: .medium))
-                    .foregroundStyle(.white.opacity(0.9))
+                    .tint(Theme.accent)
+                Text("Aan het transcriberen…")
+                    .font(ThemeFont.ui(13, weight: .medium))
+                    .foregroundStyle(Theme.text.opacity(0.9))
                 Spacer()
             }
         case .finished, .idle:
             HStack(spacing: 8) {
                 Image(systemName: "checkmark.circle.fill")
-                    .foregroundStyle(NightStory.warm)
+                    .foregroundStyle(Theme.accent)
                 Text("Op klembord")
-                    .font(.system(size: 13, weight: .semibold))
-                    .foregroundStyle(.white)
+                    .font(ThemeFont.ui(13, weight: .semibold))
+                    .foregroundStyle(Theme.text)
+                // Celebrate the speed: the stop→clipboard figure in Dutch.
+                if let seconds = controller.lastMetrics.dutchClipboardSeconds {
+                    Text("· \(seconds)")
+                        .font(ThemeFont.ui(13, weight: .medium).monospaced())
+                        .foregroundStyle(Theme.accent)
+                }
                 Spacer()
             }
         }
@@ -77,25 +92,25 @@ struct RecordingHUDView: View {
         if !partial.displayText.isEmpty {
             (
                 Text(partial.finalizedText)
-                    .foregroundStyle(.white)
+                    .foregroundStyle(Theme.text)
                 + Text(partial.volatileText)
-                    .foregroundStyle(.white.opacity(0.6))
+                    .foregroundStyle(Theme.text.opacity(0.55))
             )
-            .font(.system(size: 13, weight: .regular))
+            .font(ThemeFont.ui(13))
             .lineLimit(4)
             .fixedSize(horizontal: false, vertical: true)
             .frame(maxWidth: .infinity, alignment: .leading)
         } else if controller.phase == .recording {
             Text("Spreek nu…")
-                .font(.system(size: 13, weight: .regular))
-                .foregroundStyle(.white.opacity(0.5))
+                .font(ThemeFont.ui(13))
+                .foregroundStyle(Theme.textSecondary)
         }
     }
 
     private var background: some View {
         ZStack {
-            NightStory.marine.opacity(0.82)
-            Rectangle().fill(.ultraThinMaterial).opacity(0.25)
+            Theme.window.opacity(0.9)
+            Rectangle().fill(.ultraThinMaterial).opacity(0.22)
         }
     }
 
@@ -107,13 +122,13 @@ struct RecordingHUDView: View {
     }
 }
 
-/// A terra recording dot that pulses while recording.
+/// A red recording dot that pulses while recording.
 private struct PulsingDot: View {
     @State private var pulsing = false
 
     var body: some View {
         Circle()
-            .fill(NightStory.terra)
+            .fill(Theme.danger)
             .frame(width: 10, height: 10)
             .scaleEffect(pulsing ? 1.25 : 0.85)
             .opacity(pulsing ? 1.0 : 0.6)
@@ -122,7 +137,7 @@ private struct PulsingDot: View {
     }
 }
 
-/// A small cluster of audio-level bars reacting to the live RMS level.
+/// A small cluster of yellow audio-level bars reacting to the live RMS level.
 private struct LevelBars: View {
     let level: Double
 
@@ -132,7 +147,7 @@ private struct LevelBars: View {
         HStack(spacing: 3) {
             ForEach(0..<barCount, id: \.self) { index in
                 Capsule()
-                    .fill(NightStory.warm)
+                    .fill(Theme.accent)
                     .frame(width: 3, height: height(for: index))
             }
         }
@@ -141,7 +156,6 @@ private struct LevelBars: View {
     }
 
     private func height(for index: Int) -> CGFloat {
-        // Center bars taller; scale by level with a small floor.
         let distance = abs(Double(index) - Double(barCount - 1) / 2)
         let profile = 1.0 - distance / Double(barCount)
         let magnitude = max(0.15, level) * profile

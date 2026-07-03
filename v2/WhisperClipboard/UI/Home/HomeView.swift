@@ -1,182 +1,199 @@
+import Core
 import SwiftUI
 
-/// NightStory-styled Home view. In M1 the "Dicteren" card is live: it shows the
-/// current hotkey and a "Test opname" button, and a model-download card appears
-/// when the Dutch speech model is not yet installed.
+/// The main window root: a dark `NavigationSplitView` with a tight sidebar
+/// (Home / Geschiedenis) and a detail pane per tab.
 struct HomeView: View {
     @EnvironmentObject private var environment: AppEnvironment
+    @StateObject private var navigation = AppNavigation()
+    @State private var columnVisibility: NavigationSplitViewVisibility = .all
 
     var body: some View {
-        // Observe the nested observable objects so the view refreshes when the
-        // model status or dictation phase changes.
-        HomeContent(
-            environment: environment,
-            modelManager: environment.modelManager,
-            dictation: environment.dictation
-        )
+        NavigationSplitView(columnVisibility: $columnVisibility) {
+            Sidebar(selection: $navigation.tab)
+                .navigationSplitViewColumnWidth(min: 180, ideal: 200, max: 240)
+        } detail: {
+            Group {
+                switch navigation.tab {
+                case .home:
+                    HomeContent(
+                        environment: environment,
+                        modelManager: environment.modelManager,
+                        dictation: environment.dictation,
+                        history: environment.history,
+                        onOpenHistory: { navigation.openHistory(selecting: $0) }
+                    )
+                case .history:
+                    HistoryListView(store: environment.history, navigation: navigation)
+                }
+            }
+            .frame(maxWidth: .infinity, maxHeight: .infinity)
+            .background(Theme.window)
+        }
+        .environmentObject(navigation)
+        .background(Theme.window)
+        .toolbarBackground(Theme.window, for: .windowToolbar)
+        .preferredColorScheme(.dark)
+        .onReceive(environment.$menuNavigationRequest.compactMap { $0 }) { request in
+            apply(request)
+        }
+        .onAppear {
+            // Consume any request queued before this view subscribed (e.g. the
+            // menu bar opened the window straight onto the history tab).
+            if let request = environment.menuNavigationRequest {
+                apply(request)
+            }
+        }
+    }
+
+    private func apply(_ request: AppEnvironment.MenuNavigationRequest) {
+        switch request {
+        case .home:
+            navigation.tab = .home
+        case .history(let id):
+            navigation.openHistory(selecting: id)
+        }
+        environment.menuNavigationRequest = nil
     }
 }
+
+// MARK: - Sidebar
+
+private struct Sidebar: View {
+    @Binding var selection: SidebarTab
+
+    var body: some View {
+        List(selection: $selection) {
+            Section {
+                ForEach(SidebarTab.allCases, id: \.self) { tab in
+                    Label(tab.title, systemImage: tab.symbol)
+                        .font(ThemeFont.ui(13, weight: .medium))
+                        .tag(tab)
+                }
+            } header: {
+                Wordmark(size: 17)
+                    .padding(.bottom, 6)
+                    .padding(.top, 2)
+            }
+        }
+        .listStyle(.sidebar)
+        .scrollContentBackground(.hidden)
+        .background(Theme.window)
+        .tint(Theme.accent)
+    }
+}
+
+// MARK: - Home content
 
 private struct HomeContent: View {
     @ObservedObject var environment: AppEnvironment
     @ObservedObject var modelManager: EngineModelManager
     @ObservedObject var dictation: DictationController
+    @ObservedObject var history: HistoryStore
+    let onOpenHistory: (String?) -> Void
 
     private let columns = [
-        GridItem(.flexible(), spacing: 16),
-        GridItem(.flexible(), spacing: 16),
+        GridItem(.flexible(), spacing: 12),
+        GridItem(.flexible(), spacing: 12),
+        GridItem(.flexible(), spacing: 12),
     ]
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 20) {
-            header
-            statusPill
-            if let notice = environment.engineNotice {
-                engineNoticeBanner(notice)
+        ScrollView {
+            VStack(alignment: .leading, spacing: 22) {
+                header
+                if let notice = environment.engineNotice {
+                    noticeBanner(notice)
+                }
+                if modelManager.needsDownload {
+                    modelDownloadCard
+                }
+                actionGrid
+                recentSection
             }
-            if modelManager.needsDownload {
-                modelDownloadCard
-            }
-            dictationCard
-            actionGrid
-            Spacer(minLength: 0)
-            footer
+            .padding(28)
+            .frame(maxWidth: 820, alignment: .leading)
+            .frame(maxWidth: .infinity, alignment: .leading)
         }
-        .padding(28)
-        .frame(minWidth: 460, minHeight: 500)
-        .background(NightStory.bg)
+        .background(Theme.window)
     }
 
-    // MARK: - Sections
+    // MARK: Header
 
     private var header: some View {
-        (
-            Text("Whisper Clipboard")
-                .foregroundStyle(NightStory.marine)
-            + Text(".")
-                .foregroundStyle(NightStory.terra)
-        )
-        .font(NightStoryFont.heading(size: 30, weight: .bold))
+        VStack(alignment: .leading, spacing: 10) {
+            Wordmark(size: 30)
+            statusPill
+        }
     }
 
     private var statusPill: some View {
         HStack(spacing: 8) {
             Circle()
-                .fill(environment.appState.isRecording ? NightStory.terra : NightStory.softblue)
-                .frame(width: 8, height: 8)
+                .fill(environment.appState.isRecording ? Theme.danger : Theme.accent)
+                .frame(width: 7, height: 7)
             Text(environment.appState.statusText)
-                .font(NightStoryFont.body(size: 13, weight: .medium))
-                .foregroundStyle(NightStory.marine)
+                .font(ThemeFont.ui(12, weight: .medium))
+                .foregroundStyle(Theme.textSecondary)
         }
-        .padding(.horizontal, 14)
-        .padding(.vertical, 8)
-        .background(NightStory.lightterra.opacity(0.6))
+        .padding(.horizontal, 12)
+        .padding(.vertical, 6)
+        .background(Theme.surface)
         .clipShape(Capsule())
+        .overlay(Capsule().strokeBorder(Theme.border, lineWidth: 1))
     }
 
-    private func engineNoticeBanner(_ text: String) -> some View {
+    private func noticeBanner(_ text: String) -> some View {
         HStack(spacing: 8) {
             Image(systemName: "info.circle")
-                .foregroundStyle(NightStory.marine)
+                .foregroundStyle(Theme.accent)
             Text(text)
-                .font(NightStoryFont.body(size: 12, weight: .medium))
-                .foregroundStyle(NightStory.marine)
+                .font(ThemeFont.ui(12, weight: .medium))
+                .foregroundStyle(Theme.textSecondary)
                 .fixedSize(horizontal: false, vertical: true)
             Spacer(minLength: 0)
         }
         .padding(.horizontal, 12)
-        .padding(.vertical, 8)
+        .padding(.vertical, 9)
         .frame(maxWidth: .infinity, alignment: .leading)
-        .background(NightStory.softblue.opacity(0.18))
-        .clipShape(RoundedRectangle(cornerRadius: 10, style: .continuous))
+        .themeCard(radius: Theme.Metrics.radius)
     }
+
+    // MARK: Model download
 
     private var modelDownloadCard: some View {
         VStack(alignment: .leading, spacing: 10) {
             HStack(spacing: 8) {
                 Image(systemName: "arrow.down.circle")
-                    .foregroundStyle(NightStory.terra)
+                    .foregroundStyle(Theme.accent)
                 Text("Parakeet-spraakmodel")
-                    .font(NightStoryFont.body(size: 15, weight: .semibold))
-                    .foregroundStyle(NightStory.marine)
+                    .font(ThemeFont.ui(15, weight: .semibold))
+                    .foregroundStyle(Theme.text)
             }
             Text("Het lokale Parakeet-model (meertalig, incl. Nederlands) wordt eenmalig gedownload voordat je kunt dicteren. Dit gebeurt volledig op je Mac.")
-                .font(NightStoryFont.body(size: 12))
-                .foregroundStyle(.secondary)
+                .font(ThemeFont.ui(12))
+                .foregroundStyle(Theme.textSecondary)
                 .fixedSize(horizontal: false, vertical: true)
 
             if modelManager.isDownloading {
                 VStack(alignment: .leading, spacing: 6) {
                     ProgressView(value: downloadFraction)
                         .controlSize(.small)
-                        .tint(NightStory.terra)
+                        .tint(Theme.accent)
                     Text(downloadProgressLabel)
-                        .font(NightStoryFont.body(size: 11))
-                        .foregroundStyle(.secondary)
+                        .font(ThemeFont.ui(11))
+                        .foregroundStyle(Theme.textSecondary)
                 }
             } else {
-                Button("Parakeet-model downloaden (494 MB)…") { environment.downloadModel() }
-                    .buttonStyle(.borderedProminent)
-                    .tint(NightStory.terra)
+                Button("Model downloaden (494 MB)…") { environment.downloadModel() }
+                    .buttonStyle(AccentButtonStyle())
             }
         }
         .frame(maxWidth: .infinity, alignment: .leading)
         .padding(16)
-        .background(NightStory.card)
-        .clipShape(RoundedRectangle(cornerRadius: NightStoryMetrics.cardCornerRadius, style: .continuous))
-        .overlay(
-            RoundedRectangle(cornerRadius: NightStoryMetrics.cardCornerRadius, style: .continuous)
-                .strokeBorder(NightStory.terra.opacity(0.5), lineWidth: 1)
-        )
-        .nightStoryShadowSmall()
+        .themeCard(border: Theme.accent.opacity(0.4))
     }
 
-    private var dictationCard: some View {
-        VStack(alignment: .leading, spacing: 12) {
-            HStack(alignment: .top, spacing: 12) {
-                Image(systemName: "mic")
-                    .font(.system(size: 22, weight: .medium))
-                    .foregroundStyle(NightStory.terra)
-                VStack(alignment: .leading, spacing: 4) {
-                    Text("Dicteren")
-                        .font(NightStoryFont.body(size: 15, weight: .semibold))
-                        .foregroundStyle(NightStory.marine)
-                    Text("Spreek in en plak de tekst")
-                        .font(NightStoryFont.body(size: 12))
-                        .foregroundStyle(.secondary)
-                }
-                Spacer()
-            }
-
-            HStack(spacing: 10) {
-                Label(environment.hotkeys.shortcutDescription, systemImage: "keyboard")
-                    .font(NightStoryFont.body(size: 12, weight: .medium))
-                    .foregroundStyle(NightStory.marine)
-                    .padding(.horizontal, 10)
-                    .padding(.vertical, 5)
-                    .background(NightStory.sand.opacity(0.5))
-                    .clipShape(Capsule())
-
-                Spacer()
-
-                Button(testButtonTitle) { dictation.toggle() }
-                    .buttonStyle(.borderedProminent)
-                    .tint(NightStory.terra)
-                    .disabled(!canTest)
-            }
-        }
-        .frame(maxWidth: .infinity, alignment: .leading)
-        .padding(16)
-        .background(NightStory.card)
-        .clipShape(RoundedRectangle(cornerRadius: NightStoryMetrics.cardCornerRadius, style: .continuous))
-        .overlay(
-            RoundedRectangle(cornerRadius: NightStoryMetrics.cardCornerRadius, style: .continuous)
-                .strokeBorder(NightStory.sand, lineWidth: 1)
-        )
-        .nightStoryShadowSmall()
-    }
-
-    /// Current download progress (0…1) from the model status, for the bar.
     private var downloadFraction: Double {
         switch modelManager.status {
         case .downloading(let progress), .needsDownload(let progress):
@@ -187,32 +204,113 @@ private struct HomeContent: View {
     }
 
     private var downloadProgressLabel: String {
-        let percent = Int((downloadFraction * 100).rounded())
-        return "Downloaden… \(percent)%"
+        "Downloaden… \(Int((downloadFraction * 100).rounded()))%"
     }
 
-    private var testButtonTitle: String {
-        dictation.phase == .recording ? "Stop opname" : "Test opname"
+    // MARK: Actions
+
+    private var actionGrid: some View {
+        LazyVGrid(columns: columns, spacing: 12) {
+            ActionCard(
+                symbol: dictation.phase == .recording ? "stop.circle" : "mic",
+                title: "Dicteren",
+                subtitle: dictation.phase == .recording ? "Opname loopt — klik om te stoppen" : "Spreek in en plak de tekst",
+                enabled: canDictate,
+                hint: dictation.phase == .recording ? nil : environment.hotkeys.shortcutDescription,
+                action: { dictation.toggle() }
+            )
+            ActionCard(
+                symbol: "folder",
+                title: "Bestanden openen",
+                subtitle: "Transcribeer audio- of videobestanden",
+                enabled: false,
+                badge: "M3"
+            )
+            ActionCard(
+                symbol: "captions.bubble",
+                title: "Live ondertitels",
+                subtitle: "Toon ondertitels tijdens het spreken",
+                enabled: false,
+                badge: "Later"
+            )
+        }
     }
 
-    private var canTest: Bool {
+    private var canDictate: Bool {
         modelManager.status.isReady && dictation.phase != .transcribing
     }
 
-    private var actionGrid: some View {
-        LazyVGrid(columns: columns, spacing: 16) {
-            ActionCard(symbol: "folder", title: "Bestanden openen", subtitle: "Transcribeer audio- of videobestanden")
-            ActionCard(symbol: "clock.arrow.circlepath", title: "Geschiedenis", subtitle: "Eerdere transcripties terugvinden")
+    // MARK: Recent
+
+    private var recentSection: some View {
+        VStack(alignment: .leading, spacing: 12) {
+            HStack {
+                Text("Recent")
+                    .font(ThemeFont.ui(15, weight: .semibold))
+                    .foregroundStyle(Theme.text)
+                Spacer()
+                Button("Alles bekijken") { onOpenHistory(nil) }
+                    .buttonStyle(.plain)
+                    .font(ThemeFont.ui(12, weight: .medium))
+                    .foregroundStyle(Theme.accent)
+            }
+
+            let recents = recentEntries
+            if recents.isEmpty {
+                emptyRecent
+            } else {
+                VStack(spacing: 0) {
+                    ForEach(Array(recents.enumerated()), id: \.element.id) { index, entry in
+                        Button { onOpenHistory(entry.id) } label: {
+                            TranscriptRow(entry: entry, compact: true)
+                        }
+                        .buttonStyle(.plain)
+                        if index < recents.count - 1 {
+                            Divider().overlay(Theme.border)
+                        }
+                    }
+                }
+                .themeCard()
+            }
         }
-        .disabled(true)
-        .opacity(0.9)
     }
 
-    private var footer: some View {
-        Text("NightStory · 2026")
-            .font(NightStoryFont.body(size: 11, weight: .regular))
-            .foregroundStyle(.secondary)
-            .frame(maxWidth: .infinity, alignment: .center)
+    private var emptyRecent: some View {
+        HStack(spacing: 10) {
+            Image(systemName: "waveform")
+                .foregroundStyle(Theme.textTertiary)
+            Text("Nog geen transcripties. Start een opname om te beginnen.")
+                .font(ThemeFont.ui(12))
+                .foregroundStyle(Theme.textSecondary)
+            Spacer(minLength: 0)
+        }
+        .padding(16)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .themeCard()
+    }
+
+    /// The 10 most recent entries. Recomputed whenever the store bumps `revision`.
+    private var recentEntries: [TranscriptEntry] {
+        _ = history.revision
+        return (try? history.recent(10)) ?? []
+    }
+}
+
+// MARK: - Accent button style
+
+/// A yellow-filled primary button matching the design language.
+struct AccentButtonStyle: ButtonStyle {
+    var prominent: Bool = true
+
+    func makeBody(configuration: Configuration) -> some View {
+        configuration.label
+            .font(ThemeFont.ui(13, weight: .semibold))
+            .foregroundStyle(Theme.onAccent)
+            .padding(.horizontal, 14)
+            .padding(.vertical, 8)
+            .background(Theme.accent.opacity(configuration.isPressed ? 0.8 : 1))
+            .clipShape(RoundedRectangle(cornerRadius: Theme.Metrics.radius, style: .continuous))
+            .contentShape(Rectangle())
     }
 }
 

@@ -1,7 +1,17 @@
 import Combine
 import Core
 import Foundation
+import GRDB
 import SwiftUI
+
+/// Produces a history timestamp string matching the Python app's
+/// `isoformat(timespec="seconds")` shape (no fractional seconds, local offset).
+private func historyTimestampString(from date: Date) -> String {
+    let formatter = ISO8601DateFormatter()
+    formatter.formatOptions = [.withInternetDateTime]
+    formatter.timeZone = .current
+    return formatter.string(from: date)
+}
 
 /// Dependency-injection container shared across the app.
 ///
@@ -12,8 +22,17 @@ import SwiftUI
 /// with a language-support fallback (see ``EngineSelector``).
 @MainActor
 final class AppEnvironment: ObservableObject {
+    /// A navigation request coming from outside the SwiftUI hierarchy (menu bar),
+    /// consumed by `HomeView` to switch tabs / open a transcript.
+    enum MenuNavigationRequest: Equatable {
+        case home
+        case history(id: String?)
+    }
+
     @Published var appState: AppState = .starting
     @Published var settings = AppSettings()
+    /// Set by the menu bar; `HomeView` observes and resets it to `nil`.
+    @Published var menuNavigationRequest: MenuNavigationRequest?
     /// A one-line Dutch notice when the active engine differs from the requested
     /// one (e.g. Apple Speech asked for but the language is unsupported).
     @Published private(set) var engineNotice: String?
@@ -30,6 +49,7 @@ final class AppEnvironment: ObservableObject {
     let modelManager: EngineModelManager
     let dictation: DictationController
     let hotkeys: HotkeyManager
+    let history: HistoryStore
     private let hud: RecordingHUDController
 
     private var locale: Locale {
@@ -73,13 +93,67 @@ final class AppEnvironment: ObservableObject {
 
         self.hud = RecordingHUDController(controller: dictation)
 
+        // History store. If the on-disk DB can't be opened we degrade to a
+        // throwaway in-memory queue so the rest of the app keeps working
+        // (non-persistent, but dictation + clipboard are unaffected).
+        var retentionRef: (() -> Int?)!
+        self.history = Self.makeHistoryStore(retentionProvider: { retentionRef() })
+
         // Now that stored properties exist, bind the closures to `self`.
         settingsRef = { [weak self] in self?.settings ?? AppSettings() }
         stateSink = { [weak self] state in self?.appState = state }
+        retentionRef = { [weak self] in self?.settings.historyRetention }
+
+        // Persist every completed dictation.
+        dictation.onTranscriptCompleted = { [weak self] completion in
+            self?.saveCompletedTranscript(completion)
+        }
+    }
+
+    /// Opens the on-disk history store, degrading through an in-memory queue if
+    /// the disk DB can't be opened. Only an impossible double-failure (even an
+    /// in-memory SQLite DB can't be created) is fatal, and then with a clear
+    /// message rather than an opaque force-unwrap crash.
+    private static func makeHistoryStore(retentionProvider: @escaping () -> Int?) -> HistoryStore {
+        do {
+            return try HistoryStore(retentionProvider: retentionProvider)
+        } catch {
+            NSLog("AppEnvironment: history DB open failed (%@); trying in-memory store.", String(describing: error))
+        }
+        do {
+            return try HistoryStore(dbQueue: try DatabaseQueue(), retentionProvider: retentionProvider)
+        } catch {
+            fatalError("Kon de geschiedenis-database niet openen (ook niet in-memory): \(error)")
+        }
+    }
+
+    /// Builds a `TranscriptEntry` from a finished dictation and stores it.
+    private func saveCompletedTranscript(_ completion: DictationController.TranscriptCompletion) {
+        let entry = TranscriptEntry(
+            id: UUID().uuidString,
+            text: completion.text,
+            createdAt: historyTimestampString(from: Date()),
+            name: "",
+            pinned: false,
+            language: completion.language,
+            model: completion.model,
+            source: completion.source,
+            duration: completion.duration,
+            segments: completion.segments
+        )
+        do {
+            try history.add(entry)
+        } catch {
+            NSLog("AppEnvironment: failed to save transcript: %@", String(describing: error))
+        }
     }
 
     /// Kicks off engine-selection resolution, model status refresh + pre-warm at launch.
     func bootstrap() {
+        // One-time import of the old Python history.json (reads only; the JSON
+        // is left untouched as a backup). No-op after the first successful run.
+        history.migrateFromV3IfNeeded()
+
         Task {
             await resolveEngineSelection()
             await modelManager.refresh()

@@ -41,6 +41,19 @@ final class DictationController: ObservableObject {
     private let engine: any TranscriptionEngine
     private let settingsProvider: () -> AppSettings
     private let onStateChange: (AppState) -> Void
+    /// Invoked with the finished, post-processed transcript so a completed
+    /// dictation can be persisted to the history store. Nil-safe (M0/M1 wiring).
+    var onTranscriptCompleted: ((TranscriptCompletion) -> Void)?
+
+    /// The payload handed to `onTranscriptCompleted` after a successful run.
+    struct TranscriptCompletion {
+        let text: String
+        let segments: [Core.TranscriptSegment]
+        let duration: Double
+        let language: String
+        let model: String
+        let source: String
+    }
 
     private let latency = LatencyRecorder()
     private var debouncer = TransitionDebouncer(interval: 0.25)
@@ -214,6 +227,19 @@ final class DictationController: ObservableObject {
         latency.markClipboard()
         lastMetrics = latency.metrics
 
+        // Persist the completed transcript (history store). Duration is the last
+        // ticked recording elapsed; source is always mic for hotkey/menu dictation.
+        onTranscriptCompleted?(
+            TranscriptCompletion(
+                text: processed,
+                segments: segments,
+                duration: elapsed,
+                language: settings.language.isEmpty ? "nl" : settings.language,
+                model: "parakeet-tdt-0.6b-v3",
+                source: "mic"
+            )
+        )
+
         livePartial = StreamingPartial(finalizedText: processed, volatileText: "")
         Notifications.post("Tekst staat op je klembord")
         onStateChange(.ready)
@@ -271,8 +297,10 @@ final class DictationController: ObservableObject {
         phase = .finished
         // Reset to idle after the HUD's brief confirmation window.
         hudDismissTask?.cancel()
+        // Linger ~4s so the user can read the completion state (their request).
+        let lingerMs = success ? 4000 : 1500
         hudDismissTask = Task { [weak self] in
-            try? await Task.sleep(for: .milliseconds(1200))
+            try? await Task.sleep(for: .milliseconds(lingerMs))
             guard let self, !Task.isCancelled else { return }
             self.phase = .idle
         }

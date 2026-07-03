@@ -34,13 +34,39 @@ struct LatencyMetrics: Equatable, Sendable {
         return to - from
     }
 
-    /// One-line debug summary for the HUD, e.g. `"partial 0.42s · final 0.31s · plak 0.33s"`.
+    /// Whether any streaming partial was surfaced this run (batch engines like
+    /// Parakeet emit none, so partial-based figures should be hidden).
+    var hadPartials: Bool { firstPartial != nil }
+
+    /// Human-readable Dutch completion figure, e.g. `"0,7 s"`. Uses the
+    /// stop→clipboard time (what the user actually waited). `nil` if unmeasured.
+    var dutchClipboardSeconds: String? {
+        guard let value = stopToClipboard else { return nil }
+        return Self.dutchSeconds(value)
+    }
+
+    /// Detailed debug summary (behind the `showLatencyHUD` flag). Omits the
+    /// partial field entirely when the engine emitted no partials.
     var debugLine: String {
         func fmt(_ value: Double?) -> String {
             guard let value else { return "–" }
             return String(format: "%.2fs", value)
         }
-        return "partial \(fmt(timeToFirstPartial)) · final \(fmt(stopToFinalized)) · plak \(fmt(stopToClipboard))"
+        var parts: [String] = []
+        if hadPartials {
+            parts.append("partial \(fmt(timeToFirstPartial))")
+        }
+        parts.append("final \(fmt(stopToFinalized))")
+        parts.append("plak \(fmt(stopToClipboard))")
+        return parts.joined(separator: " · ")
+    }
+
+    /// Formats seconds with a Dutch decimal comma and one decimal, e.g. `0,7 s`.
+    static func dutchSeconds(_ value: Double) -> String {
+        let rounded = (value * 10).rounded() / 10
+        let whole = Int(rounded)
+        let tenths = Int((rounded - Double(whole)) * 10 + 0.5)
+        return "\(whole),\(tenths) s"
     }
 }
 

@@ -1,5 +1,6 @@
 import AppKit
 import Combine
+import Core
 import SwiftUI
 
 /// Owns the menu bar status item and drives the app's activation policy so the
@@ -12,6 +13,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private var statusMenuItem: NSMenuItem?
     private var recordMenuItem: NSMenuItem?
     private var downloadMenuItem: NSMenuItem?
+    private var recentsHeaderItem: NSMenuItem?
+    /// The recent-transcript menu items (rebuilt from the history store).
+    private var recentItems: [NSMenuItem] = []
+    /// The menu index at which recent items are inserted.
+    private var recentsInsertionIndex = 0
+    private weak var menu: NSMenu?
     private var openWindowCount = 0
     private var cancellables = Set<AnyCancellable>()
 
@@ -55,8 +62,21 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         menu.addItem(
             makeItem(title: "Open Whisper Clipboard", action: #selector(openHome), key: "o")
         )
+        menu.addItem(
+            makeItem(title: "Geschiedenis", action: #selector(openHistory), key: "")
+        )
 
         menu.addItem(.separator())
+
+        // Recent transcripts section (like the old Python menu bar). The header
+        // is disabled; the items below it copy their text on click.
+        let recentsHeader = NSMenuItem(title: "Recent", action: nil, keyEquivalent: "")
+        recentsHeader.isEnabled = false
+        menu.addItem(recentsHeader)
+        recentsHeaderItem = recentsHeader
+        recentsInsertionIndex = menu.index(of: recentsHeader) + 1
+        let recentsSeparator = NSMenuItem.separator()
+        menu.addItem(recentsSeparator)
 
         menu.addItem(
             makeItem(title: "Instellingen…", action: #selector(openSettings), key: ",")
@@ -66,9 +86,47 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         )
 
         item.menu = menu
+        self.menu = menu
         statusItem = item
         updateStatusIcon(for: environment.appState)
         updateMenuItems()
+        refreshRecents()
+    }
+
+    /// Rebuilds the recent-transcript menu items from the history store (top 5).
+    private func refreshRecents() {
+        guard let menu else { return }
+        for item in recentItems { menu.removeItem(item) }
+        recentItems.removeAll()
+
+        let entries = (try? environment.history.recent(5)) ?? []
+        recentsHeaderItem?.isHidden = entries.isEmpty
+
+        for (offset, entry) in entries.enumerated() {
+            let item = NSMenuItem(
+                title: Self.recentTitle(for: entry),
+                action: #selector(copyRecent(_:)),
+                keyEquivalent: ""
+            )
+            item.target = self
+            item.representedObject = entry.text
+            item.toolTip = entry.text
+            menu.insertItem(item, at: recentsInsertionIndex + offset)
+            recentItems.append(item)
+        }
+    }
+
+    /// A short, single-line menu title for a recent entry (name or first words).
+    private static func recentTitle(for entry: Core.TranscriptEntry) -> String {
+        let name = entry.name.trimmingCharacters(in: .whitespacesAndNewlines)
+        let base = name.isEmpty
+            ? entry.text.trimmingCharacters(in: .whitespacesAndNewlines)
+            : name
+        let singleLine = base.replacingOccurrences(of: "\n", with: " ")
+        if singleLine.count > 48 {
+            return String(singleLine.prefix(48)) + "…"
+        }
+        return singleLine.isEmpty ? "Zonder titel" : singleLine
     }
 
     /// Reflects model availability + recording phase in the menu item titles.
@@ -110,7 +168,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
         if state.isRecording {
             image?.isTemplate = false
-            button.image = image?.tinted(with: NSColor(NightStory.terra))
+            button.image = image?.tinted(with: NSColor(Theme.danger))
         } else {
             image?.isTemplate = true
             button.image = image
@@ -139,6 +197,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         environment.modelManager.$status
             .receive(on: RunLoop.main)
             .sink { [weak self] _ in self?.updateMenuItems() }
+            .store(in: &cancellables)
+
+        // Keep the menu-bar recents in sync with the history store.
+        environment.history.$revision
+            .receive(on: RunLoop.main)
+            .sink { [weak self] _ in self?.refreshRecents() }
             .store(in: &cancellables)
     }
 
@@ -198,6 +262,24 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     }
 
     @objc private func openHome() {
+        environment.menuNavigationRequest = .home
+        showMainWindow()
+    }
+
+    @objc private func openHistory() {
+        environment.menuNavigationRequest = .history(id: nil)
+        showMainWindow()
+    }
+
+    /// Copies a recent transcript's text to the clipboard (menu item action).
+    @objc private func copyRecent(_ sender: NSMenuItem) {
+        guard let text = sender.representedObject as? String else { return }
+        Clipboard.copy(text)
+        Notifications.post("Tekst staat op je klembord")
+    }
+
+    /// Activates the app and brings the main window forward, opening it if needed.
+    private func showMainWindow() {
         NSApp.activate(ignoringOtherApps: true)
         for window in NSApp.windows where isAppWindow(window) {
             window.makeKeyAndOrderFront(nil)
