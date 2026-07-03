@@ -71,8 +71,8 @@ struct TranscriptDetailView: View {
 
     private var metadataLine: some View {
         HStack(spacing: 10) {
-            metaItem(icon: entry.source == "file" ? "doc.text" : "mic",
-                     text: entry.source == "file" ? "Bestand" : "Microfoon")
+            metaItem(icon: TranscriptSourceStyle.icon(for: entry.source),
+                     text: TranscriptSourceStyle.label(for: entry.source))
             metaItem(icon: "calendar", text: TranscriptFormatting.fullDate(for: entry))
             if entry.duration >= 1 {
                 metaItem(icon: "clock", text: TranscriptFormatting.duration(entry.duration))

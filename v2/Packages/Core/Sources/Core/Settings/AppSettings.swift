@@ -27,6 +27,8 @@ public struct AppSettings: Codable, Equatable, Sendable {
     /// (clipboard-only for that run). Case-insensitive matching at use site.
     public var insertionDeniedBundleIds: [String]
     public var saveRecordings: Bool
+    /// Save the full transcript of a live-captions session to history on stop.
+    public var saveCaptions: Bool
     /// `nil` means unlimited history retention.
     public var historyRetention: Int?
     public var initialPrompt: String
@@ -40,6 +42,7 @@ public struct AppSettings: Codable, Equatable, Sendable {
         directInsertion: Bool = false,
         insertionDeniedBundleIds: [String] = [],
         saveRecordings: Bool = false,
+        saveCaptions: Bool = false,
         historyRetention: Int? = nil,
         initialPrompt: String = ""
     ) {
@@ -51,6 +54,7 @@ public struct AppSettings: Codable, Equatable, Sendable {
         self.directInsertion = directInsertion
         self.insertionDeniedBundleIds = insertionDeniedBundleIds
         self.saveRecordings = saveRecordings
+        self.saveCaptions = saveCaptions
         self.historyRetention = historyRetention
         self.initialPrompt = initialPrompt
     }
@@ -60,7 +64,7 @@ public struct AppSettings: Codable, Equatable, Sendable {
     // fields (e.g. `insertionDeniedBundleIds`) be added without breaking existing files.
     private enum CodingKeys: String, CodingKey {
         case hotkeyMode, language, engine, cleanOutput, replacements
-        case directInsertion, insertionDeniedBundleIds, saveRecordings
+        case directInsertion, insertionDeniedBundleIds, saveRecordings, saveCaptions
         case historyRetention, initialPrompt
     }
 
@@ -75,6 +79,7 @@ public struct AppSettings: Codable, Equatable, Sendable {
         self.directInsertion = try c.decodeIfPresent(Bool.self, forKey: .directInsertion) ?? d.directInsertion
         self.insertionDeniedBundleIds = try c.decodeIfPresent([String].self, forKey: .insertionDeniedBundleIds) ?? d.insertionDeniedBundleIds
         self.saveRecordings = try c.decodeIfPresent(Bool.self, forKey: .saveRecordings) ?? d.saveRecordings
+        self.saveCaptions = try c.decodeIfPresent(Bool.self, forKey: .saveCaptions) ?? d.saveCaptions
         self.historyRetention = try c.decodeIfPresent(Int.self, forKey: .historyRetention) ?? d.historyRetention
         self.initialPrompt = try c.decodeIfPresent(String.self, forKey: .initialPrompt) ?? d.initialPrompt
     }

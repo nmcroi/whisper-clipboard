@@ -12,6 +12,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private var statusItem: NSStatusItem?
     private var statusMenuItem: NSMenuItem?
     private var recordMenuItem: NSMenuItem?
+    private var captionsMenuItem: NSMenuItem?
     private var downloadMenuItem: NSMenuItem?
     private var recentsHeaderItem: NSMenuItem?
     /// The recent-transcript menu items (rebuilt from the history store).
@@ -58,6 +59,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         download.isHidden = true
         menu.addItem(download)
         downloadMenuItem = download
+
+        let captions = makeItem(title: "Live ondertitels starten", action: #selector(toggleCaptions), key: "l")
+        menu.addItem(captions)
+        captionsMenuItem = captions
 
         menu.addItem(
             makeItem(title: "Bestand importeren…", action: #selector(importFile), key: "i")
@@ -155,6 +160,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         downloadMenuItem?.isHidden = ready || unsupported
         recordMenuItem?.isHidden = !ready
 
+        // Live captions: only offered once the model is ready.
+        captionsMenuItem?.isHidden = !ready
+        captionsMenuItem?.title = environment.captions.isRunning
+            ? "Live ondertitels stoppen"
+            : "Live ondertitels starten"
+
         switch environment.dictation.phase {
         case .recording:
             recordMenuItem?.title = "Stop opname"
@@ -220,6 +231,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             .receive(on: RunLoop.main)
             .sink { [weak self] _ in self?.refreshRecents() }
             .store(in: &cancellables)
+
+        // Keep the captions menu item's title in sync with the session state.
+        environment.captions.$isRunning
+            .receive(on: RunLoop.main)
+            .sink { [weak self] _ in self?.updateMenuItems() }
+            .store(in: &cancellables)
     }
 
     private func observeWindows() {
@@ -271,6 +288,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
     @objc private func toggleRecording() {
         environment.dictation.toggle()
+    }
+
+    @objc private func toggleCaptions() {
+        environment.toggleCaptions()
     }
 
     @objc private func downloadModel() {

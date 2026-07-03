@@ -26,6 +26,8 @@
 	<string>$(MACOSX_DEPLOYMENT_TARGET)</string>
 	<key>LSUIElement</key>
 	<true/>
+	<key>NSAudioCaptureUsageDescription</key>
+	<string>Whisper Clipboard gebruikt systeemaudio om live ondertitels te maken van wat er op je Mac klinkt. Er verlaat geen audio je computer.</string>
 	<key>NSHumanReadableCopyright</key>
 	<string>© 2026 NightStory</string>
 	<key>NSMicrophoneUsageDescription</key>

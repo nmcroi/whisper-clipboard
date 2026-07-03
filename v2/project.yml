@@ -77,6 +77,7 @@ targets:
         # Menu bar app: no Dock icon by default (toggled to .regular at runtime).
         LSUIElement: true
         NSMicrophoneUsageDescription: "Whisper Clipboard gebruikt de microfoon om je spraak lokaal op je Mac om te zetten naar tekst. Er verlaat geen audio je computer."
+        NSAudioCaptureUsageDescription: "Whisper Clipboard gebruikt systeemaudio om live ondertitels te maken van wat er op je Mac klinkt. Er verlaat geen audio je computer."
         ATSApplicationFontsPath: Fonts
         NSHumanReadableCopyright: "© 2026 NightStory"
     entitlements:

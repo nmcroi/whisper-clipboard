@@ -53,6 +53,9 @@ final class DictationController: ObservableObject {
     var insertionHandler: ((_ text: String, _ target: InsertionTarget?) -> InsertionOutcome)?
     /// Captures the frontmost app at recording start (before the HUD appears).
     var captureInsertionTarget: (() -> InsertionTarget?)?
+    /// Called just before a recording actually starts, so live captions can be
+    /// paused (they do not auto-resume). Nil-safe.
+    var onWillStartRecording: (() -> Void)?
 
     /// The frontmost app captured when the current run started.
     private var capturedInsertionTarget: InsertionTarget?
@@ -135,6 +138,9 @@ final class DictationController: ObservableObject {
             Notifications.post("Wacht tot de huidige opname of transcriptie klaar is")
             return
         }
+
+        // Pause live captions (if running); they don't auto-resume afterwards.
+        onWillStartRecording?()
 
         // Capture the frontmost app now, before the (non-activating) HUD shows,
         // so we know where a later direct insertion should paste.

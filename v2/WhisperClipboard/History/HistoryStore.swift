@@ -345,8 +345,9 @@ final class HistoryStore: ObservableObject {
             conditions.append("t.source = ?")
             _ = args.append(contentsOf: StatementArguments(["mic"]))
         case .file:
-            conditions.append("t.source = ?")
-            _ = args.append(contentsOf: StatementArguments(["file"]))
+            // "Bestand" also covers live-captions sessions (both are non-mic).
+            conditions.append("t.source IN (?, ?)")
+            _ = args.append(contentsOf: StatementArguments(["file", "captions"]))
         }
 
         let clause = conditions.isEmpty ? "" : "WHERE " + conditions.joined(separator: " AND ")

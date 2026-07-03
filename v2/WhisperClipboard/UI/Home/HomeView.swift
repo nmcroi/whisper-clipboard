@@ -23,6 +23,7 @@ struct HomeView: View {
                         modelManager: environment.modelManager,
                         dictation: environment.dictation,
                         history: environment.history,
+                        captions: environment.captions,
                         onOpenHistory: { navigation.openHistory(selecting: $0) }
                     )
                 case .history:
@@ -92,6 +93,7 @@ private struct HomeContent: View {
     @ObservedObject var modelManager: EngineModelManager
     @ObservedObject var dictation: DictationController
     @ObservedObject var history: HistoryStore
+    @ObservedObject var captions: CaptionsService
     let onOpenHistory: (String?) -> Void
 
     private let columns = [
@@ -106,6 +108,9 @@ private struct HomeContent: View {
                 header
                 if let notice = environment.engineNotice {
                     noticeBanner(notice)
+                }
+                if let message = captions.errorMessage {
+                    captionsErrorBanner(message)
                 }
                 if modelManager.needsDownload {
                     modelDownloadCard
@@ -200,6 +205,46 @@ private struct HomeContent: View {
         .themeCard(radius: Theme.Metrics.radius)
     }
 
+    /// Dutch explainer shown when a caption session fails to start — with a button
+    /// to the system-audio privacy pane when the failure was a permission denial.
+    private func captionsErrorBanner(_ text: String) -> some View {
+        VStack(alignment: .leading, spacing: 10) {
+            HStack(spacing: 8) {
+                Image(systemName: "exclamationmark.triangle")
+                    .foregroundStyle(Theme.danger)
+                Text(text)
+                    .font(ThemeFont.ui(12, weight: .medium))
+                    .foregroundStyle(Theme.textSecondary)
+                    .fixedSize(horizontal: false, vertical: true)
+                Spacer(minLength: 0)
+            }
+            if captions.permissionDenied {
+                Button("Open Systeeminstellingen") { openSystemAudioSettings() }
+                    .buttonStyle(AccentButtonStyle())
+            }
+        }
+        .padding(.horizontal, 12)
+        .padding(.vertical, 9)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .themeCard(border: Theme.danger.opacity(0.4))
+    }
+
+    /// Opens Privacy & Security → Screen & System Audio Recording.
+    private func openSystemAudioSettings() {
+        // The screen-capture / system-audio pane. On macOS 26 this anchor lands on
+        // "Schermopname en systeemaudio"; the app is listed there once it has
+        // attempted a system-audio tap.
+        let urls = [
+            "x-apple.systempreferences:com.apple.preference.security?Privacy_ScreenCapture",
+            "x-apple.systempreferences:com.apple.preference.security?Privacy_AudioCapture",
+        ]
+        for string in urls {
+            if let url = URL(string: string), NSWorkspace.shared.open(url) {
+                return
+            }
+        }
+    }
+
     // MARK: Model download
 
     private var modelDownloadCard: some View {
@@ -268,13 +313,20 @@ private struct HomeContent: View {
                 action: { openFiles() }
             )
             ActionCard(
-                symbol: "captions.bubble",
+                symbol: captionsRunning ? "captions.bubble.fill" : "captions.bubble",
                 title: "Live ondertitels",
-                subtitle: "Toon ondertitels tijdens het spreken",
-                enabled: false,
-                badge: "Later"
+                subtitle: captionsRunning
+                    ? "Actief — klik om te stoppen"
+                    : "Toon ondertitels van systeemaudio",
+                enabled: modelManager.status.isReady,
+                active: captionsRunning,
+                action: { environment.toggleCaptions() }
             )
         }
+    }
+
+    private var captionsRunning: Bool {
+        captions.isRunning
     }
 
     private var canDictate: Bool {

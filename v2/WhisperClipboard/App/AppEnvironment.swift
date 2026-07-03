@@ -58,7 +58,10 @@ final class AppEnvironment: ObservableObject {
     let fileImport: FileImportService
     /// AI prompt modes (M4): built-in + custom, runs against transcripts.
     let modes: ModesService
+    /// Live captions from system audio (M6).
+    let captions: CaptionsService
     private let hud: RecordingHUDController
+    private let captionOverlay: CaptionOverlayController
     /// Direct text insertion (M5): pastes into the frontmost app when enabled.
     let insertion = InsertionService()
 
@@ -129,6 +132,30 @@ final class AppEnvironment: ObservableObject {
             }
         )
 
+        // Live captions (M6): a dedicated engine instance (created inside the
+        // service) keeps caption transcription off the dictation engine's state.
+        // Captions refuse to start while dictation or import is busy; the reverse
+        // exclusion (dictation auto-stops captions) is wired below via a hook.
+        let captions = CaptionsService(
+            history: history,
+            locale: { Locale(identifier: settingsRef().language.isEmpty ? "nl-NL" : settingsRef().language) },
+            saveToHistory: { settingsRef().saveCaptions },
+            busyReason: { [weak dictation, weak fileImport] in
+                switch dictation?.phase {
+                case .recording, .transcribing:
+                    return "Stop eerst de dictaat-opname voordat je ondertitels start"
+                default:
+                    break
+                }
+                if fileImport?.isBusy == true {
+                    return "Wacht tot het importeren klaar is voordat je ondertitels start"
+                }
+                return nil
+            }
+        )
+        self.captions = captions
+        self.captionOverlay = CaptionOverlayController(service: captions)
+
         // Now that stored properties exist, bind the closures to `self`.
         settingsRef = { [weak self] in self?.settings ?? AppSettings() }
         stateSink = { [weak self] state in self?.appState = state }
@@ -140,6 +167,8 @@ final class AppEnvironment: ObservableObject {
         }
         // Refuse dictation while a file import is running.
         dictation.importBusyProvider = { [weak self] in self?.fileImport.isBusy ?? false }
+        // Starting dictation pauses live captions (they do not auto-resume).
+        dictation.onWillStartRecording = { [weak self] in self?.captions.stop() }
 
         // Direct insertion wiring (M5). Capture the frontmost app at recording
         // start; attempt insertion at completion (clipboard-only when disabled).
@@ -224,6 +253,17 @@ final class AppEnvironment: ObservableObject {
         engineNotice = decision.notice
         if let notice = decision.notice {
             NSLog("EngineSelector: %@", notice)
+        }
+    }
+
+    /// Toggles the live-captions session (Home card / menu bar). Starting refuses
+    /// (with a notification) while dictation or import is busy; see
+    /// ``CaptionsService/start()``.
+    func toggleCaptions() {
+        if captions.isRunning {
+            captions.stop()
+        } else {
+            captions.start()
         }
     }
 

@@ -20,6 +20,8 @@ struct GeneralSettingsView: View {
                 Divider().overlay(Theme.border)
                 languageSection
                 Divider().overlay(Theme.border)
+                captionsSection
+                Divider().overlay(Theme.border)
                 loginItemSection
             }
             .padding(24)
@@ -105,6 +107,33 @@ struct GeneralSettingsView: View {
                 .font(ThemeFont.ui(11))
                 .foregroundStyle(Theme.textSecondary)
                 .fixedSize(horizontal: false, vertical: true)
+        }
+    }
+
+    // MARK: - Live captions
+
+    private var captionsSection: some View {
+        VStack(alignment: .leading, spacing: 10) {
+            Text("Live ondertitels")
+                .font(ThemeFont.ui(15, weight: .semibold))
+                .foregroundStyle(Theme.text)
+
+            Toggle(isOn: Binding(
+                get: { environment.settings.saveCaptions },
+                set: { environment.settings.saveCaptions = $0 }
+            )) {
+                VStack(alignment: .leading, spacing: 2) {
+                    Text("Ondertitels bewaren in geschiedenis")
+                        .font(ThemeFont.ui(13, weight: .medium))
+                        .foregroundStyle(Theme.text)
+                    Text("Bewaart het volledige transcript van een ondertitel-sessie in de geschiedenis wanneer je stopt.")
+                        .font(ThemeFont.ui(11))
+                        .foregroundStyle(Theme.textSecondary)
+                        .fixedSize(horizontal: false, vertical: true)
+                }
+            }
+            .toggleStyle(.switch)
+            .tint(Theme.accent)
         }
     }
 

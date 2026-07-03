@@ -12,7 +12,7 @@ struct TranscriptRow: View {
 
     var body: some View {
         HStack(spacing: 12) {
-            Image(systemName: entry.source == "file" ? "doc.text" : "mic")
+            Image(systemName: TranscriptSourceStyle.icon(for: entry.source))
                 .font(.system(size: 12, weight: .medium))
                 .foregroundStyle(Theme.textTertiary)
                 .frame(width: 16)

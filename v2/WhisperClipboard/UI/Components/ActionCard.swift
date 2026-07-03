@@ -14,6 +14,8 @@ struct ActionCard: View {
     var hint: String? = nil
     /// Optional badge shown when disabled (e.g. "M3").
     var badge: String? = nil
+    /// When true, shows a red "active" dot in the icon row (e.g. captions running).
+    var active: Bool = false
     var action: (() -> Void)? = nil
 
     @State private var isHovering = false
@@ -36,9 +38,13 @@ struct ActionCard: View {
             HStack {
                 Image(systemName: symbol)
                     .font(.system(size: 20, weight: .medium))
-                    .foregroundStyle(enabled ? Theme.accent : Theme.textTertiary)
+                    .foregroundStyle(active ? Theme.danger : (enabled ? Theme.accent : Theme.textTertiary))
                 Spacer()
-                if let badge, !enabled {
+                if active {
+                    Circle()
+                        .fill(Theme.danger)
+                        .frame(width: 8, height: 8)
+                } else if let badge, !enabled {
                     Text(badge)
                         .font(ThemeFont.ui(10, weight: .semibold))
                         .foregroundStyle(Theme.textTertiary)
