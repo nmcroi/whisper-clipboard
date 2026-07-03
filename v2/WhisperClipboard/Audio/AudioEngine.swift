@@ -119,13 +119,22 @@ final class AudioEngine {
         )
         self.continuation = continuation
 
-        inputNode.installTap(onBus: 0, bufferSize: 4096, format: nativeFormat) { [weak self] buffer, _ in
-            // Copy out of the tap's reused buffer before hopping actors.
+        // CoreAudio invokes this block on its own realtime thread, never the
+        // main thread. Typing it explicitly as `@Sendable` (rather than a bare
+        // closure literal inside this `@MainActor` method) stops the compiler
+        // from inferring main-actor isolation for it — without this, Swift 6
+        // inserts a runtime isolation check that traps (SIGTRAP) the instant
+        // CoreAudio calls the tap off the main thread.
+        let tapHandler: @Sendable (AVAudioPCMBuffer, AVAudioTime) -> Void = { [weak self] buffer, _ in
+            // Copy out of the tap's reused buffer, then box it (AVAudioPCMBuffer
+            // isn't Sendable) before hopping actors.
             guard let copied = buffer.deepCopy() else { return }
+            let boxed = AudioBufferBox(copied)
             Task { @MainActor [weak self] in
-                self?.handle(buffer: copied)
+                self?.handle(buffer: boxed.buffer)
             }
         }
+        inputNode.installTap(onBus: 0, bufferSize: 4096, format: nativeFormat, block: tapHandler)
 
         engine.prepare()
         do {
