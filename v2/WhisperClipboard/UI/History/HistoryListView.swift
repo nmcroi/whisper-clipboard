@@ -175,7 +175,7 @@ struct HistoryListView: View {
             Button("Bewaar") { commitRename(entry) }
                 .buttonStyle(.plain)
                 .font(ThemeFont.ui(11, weight: .semibold))
-                .foregroundStyle(Theme.accent)
+                .foregroundStyle(Theme.accentText)
             Button("Annuleer") { renamingID = nil }
                 .buttonStyle(.plain)
                 .font(ThemeFont.ui(11))

@@ -127,7 +127,7 @@ struct TranscriptDetailView: View {
                 metaItem(icon: "globe", text: entry.language.uppercased())
             }
             if entry.pinned {
-                metaItem(icon: "pin.fill", text: "Vastgezet", tint: Theme.accent)
+                metaItem(icon: "pin.fill", text: "Vastgezet", tint: Theme.accentText)
             }
             if speakerCount > 0 {
                 metaItem(icon: "person.2.fill",
@@ -309,7 +309,7 @@ struct TranscriptDetailView: View {
                     Image(systemName: "checkmark").font(.system(size: 10, weight: .bold))
                 }
                 .buttonStyle(.plain)
-                .foregroundStyle(Theme.accent)
+                .foregroundStyle(Theme.accentText)
             }
             .padding(.horizontal, 8)
             .padding(.vertical, 5)
@@ -661,7 +661,7 @@ private struct TranscriptSentenceRow: View {
             if let timecode {
                 Text(timecode)
                     .font(ThemeFont.ui(11, weight: .medium).monospaced())
-                    .foregroundStyle(Theme.accent)
+                    .foregroundStyle(Theme.accentText)
                     .frame(width: 46, alignment: .leading)
                     .padding(.top, 1)
             }

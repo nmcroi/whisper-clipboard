@@ -11,9 +11,20 @@ final class RecordingHUDController {
     private var panel: NSPanel?
     private var cancellables = Set<AnyCancellable>()
 
+    /// Supplies the `NSAppearance` the panel should adopt so its dynamic `Theme`
+    /// colors resolve to the user-chosen palette (`nil` → follow the system).
+    /// Set by `AppEnvironment` from `settings.appearance`.
+    var appearanceProvider: () -> NSAppearance? = { nil }
+
     init(controller: DictationController) {
         self.controller = controller
         observePhase()
+    }
+
+    /// Re-applies the current appearance to a live panel (called when the user
+    /// switches the theme while the HUD may be on screen).
+    func applyAppearance() {
+        panel?.appearance = appearanceProvider()
     }
 
     private func observePhase() {
@@ -47,6 +58,9 @@ final class RecordingHUDController {
             panel = makePanel()
         }
         guard let panel else { return }
+        // Adopt the chosen palette every show (the theme may have changed since
+        // the panel was created).
+        panel.appearance = appearanceProvider()
 
         let restingOrigin = restingOrigin(for: panel)
         panel.layoutIfNeeded()

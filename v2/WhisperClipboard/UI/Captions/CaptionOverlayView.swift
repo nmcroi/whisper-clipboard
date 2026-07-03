@@ -88,7 +88,7 @@ struct CaptionOverlayView: View {
         } label: {
             Image(systemName: "character.bubble")
                 .font(.system(size: 12, weight: .semibold))
-                .foregroundStyle(service.translateEnabled ? Theme.accent : Theme.textSecondary)
+                .foregroundStyle(service.translateEnabled ? Theme.accentText : Theme.textSecondary)
                 .padding(6)
                 .contentShape(Rectangle())
         }
@@ -166,8 +166,10 @@ struct CaptionOverlayView: View {
     }
 
     private var background: some View {
+        // Solid, near-opaque themed surface so captions read over any content:
+        // near-black in dark mode, near-white in light mode.
         ZStack {
-            Color.black.opacity(0.94)
+            Theme.window.opacity(0.96)
             Rectangle().fill(.ultraThinMaterial).opacity(0.12)
         }
     }

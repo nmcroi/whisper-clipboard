@@ -66,7 +66,7 @@ struct InsertionSettingsView: View {
                 if accessibilityGranted {
                     HStack(spacing: 8) {
                         Image(systemName: "checkmark.circle.fill")
-                            .foregroundStyle(Theme.accent)
+                            .foregroundStyle(Theme.accentText)
                         Text("Toegankelijkheid toegestaan")
                             .font(ThemeFont.ui(12, weight: .medium))
                             .foregroundStyle(Theme.text)
@@ -143,7 +143,7 @@ struct InsertionSettingsView: View {
                 }
                 .menuStyle(.borderlessButton)
                 .fixedSize()
-                .foregroundStyle(Theme.accent)
+                .foregroundStyle(Theme.accentText)
             }
 
             Text("Direct invoegen wordt overgeslagen voor apps in deze lijst; de tekst blijft dan wel op het klembord staan.")

@@ -16,6 +16,8 @@ struct GeneralSettingsView: View {
             VStack(alignment: .leading, spacing: 20) {
                 header
                 Divider().overlay(Theme.border)
+                appearanceSection
+                Divider().overlay(Theme.border)
                 hotkeySection
                 Divider().overlay(Theme.border)
                 languageSection
@@ -40,9 +42,39 @@ struct GeneralSettingsView: View {
             Text("Algemeen")
                 .foregroundStyle(Theme.text)
             + Text(".")
-                .foregroundStyle(Theme.accent)
+                .foregroundStyle(Theme.accentText)
         )
         .font(ThemeFont.ui(18, weight: .bold))
+    }
+
+    // MARK: - Appearance
+
+    private var appearanceSection: some View {
+        VStack(alignment: .leading, spacing: 10) {
+            Text("Weergave")
+                .font(ThemeFont.ui(15, weight: .semibold))
+                .foregroundStyle(Theme.text)
+
+            Picker(
+                "Thema",
+                selection: Binding(
+                    get: { environment.settings.appearance },
+                    set: { environment.settings.appearance = $0 }
+                )
+            ) {
+                Text("Systeem").tag(AppSettings.AppearanceMode.system)
+                Text("Donker").tag(AppSettings.AppearanceMode.dark)
+                Text("Licht").tag(AppSettings.AppearanceMode.light)
+            }
+            .pickerStyle(.segmented)
+            .labelsHidden()
+            .frame(maxWidth: 320, alignment: .leading)
+
+            Text("‘Systeem’ volgt de weergave van macOS. ‘Donker’ is het standaardthema; ‘Licht’ zet een witte achtergrond met dezelfde gele en rode accenten.")
+                .font(ThemeFont.ui(11))
+                .foregroundStyle(Theme.textSecondary)
+                .fixedSize(horizontal: false, vertical: true)
+        }
     }
 
     // MARK: - Hotkey
@@ -200,7 +232,7 @@ struct GeneralSettingsView: View {
                 Spacer()
                 Text(Self.dutchSeconds(environment.settings.hudLingerSeconds))
                     .font(ThemeFont.ui(13, weight: .medium).monospaced())
-                    .foregroundStyle(Theme.accent)
+                    .foregroundStyle(Theme.accentText)
                     .frame(width: 52, alignment: .trailing)
             }
 

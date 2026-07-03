@@ -46,7 +46,23 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         observeDictation()
         observeWindows()
 
+        // Re-skin the status-item menu when the user switches the theme (the menu
+        // is pure AppKit, outside SwiftUI's colour-scheme environment).
+        environment.onAppearanceChange = { [weak self] _ in self?.applyAppearance() }
+        applyAppearance()
+
         environment.bootstrap()
+    }
+
+    /// Pins the status item's button and menu to the chosen appearance so the
+    /// menu chrome and the recording-state icon tint match the app's theme
+    /// (`nil` → follow the system). SwiftUI windows handle themselves.
+    private func applyAppearance() {
+        let appearance = environment.settings.appearance.nsAppearance
+        statusItem?.button?.appearance = appearance
+        menu?.appearance = appearance
+        // Refresh the icon so a colour tint (recording state) re-resolves.
+        updateStatusIcon(for: environment.appState)
     }
 
     // MARK: - Status item

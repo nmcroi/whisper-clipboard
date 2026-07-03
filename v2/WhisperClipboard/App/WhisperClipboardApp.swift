@@ -24,6 +24,20 @@ struct WhisperClipboardApp: App {
     }
 }
 
+/// Shared modifier applied at the root of the main window and the settings
+/// window: forces the chosen colour scheme live from the setting and pins the
+/// control/selection tint to the (readable) yellow accent so nothing renders in
+/// system blue in either mode.
+struct AppAppearanceModifier: ViewModifier {
+    @ObservedObject var environment: AppEnvironment
+
+    func body(content: Content) -> some View {
+        content
+            .tint(Theme.accentText)
+            .preferredColorScheme(environment.settings.appearance.preferredColorScheme)
+    }
+}
+
 /// Applies a frame-autosave name to the host window so macOS remembers its
 /// size and position across launches, and sets a sensible default size the
 /// first time it appears.
@@ -75,6 +89,6 @@ struct SettingsView: View {
         }
         .frame(width: 560, height: 460)
         .background(Theme.window)
-        .preferredColorScheme(.dark)
+        .modifier(AppAppearanceModifier(environment: environment))
     }
 }

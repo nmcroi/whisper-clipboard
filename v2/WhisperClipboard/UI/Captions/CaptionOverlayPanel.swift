@@ -15,9 +15,20 @@ final class CaptionOverlayController {
     private var panel: NSPanel?
     private var cancellables = Set<AnyCancellable>()
 
+    /// Supplies the `NSAppearance` the panel should adopt so its dynamic `Theme`
+    /// colors resolve to the user-chosen palette (`nil` → follow the system).
+    /// Set by `AppEnvironment` from `settings.appearance`.
+    var appearanceProvider: () -> NSAppearance? = { nil }
+
     init(service: CaptionsService) {
         self.service = service
         observeRunning()
+    }
+
+    /// Re-applies the current appearance to a live panel (called when the user
+    /// switches the theme while the overlay may be on screen).
+    func applyAppearance() {
+        panel?.appearance = appearanceProvider()
     }
 
     private func observeRunning() {
@@ -37,6 +48,7 @@ final class CaptionOverlayController {
             panel = makePanel()
         }
         guard let panel else { return }
+        panel.appearance = appearanceProvider()
         positionAtBottomCenter(panel)
         panel.alphaValue = 1
         panel.orderFrontRegardless()

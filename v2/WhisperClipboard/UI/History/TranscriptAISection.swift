@@ -51,12 +51,12 @@ struct TranscriptAISection: View {
     private var header: some View {
         HStack(spacing: 8) {
             Image(systemName: "sparkles")
-                .foregroundStyle(Theme.accent)
+                .foregroundStyle(Theme.accentText)
             (
                 Text("AI")
                     .foregroundStyle(Theme.text)
                 + Text(".")
-                    .foregroundStyle(Theme.accent)
+                    .foregroundStyle(Theme.accentText)
             )
             .font(ThemeFont.ui(15, weight: .semibold))
             Spacer(minLength: 0)
@@ -151,7 +151,7 @@ struct TranscriptAISection: View {
             } else if let name = savedAsModeName {
                 Label("Bewaard als \"\(name)\" — te vinden bij Instellingen", systemImage: "checkmark.circle.fill")
                     .font(ThemeFont.ui(11))
-                    .foregroundStyle(Theme.accent)
+                    .foregroundStyle(Theme.accentText)
             }
         }
     }
@@ -186,7 +186,7 @@ struct TranscriptAISection: View {
     private var setupCard: some View {
         HStack(spacing: 12) {
             Image(systemName: "key.horizontal")
-                .foregroundStyle(Theme.accent)
+                .foregroundStyle(Theme.accentText)
                 .font(.system(size: 16))
             VStack(alignment: .leading, spacing: 3) {
                 Text("Stel je Claude API-key in")

@@ -87,7 +87,7 @@ struct RecordingHUDView: View {
         case .finished, .idle:
             HStack(spacing: 8) {
                 Image(systemName: "checkmark.circle.fill")
-                    .foregroundStyle(Theme.accent)
+                    .foregroundStyle(Theme.accentText)
                 Text(controller.lastInsertionOutcome == .inserted ? "Ingevoegd" : "Op klembord")
                     .font(ThemeFont.ui(13, weight: .semibold))
                     .foregroundStyle(Theme.text)
@@ -95,7 +95,7 @@ struct RecordingHUDView: View {
                 if let seconds = controller.lastMetrics.dutchClipboardSeconds {
                     Text("· \(seconds)")
                         .font(ThemeFont.ui(13, weight: .medium).monospaced())
-                        .foregroundStyle(Theme.accent)
+                        .foregroundStyle(Theme.accentText)
                 }
                 Spacer()
             }
@@ -124,9 +124,11 @@ struct RecordingHUDView: View {
     }
 
     private var background: some View {
-        // Vol zwart met een vleugje doorschijnendheid (expliciete wens van Niels).
+        // Solid, near-opaque themed surface so the HUD reads over any content:
+        // near-black in dark mode (Niels' signature look), near-white in light
+        // mode, each with a whisper of translucency.
         ZStack {
-            Color.black.opacity(0.94)
+            Theme.window.opacity(0.96)
             Rectangle().fill(.ultraThinMaterial).opacity(0.12)
         }
     }

@@ -38,7 +38,7 @@ struct AutomationSettingsView: View {
                 Text("Automatisering")
                     .foregroundStyle(Theme.text)
                 + Text(".")
-                    .foregroundStyle(Theme.accent)
+                    .foregroundStyle(Theme.accentText)
             )
             .font(ThemeFont.ui(18, weight: .bold))
 
@@ -199,7 +199,7 @@ struct AutomationSettingsView: View {
                 .menuStyle(.borderlessButton)
                 .buttonStyle(.plain)
                 .fixedSize()
-                .foregroundStyle(Theme.accent)
+                .foregroundStyle(Theme.accentText)
             }
 
             Text("Nieuwe audio of video die je in een bewaakte map neerzet wordt automatisch getranscribeerd. Bestanden die nog gekopieerd worden, worden pas opgepakt als ze volledig zijn.")
@@ -232,7 +232,7 @@ struct AutomationSettingsView: View {
     private func watchedRow(_ path: String) -> some View {
         HStack(spacing: 10) {
             Image(systemName: "folder.fill")
-                .foregroundStyle(Theme.accent)
+                .foregroundStyle(Theme.accentText)
                 .frame(width: 20)
             VStack(alignment: .leading, spacing: 1) {
                 Text((path as NSString).lastPathComponent)

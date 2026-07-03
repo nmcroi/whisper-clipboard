@@ -94,7 +94,7 @@ private struct ImportJobRow: View {
                 .buttonStyle(AccentButtonStyle())
         case .done:
             Image(systemName: "checkmark.circle.fill")
-                .foregroundStyle(Theme.accent)
+                .foregroundStyle(Theme.accentText)
         case .waiting, .decoding:
             EmptyView()
         }
@@ -112,7 +112,7 @@ private struct ImportJobRow: View {
 
     private var iconColor: Color {
         switch job.state {
-        case .done: return Theme.accent
+        case .done: return Theme.accentText
         case .failed: return Theme.danger
         default: return Theme.textSecondary
         }

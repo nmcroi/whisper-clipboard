@@ -53,7 +53,7 @@ private struct HomeRootView: View {
         .environmentObject(navigation)
         .background(Theme.window)
         .toolbarBackground(Theme.window, for: .windowToolbar)
-        .preferredColorScheme(.dark)
+        .modifier(AppAppearanceModifier(environment: environment))
         .onReceive(environment.$menuNavigationRequest.compactMap { $0 }) { request in
             apply(request)
         }
@@ -211,7 +211,7 @@ private struct HomeContent: View {
                 Text("Home")
                     .foregroundStyle(Theme.text)
                 + Text(".")
-                    .foregroundStyle(Theme.accent)
+                    .foregroundStyle(Theme.accentText)
             )
             .font(ThemeFont.ui(28, weight: .bold))
             statusPill
@@ -237,7 +237,7 @@ private struct HomeContent: View {
     private func noticeBanner(_ text: String) -> some View {
         HStack(spacing: 8) {
             Image(systemName: "info.circle")
-                .foregroundStyle(Theme.accent)
+                .foregroundStyle(Theme.accentText)
             Text(text)
                 .font(ThemeFont.ui(12, weight: .medium))
                 .foregroundStyle(Theme.textSecondary)
@@ -296,7 +296,7 @@ private struct HomeContent: View {
         VStack(alignment: .leading, spacing: 10) {
             HStack(spacing: 8) {
                 Image(systemName: "arrow.down.circle")
-                    .foregroundStyle(Theme.accent)
+                    .foregroundStyle(Theme.accentText)
                 Text("Parakeet-spraakmodel")
                     .font(ThemeFont.ui(15, weight: .semibold))
                     .foregroundStyle(Theme.text)
@@ -390,7 +390,7 @@ private struct HomeContent: View {
                 Button("Alles bekijken") { onOpenHistory(nil) }
                     .buttonStyle(.plain)
                     .font(ThemeFont.ui(12, weight: .medium))
-                    .foregroundStyle(Theme.accent)
+                    .foregroundStyle(Theme.accentText)
             }
 
             let recents = recentEntries

@@ -38,7 +38,7 @@ struct TranscriptRow: View {
             if entry.pinned {
                 Image(systemName: "pin.fill")
                     .font(.system(size: 10))
-                    .foregroundStyle(Theme.accent)
+                    .foregroundStyle(Theme.accentText)
             }
 
             if !compact, let onTogglePin {

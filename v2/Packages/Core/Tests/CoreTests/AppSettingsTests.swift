@@ -87,6 +87,44 @@ import Foundation
         #expect(decoded.translateCaptionsToDutch == true)
     }
 
+    // MARK: - Appearance
+
+    /// Dark is the app's signature look and stays the default; light/system are
+    /// opt-in via the "Thema" picker.
+    @Test func defaultAppearanceIsDark() {
+        #expect(AppSettings().appearance == .dark)
+    }
+
+    /// The appearance raw values are the stable identifiers persisted to disk;
+    /// they must not drift.
+    @Test func appearanceRawValuesAreStable() {
+        #expect(AppSettings.AppearanceMode.system.rawValue == "system")
+        #expect(AppSettings.AppearanceMode.dark.rawValue == "dark")
+        #expect(AppSettings.AppearanceMode.light.rawValue == "light")
+    }
+
+    /// An older settings.json written before the `appearance` key existed still
+    /// decodes, falling back to the `.dark` default rather than failing the load.
+    @Test func appearanceFallsBackToDarkWhenMissingFromJSON() throws {
+        let json = """
+        {"hotkeyMode":"toggle","language":"nl","engine":"parakeet","cleanOutput":true,"replacements":[],"directInsertion":false,"insertionDeniedBundleIds":[],"saveRecordings":false,"saveCaptions":false,"initialPrompt":""}
+        """.data(using: .utf8)!
+        let decoded = try JSONDecoder().decode(AppSettings.self, from: json)
+        #expect(decoded.appearance == .dark)
+    }
+
+    /// An explicit appearance choice round-trips through JSON coding (not reset
+    /// to the default).
+    @Test func appearanceRoundTripsThroughCoding() throws {
+        for mode in AppSettings.AppearanceMode.allCases {
+            var settings = AppSettings()
+            settings.appearance = mode
+            let data = try JSONEncoder().encode(settings)
+            let decoded = try JSONDecoder().decode(AppSettings.self, from: data)
+            #expect(decoded.appearance == mode)
+        }
+    }
+
     // MARK: - Automation fields (M7)
 
     /// All automation features default to OFF / empty (opt-in).

@@ -39,8 +39,26 @@ final class AppEnvironment: ObservableObject {
         didSet {
             guard settings != oldValue else { return }
             SettingsStore.save(settings)
+            // Live-apply a theme switch to the AppKit overlays and the status
+            // menu, which sit outside SwiftUI's colour-scheme environment.
+            if settings.appearance != oldValue.appearance {
+                applyAppearanceToAppKitSurfaces()
+            }
         }
     }
+
+    /// Re-applies the current appearance to the AppKit surfaces that don't
+    /// inherit SwiftUI's `.preferredColorScheme` (the floating HUD/overlay panels
+    /// and the menu-bar status item's menu). SwiftUI windows update themselves.
+    private func applyAppearanceToAppKitSurfaces() {
+        hud.applyAppearance()
+        captionOverlay.applyAppearance()
+        onAppearanceChange?(settings.appearance)
+    }
+
+    /// Set by the app delegate to re-skin the status-item menu when the theme
+    /// changes (the menu is pure AppKit and outside the SwiftUI environment).
+    var onAppearanceChange: ((AppSettings.AppearanceMode) -> Void)?
     /// Set by the menu bar; `HomeView` observes and resets it to `nil`.
     @Published var menuNavigationRequest: MenuNavigationRequest?
     /// A one-line Dutch notice when the active engine differs from the requested
@@ -202,6 +220,16 @@ final class AppEnvironment: ObservableObject {
         // Now that stored properties exist, bind the closures to `self`.
         settingsRef = { [weak self] in self?.settings ?? AppSettings() }
         stateSink = { [weak self] state in self?.appState = state }
+
+        // The AppKit overlays (HUD, caption overlay) live outside the SwiftUI
+        // colour-scheme environment, so give them the chosen appearance directly;
+        // their dynamic `Theme` colors then resolve to the right palette.
+        hud.appearanceProvider = { [weak self] in
+            self?.settings.appearance.nsAppearance
+        }
+        captionOverlay.appearanceProvider = { [weak self] in
+            self?.settings.appearance.nsAppearance
+        }
         translateToggleSink = { [weak self] enabled in self?.settings.translateCaptionsToDutch = enabled }
         retentionRef = { [weak self] in self?.settings.historyRetention }
 

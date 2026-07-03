@@ -30,7 +30,7 @@ struct DictionarySettingsView: View {
                 Text("Woordenlijst")
                     .foregroundStyle(Theme.text)
                 + Text(".")
-                    .foregroundStyle(Theme.accent)
+                    .foregroundStyle(Theme.accentText)
             )
             .font(ThemeFont.ui(18, weight: .bold))
 

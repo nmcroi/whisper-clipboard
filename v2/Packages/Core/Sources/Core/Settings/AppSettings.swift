@@ -17,9 +17,20 @@ public struct AppSettings: Codable, Equatable, Sendable {
         case parakeet
     }
 
+    /// UI colour scheme preference. `system` follows macOS; `dark` and `light`
+    /// pin the app to a fixed appearance. Dark is the default — it is the
+    /// signature look of the app; light is opt-in.
+    public enum AppearanceMode: String, Codable, Sendable, CaseIterable {
+        case system
+        case dark
+        case light
+    }
+
     public var hotkeyMode: HotkeyMode
     public var language: String
     public var engine: Engine
+    /// UI colour scheme (Systeem / Donker / Licht). Defaults to `.dark`.
+    public var appearance: AppearanceMode
     public var cleanOutput: Bool
     public var replacements: [Replacement]
     public var directInsertion: Bool
@@ -65,6 +76,7 @@ public struct AppSettings: Codable, Equatable, Sendable {
         hotkeyMode: HotkeyMode = .toggle,
         language: String = "nl",
         engine: Engine = .parakeet,
+        appearance: AppearanceMode = .dark,
         cleanOutput: Bool = true,
         replacements: [Replacement] = [],
         directInsertion: Bool = false,
@@ -85,6 +97,7 @@ public struct AppSettings: Codable, Equatable, Sendable {
         self.hotkeyMode = hotkeyMode
         self.language = language
         self.engine = engine
+        self.appearance = appearance
         self.cleanOutput = cleanOutput
         self.replacements = replacements
         self.directInsertion = directInsertion
@@ -107,7 +120,7 @@ public struct AppSettings: Codable, Equatable, Sendable {
     // falls back to the default rather than failing the whole load. This lets new
     // fields (e.g. `insertionDeniedBundleIds`) be added without breaking existing files.
     private enum CodingKeys: String, CodingKey {
-        case hotkeyMode, language, engine, cleanOutput, replacements
+        case hotkeyMode, language, engine, appearance, cleanOutput, replacements
         case directInsertion, insertionDeniedBundleIds, saveRecordings, saveCaptions
         case translateCaptionsToDutch
         case diarizeImports
@@ -121,6 +134,7 @@ public struct AppSettings: Codable, Equatable, Sendable {
         self.hotkeyMode = try c.decodeIfPresent(HotkeyMode.self, forKey: .hotkeyMode) ?? d.hotkeyMode
         self.language = try c.decodeIfPresent(String.self, forKey: .language) ?? d.language
         self.engine = try c.decodeIfPresent(Engine.self, forKey: .engine) ?? d.engine
+        self.appearance = try c.decodeIfPresent(AppearanceMode.self, forKey: .appearance) ?? d.appearance
         self.cleanOutput = try c.decodeIfPresent(Bool.self, forKey: .cleanOutput) ?? d.cleanOutput
         self.replacements = try c.decodeIfPresent([Replacement].self, forKey: .replacements) ?? d.replacements
         self.directInsertion = try c.decodeIfPresent(Bool.self, forKey: .directInsertion) ?? d.directInsertion

@@ -96,7 +96,7 @@ struct AISettingsView: View {
             }
         case .success:
             HStack(spacing: 5) {
-                Image(systemName: "checkmark.circle.fill").foregroundStyle(Theme.accent)
+                Image(systemName: "checkmark.circle.fill").foregroundStyle(Theme.accentText)
                 Text("Verbinding oké").font(ThemeFont.ui(11)).foregroundStyle(Theme.textSecondary)
             }
         case .failure(let message):
@@ -154,7 +154,7 @@ struct AISettingsView: View {
     private func modeRow(_ mode: AIMode) -> some View {
         HStack(spacing: 10) {
             Image(systemName: mode.icon)
-                .foregroundStyle(Theme.accent)
+                .foregroundStyle(Theme.accentText)
                 .frame(width: 20)
             VStack(alignment: .leading, spacing: 2) {
                 HStack(spacing: 6) {
