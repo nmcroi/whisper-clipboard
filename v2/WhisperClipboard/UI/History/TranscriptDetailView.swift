@@ -8,7 +8,10 @@ import SwiftUI
 struct TranscriptDetailView: View {
     let entry: TranscriptEntry
     @ObservedObject var store: HistoryStore
+    var modes: ModesService
     var onDeleted: () -> Void
+    /// Opens the Settings window (AI tab) so the user can add their API key.
+    var onOpenSettings: () -> Void = { TranscriptDetailView.openSettings() }
 
     @State private var titleDraft = ""
     @State private var copied = false
@@ -26,6 +29,8 @@ struct TranscriptDetailView: View {
                 if !resolvedSegments.isEmpty {
                     segmentList
                 }
+                Divider().overlay(Theme.border)
+                TranscriptAISection(entry: entry, modes: modes, onOpenSettings: onOpenSettings)
             }
             .padding(24)
             .frame(maxWidth: .infinity, alignment: .leading)
@@ -202,6 +207,16 @@ struct TranscriptDetailView: View {
         Task {
             try? await Task.sleep(for: .milliseconds(1400))
             copied = false
+        }
+    }
+
+    /// Opens the app's Settings window (falls back across macOS selector names).
+    static func openSettings() {
+        NSApp.activate(ignoringOtherApps: true)
+        if #available(macOS 14, *) {
+            NSApp.sendAction(Selector(("showSettingsWindow:")), to: nil, from: nil)
+        } else {
+            NSApp.sendAction(Selector(("showPreferencesWindow:")), to: nil, from: nil)
         }
     }
 

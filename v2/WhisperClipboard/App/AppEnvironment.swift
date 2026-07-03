@@ -51,6 +51,8 @@ final class AppEnvironment: ObservableObject {
     let hotkeys: HotkeyManager
     let history: HistoryStore
     let fileImport: FileImportService
+    /// AI prompt modes (M4): built-in + custom, runs against transcripts.
+    let modes: ModesService
     private let hud: RecordingHUDController
 
     private var locale: Locale {
@@ -100,6 +102,9 @@ final class AppEnvironment: ObservableObject {
         var retentionRef: (() -> Int?)!
         let history = Self.makeHistoryStore(retentionProvider: { retentionRef() })
         self.history = history
+
+        // AI prompt modes (M4). The API key is read from the Keychain on demand.
+        self.modes = ModesService(history: history)
 
         // File-import pipeline. Refuses while dictation is recording/transcribing,
         // mirroring the Python "one job at a time" guard.

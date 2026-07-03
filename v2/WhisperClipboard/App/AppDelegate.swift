@@ -70,6 +70,18 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             makeItem(title: "Geschiedenis", action: #selector(openHistory), key: "")
         )
 
+        // AI-modus op laatste transcript → submenu of the four built-in modes.
+        let aiItem = NSMenuItem(title: "AI-modus op laatste transcript", action: nil, keyEquivalent: "")
+        let aiSubmenu = NSMenu()
+        for mode in AIMode.builtins {
+            let item = NSMenuItem(title: mode.name, action: #selector(runAIMode(_:)), keyEquivalent: "")
+            item.target = self
+            item.representedObject = mode.id
+            aiSubmenu.addItem(item)
+        }
+        aiItem.submenu = aiSubmenu
+        menu.addItem(aiItem)
+
         menu.addItem(.separator())
 
         // Recent transcripts section (like the old Python menu bar). The header
@@ -290,6 +302,33 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         guard let text = sender.representedObject as? String else { return }
         Clipboard.copy(text)
         Notifications.post("Tekst staat op je klembord")
+    }
+
+    /// Runs a built-in AI mode on the most recent transcript, copies the result
+    /// to the clipboard, and posts a notification. Errors surface as a
+    /// notification (menu-bar flows have no inline UI to show them).
+    @objc private func runAIMode(_ sender: NSMenuItem) {
+        guard let modeId = sender.representedObject as? String,
+              let mode = AIMode.builtins.first(where: { $0.id == modeId })
+        else { return }
+
+        guard let entry = (try? environment.history.recent(1))?.first else {
+            Notifications.post("Er is nog geen transcriptie om te verwerken")
+            return
+        }
+
+        Notifications.post("Claude verwerkt je transcriptie met '\(mode.name)'…")
+        Task {
+            do {
+                let result = try await environment.modes.runToCompletion(mode: mode, on: entry)
+                Clipboard.copy(result.output)
+                Notifications.post("'\(mode.name)' klaar — resultaat staat op je klembord")
+            } catch let error as ClaudeError {
+                Notifications.post(error.localizedDescription)
+            } catch {
+                Notifications.post("Er ging iets mis bij het verwerken met Claude")
+            }
+        }
     }
 
     /// Activates the app and brings the main window forward, opening it if needed.

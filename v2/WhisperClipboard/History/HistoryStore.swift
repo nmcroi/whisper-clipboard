@@ -112,6 +112,36 @@ final class HistoryStore: ObservableObject {
         bump()
     }
 
+    // MARK: - AI results (M4)
+
+    /// Persisted AI-mode results for a transcript, newest first.
+    func aiResults(forTranscript transcriptId: String) throws -> [AIResult] {
+        try dbQueue.read { db in
+            let records = try AIResultRecord
+                .filter(Column("transcript_id") == transcriptId)
+                .order(Column("created_at").desc)
+                .fetchAll(db)
+            return records.map(\.result)
+        }
+    }
+
+    /// Inserts (or replaces) an AI result. Multiple results per transcript are
+    /// allowed (a rerun appends a new row).
+    func addAIResult(_ result: AIResult) throws {
+        try dbQueue.write { db in
+            try AIResultRecord(result: result).insert(db)
+        }
+        bump()
+    }
+
+    /// Deletes a single AI result by id.
+    func deleteAIResult(id: String) throws {
+        _ = try dbQueue.write { db in
+            try AIResultRecord.deleteOne(db, key: id)
+        }
+        bump()
+    }
+
     // MARK: - Queries
 
     /// Fetches entries newest-first, optionally full-text filtered and/or scoped

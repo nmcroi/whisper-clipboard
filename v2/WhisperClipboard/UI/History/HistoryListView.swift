@@ -8,6 +8,7 @@ import SwiftUI
 struct HistoryListView: View {
     @ObservedObject var store: HistoryStore
     @ObservedObject var navigation: AppNavigation
+    var modes: ModesService
 
     @State private var rawQuery = ""
     @State private var debouncedQuery = ""
@@ -220,6 +221,7 @@ struct HistoryListView: View {
             TranscriptDetailView(
                 entry: entry,
                 store: store,
+                modes: modes,
                 onDeleted: { selectedID = entries.first?.id }
             )
             .id(entry.id)

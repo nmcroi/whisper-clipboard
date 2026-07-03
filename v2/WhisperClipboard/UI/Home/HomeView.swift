@@ -26,7 +26,7 @@ struct HomeView: View {
                         onOpenHistory: { navigation.openHistory(selecting: $0) }
                     )
                 case .history:
-                    HistoryListView(store: environment.history, navigation: navigation)
+                    HistoryListView(store: environment.history, navigation: navigation, modes: environment.modes)
                 }
             }
             .frame(maxWidth: .infinity, maxHeight: .infinity)

@@ -47,24 +47,44 @@ private struct WindowConfigurator: NSViewRepresentable {
     func updateNSView(_ nsView: NSView, context: Context) {}
 }
 
-/// Placeholder settings pane (full settings arrive in a later milestone).
+/// Tabbed settings window: "Algemeen" (placeholder for now) and "AI" (Claude
+/// API key + custom mode editor).
 struct SettingsView: View {
+    @EnvironmentObject private var environment: AppEnvironment
+
+    var body: some View {
+        TabView {
+            GeneralSettingsView()
+                .tabItem { Label("Algemeen", systemImage: "gearshape") }
+
+            AISettingsView(modes: environment.modes)
+                .tabItem { Label("AI", systemImage: "sparkles") }
+        }
+        .frame(width: 520, height: 460)
+        .background(Theme.window)
+        .preferredColorScheme(.dark)
+    }
+}
+
+/// Placeholder "Algemeen" tab (full general settings arrive in a later version).
+private struct GeneralSettingsView: View {
     var body: some View {
         VStack(alignment: .leading, spacing: 12) {
             (
-                Text("Instellingen")
+                Text("Algemeen")
                     .foregroundStyle(Theme.text)
                 + Text(".")
                     .foregroundStyle(Theme.accent)
             )
-            .font(ThemeFont.ui(20, weight: .bold))
+            .font(ThemeFont.ui(18, weight: .bold))
 
-            Text("Instellingen komen in een latere versie.")
+            Text("Algemene instellingen komen in een latere versie.")
                 .font(ThemeFont.ui(13))
                 .foregroundStyle(Theme.textSecondary)
+            Spacer()
         }
-        .padding(28)
-        .frame(width: 380, height: 200, alignment: .topLeading)
+        .padding(24)
+        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
         .background(Theme.window)
     }
 }
