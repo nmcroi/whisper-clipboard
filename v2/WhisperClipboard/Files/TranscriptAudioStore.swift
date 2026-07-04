@@ -126,13 +126,23 @@ enum TranscriptAudioStore {
             throw AudioTrimError.exportFailed(export.error?.localizedDescription ?? "onbekende fout")
         }
 
-        // Replace the original recording with the trimmed .m4a. If the original
-        // had a different extension, we swap to .m4a and remove the old file.
+        // Replace the original recording with the trimmed .m4a. Use an atomic
+        // replace so the original is only removed once the trimmed file is safely
+        // in place — a move failure (e.g. cross-volume rename, disk full) can no
+        // longer destroy the sole copy before the replacement lands.
         let finalURL = sourceURL.deletingPathExtension().appendingPathExtension("m4a")
-        _ = try? FileManager.default.removeItem(at: finalURL)
-        try FileManager.default.moveItem(at: tempURL, to: finalURL)
+        let fm = FileManager.default
+        if fm.fileExists(atPath: finalURL.path) {
+            // Destination exists (source was already .m4a, or a stale file):
+            // atomically swap it for the trimmed export.
+            _ = try fm.replaceItemAt(finalURL, withItemAt: tempURL)
+        } else {
+            // No file at the destination yet (source had a different extension):
+            // move the trimmed export into place first, then remove the original.
+            try fm.moveItem(at: tempURL, to: finalURL)
+        }
         if finalURL != sourceURL {
-            try? FileManager.default.removeItem(at: sourceURL)
+            try? fm.removeItem(at: sourceURL)
         }
     }
 }

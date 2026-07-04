@@ -196,12 +196,15 @@ final class ModesService {
                 }
                 run.finish()
                 self?.persist(run: run)
+                // Only successful runs are removed from `activeRuns`. Failed runs
+                // stay (with their errorMessage) so the UI can render the error
+                // — mirroring the missing-key guard above, which also keeps the run.
+                self?.removeActive(run)
             } catch let error as ClaudeError {
                 run.fail(error.localizedDescription)
             } catch {
                 run.fail(ClaudeError.server(error.localizedDescription).localizedDescription)
             }
-            self?.removeActive(run)
         }
         return run
     }

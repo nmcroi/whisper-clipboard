@@ -79,8 +79,14 @@ enum PlaudRegion: Sendable, Equatable {
         let raw = trimmed.contains("://") ? trimmed : "https://" + trimmed
         guard let comps = URLComponents(string: raw),
               let hostName = comps.host, !hostName.isEmpty else { return nil }
-        let scheme = comps.scheme ?? "https"
-        let normalized = "\(scheme)://\(hostName)"
+        // Security: login re-POSTs the account email+password to this host, so only
+        // honour a redirect that stays on PLAUD's own domain and uses https. A
+        // compromised/misconfigured login endpoint therefore cannot harvest
+        // credentials by pointing us at an attacker host (or downgrading to http).
+        let lowerHost = hostName.lowercased()
+        guard lowerHost == "plaud.ai" || lowerHost.hasSuffix(".plaud.ai") else { return nil }
+        guard (comps.scheme ?? "https") == "https" else { return nil }
+        let normalized = "https://\(hostName)"
 
         // Prefer a named case when it's exactly a known region host.
         for named: PlaudRegion in [.us, .eu, .apac] where named.baseURL == normalized {

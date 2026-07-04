@@ -33,6 +33,7 @@ struct TranscriptAISection: View {
                 ForEach(storedResults, id: \.id) { result in
                     AIResultCard(
                         result: result,
+                        canRerun: canRerun(result),
                         onDelete: { modes.deleteResult(id: result.id) },
                         onRerun: { rerun(result) }
                     )
@@ -212,16 +213,21 @@ struct TranscriptAISection: View {
         return modes.results(for: entry.id)
     }
 
+    /// Whether a stored result can be rerun. Free-prompt ("Eigen prompt") results
+    /// store only the framed label, not the verbatim instruction, so their exact
+    /// prompt can't be reconstructed — the rerun control is hidden for them (rather
+    /// than shown as a dead button). Otherwise a result is rerunnable when its mode
+    /// still exists.
+    private func canRerun(_ result: AIResult) -> Bool {
+        guard result.modeId != ModesService.freePromptModeId else { return false }
+        return modes.allModes.contains { $0.id == result.modeId }
+    }
+
     private func rerun(_ result: AIResult) {
-        // Find the mode by id; fall back to a synthetic mode carrying the stored
-        // name (so a deleted custom mode can still be rerun using its name).
-        let mode = modes.allModes.first { $0.id == result.modeId }
-            ?? AIMode(id: result.modeId, name: result.modeName, systemPrompt: "", icon: "sparkles")
-        // If the mode no longer exists we can't reconstruct its prompt; only
-        // rerun known modes.
-        if modes.allModes.contains(where: { $0.id == result.modeId }) {
-            modes.run(mode: mode, on: entry)
-        }
+        guard canRerun(result) else { return }
+        // Rerun the still-existing mode by id.
+        guard let mode = modes.allModes.first(where: { $0.id == result.modeId }) else { return }
+        modes.run(mode: mode, on: entry)
     }
 }
 
@@ -280,6 +286,9 @@ private struct AIRunCard: View {
 /// A card rendering a stored (completed) result, with copy / rerun / delete.
 private struct AIResultCard: View {
     let result: AIResult
+    /// Whether to show the rerun control. Hidden for results whose exact prompt
+    /// can't be reconstructed (free-form "Eigen prompt" results).
+    var canRerun: Bool = true
     var onDelete: () -> Void
     var onRerun: () -> Void
 
@@ -303,13 +312,15 @@ private struct AIResultCard: View {
                 .buttonStyle(.plain)
                 .help(copied ? "Gekopieerd" : "Kopieer")
 
-                Button { onRerun() } label: {
-                    Image(systemName: "arrow.clockwise")
-                        .foregroundStyle(Theme.textSecondary)
-                        .font(.system(size: 12))
+                if canRerun {
+                    Button { onRerun() } label: {
+                        Image(systemName: "arrow.clockwise")
+                            .foregroundStyle(Theme.textSecondary)
+                            .font(.system(size: 12))
+                    }
+                    .buttonStyle(.plain)
+                    .help("Opnieuw uitvoeren")
                 }
-                .buttonStyle(.plain)
-                .help("Opnieuw uitvoeren")
 
                 Button(role: .destructive) { onDelete() } label: {
                     Image(systemName: "trash")

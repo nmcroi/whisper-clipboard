@@ -46,9 +46,16 @@ final class CaptionsService: ObservableObject {
         didSet {
             guard translateEnabled != oldValue else { return }
             if !translateEnabled { translationHint = nil }
+            // Skip persistence for an internal session-reset (see `stop()`): the
+            // user's saved preference must survive stopping captions.
+            guard !suppressTranslatePersist else { return }
             onTranslateToggle(translateEnabled)
         }
     }
+    /// When true, a `translateEnabled` change does NOT persist via
+    /// ``onTranslateToggle`` — used to reset the live toggle on `stop()` without
+    /// clobbering the user's saved preference (which is re-read on the next start).
+    private var suppressTranslatePersist = false
     /// A one-line Dutch hint shown once when translation is unavailable (missing
     /// language pack). Cleared when translation succeeds or is turned off.
     @Published private(set) var translationHint: String?
@@ -200,6 +207,19 @@ final class CaptionsService: ObservableObject {
         feedTask = nil
         tap?.stop()
         tap = nil
+
+        // Reset the live translate toggle (without persisting) so the overlay's
+        // `.onChange(of: translateEnabled)` drives `translationConfig = nil`,
+        // cancelling the view's `.translationTask` and releasing the
+        // TranslationSession + its 0.12s poll loop. The saved preference is
+        // untouched and re-applied on the next `start()`.
+        if translateEnabled {
+            suppressTranslatePersist = true
+            translateEnabled = false
+            suppressTranslatePersist = false
+        }
+        pendingTranslations = []
+        translationHint = nil
 
         saveTranscriptIfNeeded()
     }

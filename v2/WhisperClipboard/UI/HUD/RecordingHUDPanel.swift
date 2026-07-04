@@ -11,6 +11,11 @@ final class RecordingHUDController {
     private var panel: NSPanel?
     private var cancellables = Set<AnyCancellable>()
 
+    /// Monotonic token invalidating a stale hide-fade completion. `showPanel()` and
+    /// `hidePanel()` both bump it, so a hide animation that finishes *after* a new
+    /// recording re-showed the panel never orders the live HUD off screen.
+    private var showHideGeneration = 0
+
     /// Supplies the `NSAppearance` the panel should adopt so its dynamic `Theme`
     /// colors resolve to the user-chosen palette (`nil` → follow the system).
     /// Set by `AppEnvironment` from `settings.appearance`.
@@ -53,6 +58,9 @@ final class RecordingHUDController {
     // MARK: - Panel
 
     private func showPanel() {
+        // Invalidate any in-flight hide-fade completion so it can't order this
+        // (re-shown) panel off screen after we bring it forward.
+        showHideGeneration += 1
         let isFreshShow = panel == nil
         if panel == nil {
             panel = makePanel()
@@ -88,6 +96,8 @@ final class RecordingHUDController {
 
     private func hidePanel() {
         guard let panel else { return }
+        showHideGeneration += 1
+        let myGeneration = showHideGeneration
         let restingOrigin = panel.frame.origin
         NSAnimationContext.runAnimationGroup { context in
             context.duration = 0.2
@@ -95,7 +105,10 @@ final class RecordingHUDController {
             panel.animator().alphaValue = 0
             panel.animator().setFrameOrigin(NSPoint(x: restingOrigin.x, y: restingOrigin.y - Self.entranceDrift))
         } completionHandler: { [weak self] in
-            self?.panel?.orderOut(nil)
+            // Skip the orderOut if a newer show/hide happened while we faded — the
+            // panel may have been re-shown for a fresh recording.
+            guard let self, self.showHideGeneration == myGeneration else { return }
+            self.panel?.orderOut(nil)
         }
     }
 

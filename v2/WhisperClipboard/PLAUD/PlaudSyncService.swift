@@ -23,8 +23,10 @@ import Observation
 /// ## Robustness
 /// - Never crashes on API failure: every error maps to a Dutch status message.
 /// - Respects the importer busy-guard (won't stampede a live dictation/import).
-/// - A recording is only marked processed **after** it is successfully enqueued,
-///   so a mid-sync failure leaves it eligible for the next run.
+/// - A recording is only marked processed once the importer has **accepted** its
+///   downloaded file, and the sync checkpoint is only advanced when *every* listed
+///   recording was handled — so a refused batch or a failed download (even one
+///   older than the 24h overlap margin) stays eligible for a future run.
 @MainActor
 @Observable
 final class PlaudSyncService {
@@ -56,8 +58,11 @@ final class PlaudSyncService {
     private let settings: () -> AppSettings
     /// Loads the PLAUD credentials (email+password/token) from the Keychain.
     private let credentialsProvider: () -> PlaudCredentials?
-    /// Enqueues downloaded audio files into the transcription pipeline.
-    private let importer: (_ urls: [URL]) -> Void
+    /// Enqueues downloaded audio files into the transcription pipeline and returns
+    /// the subset of `urls` it **accepted** (the importer refuses the whole batch
+    /// while dictation/import is busy, and drops unsupported files). Only accepted
+    /// recordings are marked processed, so a refused batch is retried next run.
+    private let importer: (_ urls: [URL]) -> [URL]
     /// True when the importer/dictation is busy and we must hold off this tick.
     private let isBusy: () -> Bool
     /// The client (injected for tests; default uses `.shared`).
@@ -87,7 +92,7 @@ final class PlaudSyncService {
     init(
         settings: @escaping () -> AppSettings,
         credentialsProvider: @escaping () -> PlaudCredentials? = { PlaudCredentials.load() },
-        importer: @escaping (_ urls: [URL]) -> Void,
+        importer: @escaping (_ urls: [URL]) -> [URL],
         isBusy: @escaping () -> Bool,
         client: PlaudClient = PlaudClient(),
         store: PlaudProcessedStore = PlaudProcessedStore(),
@@ -202,12 +207,24 @@ final class PlaudSyncService {
                 return
             }
 
-            var importedURLs: [URL] = []
+            // Download each new recording, remembering which id produced which
+            // file so we only mark a recording processed once the importer has
+            // ACCEPTED its file. `allHandled` stays true only if every recording
+            // this run intended to fetch was downloaded AND accepted; any skip
+            // (busy break, download error, importer refusal) holds the checkpoint
+            // back so the next run re-lists — including items older than the 24h
+            // overlap margin that would otherwise fall out of the `since` window.
+            var idByURL: [URL: String] = [:]
+            var downloadedURLs: [URL] = []
+            var allHandled = true
             for recording in toDownload {
                 // A late busy check on automatic runs: don't fight a dictation that
                 // started mid-sync. Manual runs push through (the importer itself
                 // still guards, refusing while dictation records).
-                if trigger == .automatic, isBusy() { break }
+                if trigger == .automatic, isBusy() {
+                    allHandled = false
+                    break
+                }
 
                 let preferred = audioDirectory.appendingPathComponent(recording.suggestedFilenameStem + ".mp3")
                 let written: URL
@@ -217,22 +234,38 @@ final class PlaudSyncService {
                     written = try await client.downloadAudio(recording, token: token, to: preferred)
                 } catch {
                     // One failed download shouldn't abort the whole sync; leave it
-                    // unprocessed so the next run retries it.
+                    // unprocessed AND hold the checkpoint so the next run retries it
+                    // (even if it's older than the overlap margin).
                     NSLog("PlaudSync: download failed for %@: %@", recording.id, String(describing: error))
+                    allHandled = false
                     continue
                 }
-                importedURLs.append(written)
-                // Mark processed only after a successful download.
-                processed.insert(recording.id)
+                idByURL[written] = recording.id
+                downloadedURLs.append(written)
+            }
+
+            // Hand the downloaded files to the importer; it returns the subset it
+            // accepted (it refuses the whole batch while busy). Mark processed only
+            // the recordings whose file was accepted.
+            let acceptedURLs = downloadedURLs.isEmpty ? [] : importer(downloadedURLs)
+            let acceptedSet = Set(acceptedURLs)
+            for url in downloadedURLs {
+                guard let id = idByURL[url] else { continue }
+                if acceptedSet.contains(url) {
+                    processed.insert(id)
+                } else {
+                    // Downloaded but the importer refused it: keep it eligible.
+                    allHandled = false
+                }
             }
 
             store.save(processed)
-            recordCheckpoint(runStartedAt)
-
-            if !importedURLs.isEmpty {
-                importer(importedURLs)
+            // Only advance the checkpoint when nothing was left behind; otherwise
+            // the next run must still be able to re-list the skipped/refused items.
+            if allHandled {
+                recordCheckpoint(runStartedAt)
             }
-            setSuccess(imported: importedURLs.count)
+            setSuccess(imported: acceptedURLs.count)
         } catch let error as PlaudError {
             setFailure(error.errorDescription ?? "PLAUD-fout.")
         } catch {

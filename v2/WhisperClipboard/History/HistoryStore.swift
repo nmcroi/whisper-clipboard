@@ -25,6 +25,12 @@ final class HistoryStore: ObservableObject {
     private let dbQueue: DatabaseQueue
     private let retentionProvider: () -> Int?
 
+    /// Whether this store is backed by the durable on-disk database. When `false`
+    /// (an ephemeral in-memory fallback), the one-time v3 migration imports into
+    /// RAM but must NOT persist the "migration done" flag — otherwise the durable
+    /// DB on a later launch would skip the migration and lose the legacy history.
+    private let isPersistent: Bool
+
     private static let migratedFlagKey = "migratedFromV3"
 
     // MARK: - Init
@@ -40,13 +46,21 @@ final class HistoryStore: ObservableObject {
         )
         self.dbQueue = try DatabaseQueue(path: url.path)
         self.retentionProvider = retentionProvider
+        self.isPersistent = true
         try HistorySchema.migrator().migrate(dbQueue)
     }
 
     /// Test / in-memory initializer against a caller-provided queue.
-    init(dbQueue: DatabaseQueue, retentionProvider: @escaping () -> Int?) throws {
+    ///
+    /// - Parameter isPersistent: whether the queue is durable on-disk state.
+    ///   Defaults to `true` so existing tests observe the migration flag being set;
+    ///   `AppEnvironment` passes `false` for the throwaway in-memory fallback so a
+    ///   migration into RAM never persists the "done" flag (finding: v3 history
+    ///   lost after a transient disk failure).
+    init(dbQueue: DatabaseQueue, retentionProvider: @escaping () -> Int?, isPersistent: Bool = true) throws {
         self.dbQueue = dbQueue
         self.retentionProvider = retentionProvider
+        self.isPersistent = isPersistent
         try HistorySchema.migrator().migrate(dbQueue)
     }
 
@@ -278,8 +292,12 @@ final class HistoryStore: ObservableObject {
     ) -> Int {
         guard !defaults.bool(forKey: Self.migratedFlagKey) else { return 0 }
         guard FileManager.default.fileExists(atPath: legacyURL.path) else {
-            // No legacy file at all: mark done so we never re-check.
-            defaults.set(true, forKey: Self.migratedFlagKey)
+            // No legacy file at all: mark done so we never re-check — but only when
+            // this is the durable on-disk store (an in-memory fallback must not
+            // persist "done" and cause a later real DB to skip the migration).
+            if isPersistent {
+                defaults.set(true, forKey: Self.migratedFlagKey)
+            }
             return 0
         }
 
@@ -294,7 +312,13 @@ final class HistoryStore: ObservableObject {
                 }
                 try Self.prune(db, retention: self.retentionProvider())
             }
-            defaults.set(true, forKey: Self.migratedFlagKey)
+            // Persist the "migration done" flag only when the import actually
+            // landed in the durable on-disk DB. An in-memory fallback still returns
+            // the imported count (so this session has usable data) but leaves the
+            // flag unset, so a later launch with a working disk DB retries.
+            if isPersistent {
+                defaults.set(true, forKey: Self.migratedFlagKey)
+            }
             bump()
             NSLog(
                 "HistoryStore: migrated %d transcripts from v3 (skipped %d malformed).",

@@ -280,6 +280,51 @@ final class ModesServiceTests: XCTestCase {
         XCTAssertTrue(system.contains("maak een verslag voor de huisarts"))
     }
 
+    // MARK: - Error visibility (finding #8)
+
+    /// A streaming run that FAILS must stay in `activeRuns` carrying its
+    /// errorMessage, so the UI can render the error. Previously the run was removed
+    /// unconditionally right after `fail(...)`, so the error was never observed.
+    func testFailedRunStaysActiveWithErrorMessage() throws {
+        StubURLProtocol.reset()
+        StubURLProtocol.statusCode = 401 // → ClaudeError.invalidKey
+        StubURLProtocol.responseBody = Data(#"{"error":{"message":"bad key"}}"#.utf8)
+
+        let history = try makeHistory()
+        let service = ModesService(
+            history: history,
+            modesURL: tempModesURL(),
+            apiKeyProvider: { "sk-ant-test" },
+            clientFactory: { ClaudeClient(apiKey: $0, session: StubURLProtocol.session()) }
+        )
+        let entry = TranscriptEntry(
+            id: "t1", text: "Hallo", createdAt: "2026-06-21T10:00:00+02:00",
+            name: "", pinned: false, language: "nl", model: "m", source: "mic",
+            duration: 0, segments: []
+        )
+        let run = service.run(mode: AIMode.builtins[0], on: entry)
+
+        // Wait for the async streaming task to fail.
+        let done = expectation(description: "run failed")
+        Task { @MainActor in
+            for _ in 0..<300 where run.isRunning {
+                try? await Task.sleep(for: .milliseconds(10))
+            }
+            done.fulfill()
+        }
+        wait(for: [done], timeout: 6)
+
+        XCTAssertFalse(run.isRunning)
+        XCTAssertNotNil(run.errorMessage, "a failed run must carry an error message")
+        // The run must remain in activeRuns so the UI's error row renders it.
+        XCTAssertTrue(
+            service.activeRuns.contains { $0.id == run.id },
+            "a failed run must NOT be auto-removed from activeRuns"
+        )
+        // A failed run persists nothing (empty output).
+        XCTAssertTrue(service.results(for: "t1").isEmpty)
+    }
+
     // MARK: - SSE stub helpers
 
     /// Builds a minimal canned SSE stream that yields `text` in one delta then stops.

@@ -15,6 +15,10 @@ final class CaptionOverlayController {
     private var panel: NSPanel?
     private var cancellables = Set<AnyCancellable>()
 
+    /// Monotonic token invalidating a stale hide-fade completion so a hide that
+    /// finishes after the overlay was re-shown never orders the live panel out.
+    private var showHideGeneration = 0
+
     /// Supplies the `NSAppearance` the panel should adopt so its dynamic `Theme`
     /// colors resolve to the user-chosen palette (`nil` → follow the system).
     /// Set by `AppEnvironment` from `settings.appearance`.
@@ -44,6 +48,9 @@ final class CaptionOverlayController {
     // MARK: - Panel
 
     private func showPanel() {
+        // Invalidate any in-flight hide-fade completion so it can't tear down this
+        // (re-shown) panel after we bring it forward.
+        showHideGeneration += 1
         if panel == nil {
             panel = makePanel()
         }
@@ -56,11 +63,20 @@ final class CaptionOverlayController {
 
     private func hidePanel() {
         guard let panel else { return }
+        showHideGeneration += 1
+        let myGeneration = showHideGeneration
         NSAnimationContext.runAnimationGroup { context in
             context.duration = 0.25
             panel.animator().alphaValue = 0
         } completionHandler: { [weak self] in
-            self?.panel?.orderOut(nil)
+            guard let self, self.showHideGeneration == myGeneration else { return }
+            // Fully tear down the hosted SwiftUI view tree (not just orderOut) so
+            // the overlay's view-scoped tasks — notably `.translationTask`, which
+            // otherwise keeps a TranslationSession + 0.12s poll loop alive forever
+            // — are cancelled. A fresh panel is rebuilt on the next showPanel().
+            self.panel?.orderOut(nil)
+            self.panel?.contentViewController = nil
+            self.panel = nil
         }
     }
 

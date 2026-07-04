@@ -200,14 +200,20 @@ final class SystemAudioTap: @unchecked Sendable {
 
     /// Stops capture and tears down the IO proc, aggregate device and tap in the
     /// correct order, finishing the stream.
+    ///
+    /// Order matters for the realtime-thread race: `teardownLocked()` runs
+    /// `AudioDeviceStop` **first**, so no further `handleIO` invocations can begin
+    /// once it returns; only then do we finish/nil the continuation. `handleIO`
+    /// itself snapshots `converter`/`tapFormat`/`continuation` under the same
+    /// `lock`, so a torn read across this teardown is impossible.
     func stop() {
         lock.lock()
         defer { lock.unlock() }
         guard isRunning else { return }
         isRunning = false
-        continuation?.finish()
-        continuation = nil
-        teardownLocked()
+        teardownLocked()          // AudioDeviceStop runs before we touch the
+        continuation?.finish()    // continuation, so no in-flight handleIO can be
+        continuation = nil        // reading it concurrently (handleIO also locks).
     }
 
     /// Tears down all Core Audio objects (idempotent). Must be called with `lock`
@@ -237,11 +243,23 @@ final class SystemAudioTap: @unchecked Sendable {
     /// an `AVAudioPCMBuffer` over the tap format, converts to 16 kHz mono Float32,
     /// and yields a deep-copied box. Non-blocking; drops on any anomaly.
     private func handleIO(_ inInputData: UnsafePointer<AudioBufferList>) {
-        // Grab the converter/format/continuation without taking the start/stop
-        // lock on the realtime thread (avoid priority inversion). These are only
-        // mutated under `lock` at start/stop; a torn-down tap simply won't be
-        // called anymore because AudioDeviceStop precedes teardown.
-        guard let converter, let tapFormat, let continuation else { return }
+        // Snapshot converter/format/continuation under `lock` so the read can't
+        // tear against stop()'s teardownLocked() niling them out. The critical
+        // section is three pointer reads only — the heavy conversion + yield work
+        // happens OUTSIDE the lock, so realtime-thread priority-inversion risk is
+        // negligible. `stop()` runs AudioDeviceStop before touching these, so once
+        // stop() has returned no further handleIO call can begin; while stop() is
+        // mid-flight the lock serializes us against it.
+        lock.lock()
+        guard isRunning,
+              let converter = self.converter,
+              let tapFormat = self.tapFormat,
+              let continuation = self.continuation
+        else {
+            lock.unlock()
+            return
+        }
+        lock.unlock()
 
         let bufferList = inInputData.pointee
         guard bufferList.mNumberBuffers > 0 else { return }
@@ -252,6 +270,9 @@ final class SystemAudioTap: @unchecked Sendable {
         guard let converted = Self.convert(inputBuffer, using: converter, to: Self.outputFormat) else {
             return
         }
+        // yield-after-finish is a documented no-op on AsyncStream; combined with
+        // the locked snapshot above the continuation reference itself is never
+        // read torn against stop()'s reassignment.
         continuation.yield(AudioBufferBox(converted))
     }
 

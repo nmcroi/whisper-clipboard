@@ -46,6 +46,7 @@
 		6EEBAF6DD02B18384EF7D452 /* AIResultRecord.swift in Sources */ = {isa = PBXBuildFile; fileRef = 3B4980B45BE20DA13B7EE80A /* AIResultRecord.swift */; };
 		6F7719F7F83B5F4A015E06E9 /* E2EImportSmokeTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = E26E8FA797302D8A82313DD6 /* E2EImportSmokeTests.swift */; };
 		6F83D6C610E0AD50FFCB76BF /* HistoryStore.swift in Sources */ = {isa = PBXBuildFile; fileRef = D944573CECBC9CB639BCE279 /* HistoryStore.swift */; };
+		7226612F748B916FB9265A02 /* TranscriptAudioStoreTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = F6A43A6868CE829D56E34271 /* TranscriptAudioStoreTests.swift */; };
 		7351F3ADD712686F306929E6 /* AutomationBookmarks.swift in Sources */ = {isa = PBXBuildFile; fileRef = BF5252066EA7416F2336588E /* AutomationBookmarks.swift */; };
 		74A2694E494347858B01B97D /* PlaudStoreTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 128D6725B07EAD40D3A8332E /* PlaudStoreTests.swift */; };
 		75DF6FCA2C008E5294CCE6BA /* ClaudeClientTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = ECC243434513F757853F766B /* ClaudeClientTests.swift */; };
@@ -196,6 +197,7 @@
 		EEB95C3BEEDBD0BAA3113C37 /* ParakeetEngine.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ParakeetEngine.swift; sourceTree = "<group>"; };
 		F580797D5BC5393CCED9620F /* AppNavigation.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AppNavigation.swift; sourceTree = "<group>"; };
 		F5DC60D0AD01FB9A0C27FC55 /* WhisperClipboardTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = WhisperClipboardTests.swift; sourceTree = "<group>"; };
+		F6A43A6868CE829D56E34271 /* TranscriptAudioStoreTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TranscriptAudioStoreTests.swift; sourceTree = "<group>"; };
 		FBD6F73DA126F3966F0B41E9 /* WhisperClipboard.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = WhisperClipboard.app; sourceTree = BUILT_PRODUCTS_DIR; };
 		FD66A6B9C9D7987E145C8B2D /* SystemAudioTap.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SystemAudioTap.swift; sourceTree = "<group>"; };
 		FE89950D719818CF278F1B78 /* HistoryListView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = HistoryListView.swift; sourceTree = "<group>"; };
@@ -327,6 +329,7 @@
 				5304E58CA703C5A0CADE2DAF /* PlaudKeychainTests.swift */,
 				128D6725B07EAD40D3A8332E /* PlaudStoreTests.swift */,
 				0B21910881F83CC1B9A80E95 /* PlaudSyncServiceTests.swift */,
+				F6A43A6868CE829D56E34271 /* TranscriptAudioStoreTests.swift */,
 				F5DC60D0AD01FB9A0C27FC55 /* WhisperClipboardTests.swift */,
 			);
 			path = WhisperClipboardTests;
@@ -751,6 +754,7 @@
 				A4487DD6BF12E714782660FB /* PlaudKeychainTests.swift in Sources */,
 				74A2694E494347858B01B97D /* PlaudStoreTests.swift in Sources */,
 				FB7026F87A93C69AF556499B /* PlaudSyncServiceTests.swift in Sources */,
+				7226612F748B916FB9265A02 /* TranscriptAudioStoreTests.swift in Sources */,
 				94DB4A8F885C1A6CFA70EA1C /* WhisperClipboardTests.swift in Sources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;

@@ -55,6 +55,31 @@ final class PlaudClientTests: XCTestCase {
         XCTAssertNil(PlaudRegion.from(redirectHost: "   "))
     }
 
+    /// Finding #13: a redirect to a NON-plaud.ai host must be refused (nil), so the
+    /// client never re-POSTs the account password to an attacker-controlled host.
+    func testRegionFromNonPlaudHostIsRefused() {
+        XCTAssertNil(PlaudRegion.from(redirectHost: "attacker.example"))
+        XCTAssertNil(PlaudRegion.from(redirectHost: "https://attacker.example"))
+        // A look-alike that only *contains* plaud.ai but isn't on the domain.
+        XCTAssertNil(PlaudRegion.from(redirectHost: "https://plaud.ai.attacker.example"))
+        XCTAssertNil(PlaudRegion.from(redirectHost: "https://evilplaud.ai"))
+    }
+
+    /// An `http://` (non-TLS) redirect — even to a plaud.ai host — must be refused,
+    /// so the credential is never re-sent over an unencrypted connection.
+    func testRegionFromHTTPSchemeIsRefused() {
+        XCTAssertNil(PlaudRegion.from(redirectHost: "http://api-usw2.plaud.ai"))
+        XCTAssertNil(PlaudRegion.from(redirectHost: "http://api.plaud.ai"))
+    }
+
+    /// A refused redirect also makes `redirectRegion(fromBody:)` return nil, so
+    /// `login()` stops following it and surfaces the body as an auth failure
+    /// instead of re-POSTing credentials.
+    func testRedirectBodyToAttackerHostIsIgnored() {
+        let json = #"{"status":-302,"data":{"domains":{"api":"https://attacker.example"}}}"#.data(using: .utf8)!
+        XCTAssertNil(PlaudClient.redirectRegion(fromBody: json))
+    }
+
     func testCustomRegionBuildsRequestsAgainstItsHost() {
         // A token carrying a custom region must build list/download requests
         // against that exact host — proving the redirect endpoint is honoured.

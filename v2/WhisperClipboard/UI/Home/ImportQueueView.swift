@@ -90,8 +90,19 @@ private struct ImportJobRow: View {
                 .controlSize(.small)
                 .tint(Theme.accent)
         case .failed:
-            Button("Opnieuw") { service.retry(job) }
-                .buttonStyle(AccentButtonStyle())
+            HStack(spacing: 8) {
+                Button("Opnieuw") { service.retry(job) }
+                    .buttonStyle(AccentButtonStyle())
+                Button {
+                    service.remove(job)
+                } label: {
+                    Image(systemName: "xmark.circle.fill")
+                        .foregroundStyle(Theme.textSecondary)
+                        .font(.system(size: 15))
+                }
+                .buttonStyle(.plain)
+                .help("Verwijder uit wachtrij")
+            }
         case .done:
             Image(systemName: "checkmark.circle.fill")
                 .foregroundStyle(Theme.accentText)

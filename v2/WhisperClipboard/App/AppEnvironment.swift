@@ -227,7 +227,13 @@ final class AppEnvironment: ObservableObject {
         // dictation.
         self.plaudSync = PlaudSyncService(
             settings: { settingsRef() },
-            importer: { [weak fileImport] urls in fileImport?.importFiles(urls, source: "plaud") },
+            // Return the URLs the importer actually ACCEPTED (it refuses entirely
+            // while dictation/import is busy, and drops unsupported files), so the
+            // sync only marks those recordings processed — a refused batch stays
+            // eligible for the next run instead of being silently dropped.
+            importer: { [weak fileImport] urls in
+                (fileImport?.importFiles(urls, source: "plaud") ?? []).map(\.url)
+            },
             isBusy: { [weak dictation, weak fileImport, weak modelManager] in
                 if modelManager?.status.isReady != true { return true }
                 switch dictation?.phase {
@@ -287,7 +293,15 @@ final class AppEnvironment: ObservableObject {
             NSLog("AppEnvironment: history DB open failed (%@); trying in-memory store.", String(describing: error))
         }
         do {
-            return try HistoryStore(dbQueue: try DatabaseQueue(), retentionProvider: retentionProvider)
+            // In-memory fallback: mark it non-persistent so a v3 migration into
+            // this throwaway store never persists the "migration done" flag (which
+            // would make a later on-disk launch skip the migration and lose the
+            // legacy history for good).
+            return try HistoryStore(
+                dbQueue: try DatabaseQueue(),
+                retentionProvider: retentionProvider,
+                isPersistent: false
+            )
         } catch {
             fatalError("Kon de geschiedenis-database niet openen (ook niet in-memory): \(error)")
         }

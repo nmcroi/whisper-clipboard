@@ -442,6 +442,38 @@ final class HistoryStoreTests: XCTestCase {
         XCTAssertTrue(defaults.bool(forKey: "migratedFromV3"))
     }
 
+    /// Finding #5: an in-memory (non-persistent) fallback store imports the legacy
+    /// entries into RAM for the current session but must NOT persist the
+    /// "migration done" flag — otherwise a later launch with a working on-disk DB
+    /// would skip the migration and lose the legacy history for good.
+    func testMigrationIntoInMemoryFallbackDoesNotPersistFlag() throws {
+        let queue = try DatabaseQueue()
+        let store = try HistoryStore(dbQueue: queue, retentionProvider: { nil }, isPersistent: false)
+        let url = try writeV3Fixture()
+        let defaults = freshDefaults()
+
+        let imported = store.migrateFromV3IfNeeded(legacyURL: url, defaults: defaults)
+        // Entries are imported so this session has usable data…
+        XCTAssertEqual(imported, 2)
+        XCTAssertEqual(try store.count(), 2)
+        // …but the persistent flag stays UNSET so a real DB retries next launch.
+        XCTAssertFalse(defaults.bool(forKey: "migratedFromV3"))
+    }
+
+    /// The no-legacy-file path also must not persist the flag on an in-memory
+    /// fallback (a transient disk failure at first launch would otherwise mark the
+    /// migration done before the real DB ever saw the file).
+    func testMigrationNoFileOnInMemoryFallbackDoesNotPersistFlag() throws {
+        let queue = try DatabaseQueue()
+        let store = try HistoryStore(dbQueue: queue, retentionProvider: { nil }, isPersistent: false)
+        let missing = FileManager.default.temporaryDirectory
+            .appendingPathComponent("does-not-exist-\(UUID().uuidString).json")
+        let defaults = freshDefaults()
+        let imported = store.migrateFromV3IfNeeded(legacyURL: missing, defaults: defaults)
+        XCTAssertEqual(imported, 0)
+        XCTAssertFalse(defaults.bool(forKey: "migratedFromV3"))
+    }
+
     // MARK: - FTS pattern helper
 
     func testFTSPatternEscaping() {

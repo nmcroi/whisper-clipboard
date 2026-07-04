@@ -80,6 +80,12 @@ final class DictationController: ObservableObject {
     private var elapsedTask: Task<Void, Never>?
     private var hudDismissTask: Task<Void, Never>?
 
+    /// Identifies the current recording session. `start()` mints a fresh token;
+    /// `stop()`/`handleFailure()` bump it. `beginSession()` checks it after every
+    /// `await` so a stop that landed during the async streaming-start window
+    /// aborts the half-started capture instead of orphaning a live mic tap.
+    private var sessionToken = UUID()
+
     init(
         engine: any TranscriptionEngine,
         audioEngine: AudioEngine,
@@ -153,10 +159,12 @@ final class DictationController: ObservableObject {
         onStateChange(.recording)
         latency.begin()
 
-        Task { await beginSession() }
+        let token = UUID()
+        sessionToken = token
+        Task { await beginSession(token: token) }
     }
 
-    private func beginSession() async {
+    private func beginSession(token: UUID) async {
         let locale = Locale(identifier: settingsProvider().language.isEmpty ? "nl-NL" : settingsProvider().language)
 
         do {
@@ -166,7 +174,20 @@ final class DictationController: ObservableObject {
             return
         }
 
+        // If a stop/failure landed while startStreaming was awaiting, this session
+        // is stale: undo the engine start and bail before touching the mic.
+        guard token == sessionToken else {
+            await engine.cancel()
+            return
+        }
+
         let format = await engine.bestAudioFormat()
+        // Re-check after the (awaited) format query too.
+        guard token == sessionToken else {
+            await engine.cancel()
+            return
+        }
+
         let stream: AsyncStream<AudioBufferBox>
         do {
             if let format {
@@ -177,6 +198,15 @@ final class DictationController: ObservableObject {
         } catch {
             await engine.cancel()
             await handleFailure(error)
+            return
+        }
+
+        // A stop that raced audioEngine.start(): the mic tap is now live but the
+        // normal stop path already finalized. Tear the capture down here so it
+        // isn't left running with no consumer.
+        guard token == sessionToken else {
+            audioEngine.stop()
+            await engine.cancel()
             return
         }
 
@@ -196,6 +226,10 @@ final class DictationController: ObservableObject {
     func stop() {
         guard debouncer.shouldAccept(now: nowSeconds()) else { return }
         guard phase == .recording else { return }
+
+        // Invalidate the current session so a beginSession() still in its async
+        // startup window aborts instead of committing (and orphaning) a mic tap.
+        sessionToken = UUID()
 
         latency.markStop()
         phase = .transcribing
@@ -304,6 +338,8 @@ final class DictationController: ObservableObject {
     // MARK: - Failure
 
     private func handleFailure(_ error: Error) async {
+        // Invalidate the session so any concurrent beginSession() bails.
+        sessionToken = UUID()
         feedTask?.cancel(); feedTask = nil
         partialsTask?.cancel(); partialsTask = nil
         stopElapsedTicker()

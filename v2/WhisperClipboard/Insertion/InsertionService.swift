@@ -110,7 +110,13 @@ final class InsertionService {
         }
 
         // (a) Save the current pasteboard string (best-effort) + change count.
+        //     Also note whether it was a concealed/transient secret (e.g. a
+        //     password-manager entry): those must NOT be restored as a plain
+        //     string, which would strip their markers and leak them into
+        //     clipboard-history tools that would otherwise skip the value.
         let previousString = pasteboard.string(forType: .string)
+        let previousTypeNames = (pasteboard.types ?? []).map(\.rawValue)
+        let previousWasConcealed = PasteboardRestore.isConcealed(typeNames: previousTypeNames)
 
         // (b) Write our text to the pasteboard.
         pasteboard.clearContents()
@@ -133,11 +139,16 @@ final class InsertionService {
                 currentChangeCount: pb.changeCount
             ) {
                 pb.clearContents()
-                if let previousString {
+                // Only restore a plain string when the previous item was NOT a
+                // concealed/transient secret. Re-writing a password as ordinary
+                // plain text would strip its ConcealedType/TransientType markers
+                // and expose it to clipboard-history managers — so for those we
+                // leave the pasteboard cleared instead.
+                if let previousString, !previousWasConcealed {
                     pb.setString(previousString, forType: .string)
                 }
-                // If there was no previous string we simply leave it cleared,
-                // which is the closest restoration of "nothing meaningful there".
+                // If there was no previous string (or it was concealed) we leave it
+                // cleared — the safest approximation of "nothing to expose here".
             }
         }
 
