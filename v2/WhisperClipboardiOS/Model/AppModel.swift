@@ -79,6 +79,14 @@ final class AppModel: ObservableObject {
         } else {
             self.historySync = nil
         }
+
+        // Zombie-sweep bij app-start: een opname sterft mét het proces, dus bij
+        // launch loopt er nooit een legitieme opname. Alles wat nog als Live
+        // Activity op het lock-screen hangt, is achtergebleven door een gekild
+        // proces — ruim het onmiddellijk op. Draait ook als de gebruiker nooit een
+        // nieuwe opname start (RecordingLiveActivityController.start() zou anders
+        // pas bij de volgende opname opruimen).
+        Task { await RecordingStopBus.endAllActivities() }
     }
 
     // MARK: - Model lifecycle

@@ -70,6 +70,8 @@ struct RecordView: View {
                         controller.markCopied()
                     } copied: {
                         controller.didCopy
+                    } onClear: {
+                        controller.clearResult()
                     }
                 }
                 Spacer(minLength: 12)
@@ -170,9 +172,24 @@ private struct ResultCard: View {
     let text: String
     let onCopy: () -> Void
     let copied: () -> Bool
+    let onClear: () -> Void
 
     var body: some View {
         VStack(alignment: .leading, spacing: 14) {
+            // Onopvallende "Wis"-knop rechtsboven: leegt het scherm en zet de
+            // status terug op de ruststand. De entry blijft in de Geschiedenis.
+            HStack {
+                Spacer()
+                Button(action: onClear) {
+                    Image(systemName: "xmark")
+                        .font(.system(size: 13, weight: .semibold))
+                        .foregroundStyle(Theme.textSecondary)
+                        .padding(6)
+                }
+                .buttonStyle(.plain)
+                .accessibilityLabel("Wis resultaat")
+            }
+
             ScrollView {
                 Text(text)
                     .font(ThemeFont.ui(16))

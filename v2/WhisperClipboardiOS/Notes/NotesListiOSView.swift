@@ -1,0 +1,228 @@
+import Core
+import Foundation
+import SwiftUI
+import WhisperShared
+
+/// Het "Notities"-tabblad: een lijst van doorlopende, benoemde notities waaraan je
+/// over uren/dagen kunt blijven toevoegen. Elke rij toont de titel, wanneer hij
+/// laatst gewijzigd is en een korte preview van het staartje van de opgebouwde
+/// tekst. De "+" maakt een nieuwe notitie (met een standaardtitel op datum) en
+/// opent hem meteen zodat je 'm kunt hernoemen of direct kunt inspreken.
+struct NotesListiOSView: View {
+    @EnvironmentObject private var app: AppModel
+
+    /// Navigatiepad: een net aangemaakte notitie wordt hierop gepusht zodat hij
+    /// meteen opent (hernoemen / direct inspreken).
+    @State private var path: [String] = []
+    /// Notitie-id waarvoor de opname automatisch moet starten zodra de
+    /// detailweergave opent (gezet door de +-knop, eenmalig geconsumeerd door
+    /// `NoteDetailiOSView`).
+    @State private var autoStartNoteId: String?
+
+    var body: some View {
+        NavigationStack(path: $path) {
+            ZStack {
+                Theme.window.ignoresSafeArea()
+                // De lijst scrolt bóven de vaste onderbalk met de grote
+                // spreek-knop (net als het Opnemen-tabblad) — bewust niet
+                // zwevend over de rijen.
+                VStack(spacing: 0) {
+                    listBody
+                        .frame(maxWidth: .infinity, maxHeight: .infinity)
+                    recordBar
+                }
+            }
+            .navigationTitle("Notities")
+            .navigationDestination(for: String.self) { id in
+                if let note = noteByID(id) {
+                    NoteDetailiOSView(note: note, autoStartNoteId: $autoStartNoteId)
+                }
+            }
+        }
+    }
+
+    /// Vaste onderbalk met de grote centrale spreek-knop — visueel gelijk aan de
+    /// Opnemen-knop (gele ring + gele kern). Maakt een notitie, opent hem en start
+    /// direct de opname (Niels' flow: tik = meteen inspreken, naam komt later).
+    private var recordBar: some View {
+        VStack(spacing: 10) {
+            NewNoteRecordButton {
+                createNote()
+            }
+            Text("Spreek een nieuwe notitie in")
+                .font(ThemeFont.ui(13))
+                .foregroundStyle(Theme.textSecondary)
+        }
+        .frame(maxWidth: .infinity)
+        .padding(.vertical, 16)
+        .background(Theme.surface)
+        .overlay(alignment: .top) {
+            Rectangle()
+                .fill(Theme.border)
+                .frame(height: Theme.Metrics.hairline)
+        }
+    }
+
+    @ViewBuilder
+    private var listBody: some View {
+        let notes = fetchNotes()
+        if notes.isEmpty {
+            emptyState
+        } else {
+            List {
+                ForEach(notes, id: \.id) { note in
+                    ZStack {
+                        NavigationLink(value: note.id) { EmptyView() }
+                            .opacity(0)
+                        NoteRowiOS(note: note, preview: preview(for: note.id))
+                    }
+                    .listRowBackground(Theme.window)
+                    .listRowSeparatorTint(Theme.border)
+                    .swipeActions(edge: .trailing) {
+                        Button(role: .destructive) {
+                            // Snelle veeg-verwijdering: entries blijven als losse
+                            // Geschiedenis-items behouden (veilige standaard).
+                            try? app.history?.deleteNote(id: note.id, deleteEntries: false)
+                        } label: {
+                            Label("Verwijder", systemImage: "trash")
+                        }
+                    }
+                }
+            }
+            .listStyle(.plain)
+            .scrollContentBackground(.hidden)
+        }
+    }
+
+    private var emptyState: some View {
+        VStack(spacing: 12) {
+            Image(systemName: "note.text")
+                .font(.system(size: 40))
+                .foregroundStyle(Theme.textTertiary)
+            Text("Nog geen notities")
+                .font(ThemeFont.ui(17, weight: .semibold))
+                .foregroundStyle(Theme.text)
+            Text("Tik op de knop hieronder om een notitie in te spreken — en voeg er later gewoon meer aan toe.")
+                .font(ThemeFont.ui(14))
+                .foregroundStyle(Theme.textSecondary)
+                .multilineTextAlignment(.center)
+        }
+        .frame(maxWidth: .infinity, maxHeight: .infinity)
+        .padding()
+    }
+
+    // MARK: - Data
+
+    private func fetchNotes() -> [Note] {
+        _ = app.history?.revision
+        return (try? app.history?.notes()) ?? []
+    }
+
+    private func noteByID(_ id: String) -> Note? {
+        try? app.history?.note(id: id)
+    }
+
+    /// Een kort staartje van de samengevoegde notitie-tekst voor de rij-preview.
+    private func preview(for noteId: String) -> String {
+        let entries = (try? app.history?.noteEntries(noteId: noteId)) ?? []
+        let joined = entries
+            .map { $0.text.trimmingCharacters(in: .whitespacesAndNewlines) }
+            .filter { !$0.isEmpty }
+            .joined(separator: " ")
+        return joined
+    }
+
+    private func createNote() {
+        let title = "Notitie " + Self.dateTitleFormatter.string(from: Date())
+        if let note = try? app.history?.createNote(title: title) {
+            autoStartNoteId = note.id
+            path.append(note.id)
+        }
+    }
+
+    private static let dateTitleFormatter: DateFormatter = {
+        let f = DateFormatter()
+        f.locale = Locale(identifier: "nl_NL")
+        f.dateFormat = "d MMM"
+        return f
+    }()
+}
+
+// MARK: - Grote spreek-knop (rustlook van de Opnemen-knop)
+
+/// De centrale actieknop onder de Notities-lijst: gele ring met afgeronde gele
+/// kern én een klein microfoon-glyph, zodat hij leest als "spreek een nieuwe
+/// notitie in". Spiegelt de rustlook van `RecordButton` uit RecordView.
+private struct NewNoteRecordButton: View {
+    let action: () -> Void
+
+    var body: some View {
+        Button(action: action) {
+            ZStack {
+                Circle()
+                    .strokeBorder(Theme.accent, lineWidth: 6)
+                    .frame(width: 112, height: 112)
+
+                // Afgeronde gele kern (~42% van de ring, als de app-icoon) met een
+                // microfoon-glyph erin.
+                RoundedRectangle(cornerRadius: 12, style: .continuous)
+                    .fill(Theme.accent)
+                    .frame(width: 48, height: 48)
+
+                Image(systemName: "mic.fill")
+                    .font(.system(size: 22, weight: .semibold))
+                    .foregroundStyle(Theme.onAccent)
+            }
+        }
+        .buttonStyle(.plain)
+        .accessibilityLabel("Nieuwe notitie (start direct met opnemen)")
+    }
+}
+
+// MARK: - Row
+
+struct NoteRowiOS: View {
+    let note: Note
+    let preview: String
+
+    var body: some View {
+        HStack(spacing: 12) {
+            Image(systemName: "note.text")
+                .font(.system(size: 16))
+                .foregroundStyle(Theme.accentText)
+                .frame(width: 24)
+
+            VStack(alignment: .leading, spacing: 3) {
+                Text(title)
+                    .font(ThemeFont.ui(16, weight: .medium))
+                    .foregroundStyle(Theme.text)
+                    .lineLimit(1)
+                if !preview.isEmpty {
+                    Text(preview)
+                        .font(ThemeFont.ui(13))
+                        .foregroundStyle(Theme.textSecondary)
+                        .lineLimit(1)
+                }
+                Text(relativeDate)
+                    .font(ThemeFont.ui(12))
+                    .foregroundStyle(Theme.textTertiary)
+            }
+            Spacer()
+        }
+        .padding(.vertical, 6)
+        .contentShape(Rectangle())
+    }
+
+    private var title: String {
+        let trimmed = note.title.trimmingCharacters(in: .whitespacesAndNewlines)
+        return trimmed.isEmpty ? "Naamloze notitie" : trimmed
+    }
+
+    private var relativeDate: String {
+        guard let date = note.modifiedDate else { return note.modifiedAt }
+        let formatter = RelativeDateTimeFormatter()
+        formatter.locale = Locale(identifier: "nl_NL")
+        formatter.unitsStyle = .full
+        return "Gewijzigd " + formatter.localizedString(for: date, relativeTo: Date())
+    }
+}

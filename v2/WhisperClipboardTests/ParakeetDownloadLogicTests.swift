@@ -103,6 +103,59 @@ final class ParakeetDownloadLogicTests: XCTestCase {
         XCTAssertEqual(ParakeetEngine.directorySize(at: root), 3500)
     }
 
+    // MARK: - Retry backoff
+
+    func testRetryBackoffGrowsExponentially() {
+        // 2s, 4s, 8s, 16s for the first four attempts.
+        XCTAssertEqual(ParakeetEngine.retryBackoff(forAttempt: 1), 2)
+        XCTAssertEqual(ParakeetEngine.retryBackoff(forAttempt: 2), 4)
+        XCTAssertEqual(ParakeetEngine.retryBackoff(forAttempt: 3), 8)
+        XCTAssertEqual(ParakeetEngine.retryBackoff(forAttempt: 4), 16)
+    }
+
+    func testRetryBackoffIsCappedAt30s() {
+        // 2^5 = 32 would exceed the cap; 2^10 is far beyond it.
+        XCTAssertEqual(ParakeetEngine.retryBackoff(forAttempt: 5), 30)
+        XCTAssertEqual(ParakeetEngine.retryBackoff(forAttempt: 10), 30)
+    }
+
+    // MARK: - Retry classification
+
+    func testStalledDownloadIsRecoverable() {
+        // The stall-watchdog firing is the primary retry trigger.
+        XCTAssertTrue(ParakeetEngine.isRecoverableDownloadError(ParakeetEngineError.downloadStalled))
+    }
+
+    func testHardOfflineIsNotRecoverable() {
+        // Fully offline: retrying without connectivity is pointless, surface now.
+        XCTAssertFalse(ParakeetEngine.isRecoverableDownloadError(ParakeetEngineError.noNetwork))
+        let notConnected = NSError(domain: NSURLErrorDomain, code: NSURLErrorNotConnectedToInternet)
+        XCTAssertFalse(ParakeetEngine.isRecoverableDownloadError(notConnected))
+    }
+
+    func testTransientNetworkErrorsAreRecoverable() {
+        // Connection blips a resume/retry can recover from.
+        for code in [
+            NSURLErrorNetworkConnectionLost,
+            NSURLErrorTimedOut,
+            NSURLErrorCannotConnectToHost,
+            NSURLErrorDNSLookupFailed,
+            NSURLErrorSecureConnectionFailed,
+        ] {
+            let error = NSError(domain: NSURLErrorDomain, code: code)
+            XCTAssertTrue(
+                ParakeetEngine.isRecoverableDownloadError(error),
+                "URLError code \(code) should be retryable"
+            )
+        }
+    }
+
+    func testUnrelatedErrorIsNotRecoverable() {
+        // A random non-network error shouldn't burn the retry budget.
+        let error = NSError(domain: "SomeOtherDomain", code: 42)
+        XCTAssertFalse(ParakeetEngine.isRecoverableDownloadError(error))
+    }
+
     // MARK: - Byte-progress display model
 
     func testByteProgressMegabyteConversion() {

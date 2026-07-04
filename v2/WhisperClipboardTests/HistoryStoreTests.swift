@@ -475,6 +475,28 @@ final class HistoryStoreTests: XCTestCase {
         XCTAssertFalse(defaults.bool(forKey: "migratedFromV3"))
     }
 
+    // MARK: - Notities: losmaken
+
+    /// `detachEntryFromNote` zet `note_id` terug op NULL zodat de opname weer als
+    /// losse Geschiedenis-entry verschijnt (die filtert op `note_id IS NULL`).
+    func testDetachEntryFromNote() throws {
+        let store = try makeStore()
+        let note = try store.createNote(title: "Reis")
+        let e = entry(id: "e1", text: "Hallo notitie")
+        try store.appendToNote(e, noteId: note.id)
+
+        // Zit nu in de notitie, niet in de losse Geschiedenis.
+        XCTAssertEqual(try store.noteEntries(noteId: note.id).count, 1)
+        XCTAssertEqual(try store.count(), 0)
+
+        try store.detachEntryFromNote(entryId: "e1")
+
+        // Terug als losse opname; niet meer aan de notitie gekoppeld.
+        XCTAssertEqual(try store.noteEntries(noteId: note.id).count, 0)
+        XCTAssertEqual(try store.count(), 1)
+        XCTAssertEqual(try store.entries().first?.id, "e1")
+    }
+
     // MARK: - FTS pattern helper
 
     func testFTSPatternEscaping() {

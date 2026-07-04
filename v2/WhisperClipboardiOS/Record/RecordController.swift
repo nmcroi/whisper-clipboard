@@ -11,7 +11,7 @@ import WhisperShared
 /// `HistoryStore.add`. Publishes the state the view renders (recording flag,
 /// elapsed time, level, transcribing spinner, last result).
 @MainActor
-final class RecordController: ObservableObject {
+final class RecordController: ObservableObject, RecordingStopHandling {
 
     @Published private(set) var isRecording = false
     @Published private(set) var isTranscribing = false
@@ -23,6 +23,10 @@ final class RecordController: ObservableObject {
     @Published private(set) var statusLine = "Tik om op te nemen"
 
     private var app: AppModel?
+    /// Wanneer gezet, wordt de opname áán deze notitie toegevoegd (met `note_id`)
+    /// i.p.v. als losse Geschiedenis-entry opgeslagen. `nil` = het standaard
+    /// "one-off"-gedrag van het Opnemen-tabblad (ongewijzigd). Zie ``save``.
+    private var targetNoteId: String?
     private var audio: IOSAudioEngine?
     private var feedTask: Task<Void, Never>?
     private var tickTask: Task<Void, Never>?
@@ -31,6 +35,14 @@ final class RecordController: ObservableObject {
 
     func attach(app: AppModel) {
         self.app = app
+    }
+
+    /// Koppelt deze controller aan een notitie: elke afgeronde opname wordt áán
+    /// die notitie toegevoegd i.p.v. als losse Geschiedenis-entry. Roep aan vanuit
+    /// de notitie-detailweergave. `nil` herstelt het standaard one-off-gedrag.
+    func attach(app: AppModel, targetNoteId: String?) {
+        self.app = app
+        self.targetNoteId = targetNoteId
     }
 
     // MARK: - Toggle
@@ -81,6 +93,9 @@ final class RecordController: ObservableObject {
             isRecording = true
             isPaused = false
             liveActivity.start()
+            // Meld ons aan als de actieve opname zodat de stop-knop op de Live
+            // Activity (via StopRecordingIntent) déze controller bereikt.
+            RecordingStopBus.shared.register(self)
             startTicking(audio: audio)
             // Pump captured buffers into the engine off the record loop.
             feedTask = Task { [weak self] in
@@ -116,10 +131,20 @@ final class RecordController: ObservableObject {
 
     // MARK: - Stop
 
+    /// Stop-pad vanaf de Live Activity (lock-screen / Dynamic Island). Gedraagt
+    /// zich exact als op de in-app stop-knop tikken: afronden → transcriberen →
+    /// opslaan → activiteit beëindigen. Aangeroepen op de main actor door
+    /// `RecordingStopBus`.
+    func stopFromIntent() {
+        guard isRecording else { return }
+        Task { await stopAndTranscribe() }
+    }
+
     private func stopAndTranscribe() async {
         guard isRecording, let app else { return }
         isRecording = false
         isPaused = false
+        RecordingStopBus.shared.deregister(self)
         tickTask?.cancel()
         tickTask = nil
         level = 0
@@ -173,11 +198,29 @@ final class RecordController: ObservableObject {
             duration: duration,
             segments: segments
         )
-        try? history.add(entry)
+        // Twee routes vanuit dezelfde pijplijn:
+        //  • targetNoteId == nil → standaard one-off: los in de Geschiedenis
+        //    (ongewijzigd gedrag van het Opnemen-tabblad).
+        //  • targetNoteId gezet → voeg de opname áán die notitie toe (met note_id);
+        //    hij verschijnt dan niet los in de Geschiedenis.
+        if let noteId = targetNoteId {
+            try? history.appendToNote(entry, noteId: noteId)
+        } else {
+            try? history.add(entry)
+        }
     }
 
     func markCopied() {
         didCopy = true
+    }
+
+    /// Wist het resultaat van het scherm en zet de statusregel terug op de
+    /// ruststand. Raakt de Geschiedenis NIET aan — de opgeslagen entry blijft
+    /// gewoon in het Geschiedenis-tabblad staan; dit leegt alleen het scherm.
+    func clearResult() {
+        lastResult = nil
+        didCopy = false
+        statusLine = "Tik om op te nemen"
     }
 
     // MARK: - Failure
@@ -186,6 +229,7 @@ final class RecordController: ObservableObject {
         isRecording = false
         isPaused = false
         isTranscribing = false
+        RecordingStopBus.shared.deregister(self)
         tickTask?.cancel()
         tickTask = nil
         liveActivity.end()

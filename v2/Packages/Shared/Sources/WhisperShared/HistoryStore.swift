@@ -203,6 +203,9 @@ public final class HistoryStore: ObservableObject {
                 var updated = TranscriptRecord(entry: rebuiltEntry)
                 updated.pinned = record.pinned
                 updated.speakerNames = record.speakerNames
+                // Behoud de notitie-koppeling bij trimmen (anders zou een getrimde
+                // opname uit zijn notitie loskomen).
+                updated.noteId = record.noteId
                 // `TranscriptRecord(entry:)` already stamped modifiedAt = now.
                 try updated.update(db)
                 changed = true
@@ -309,6 +312,12 @@ public final class HistoryStore: ObservableObject {
         applyingRemote = true
         defer { applyingRemote = false }
         try dbQueue.write { db in
+            var record = record
+            // `note_id` isn't part of the synced schema yet (Notes/note_id sync is
+            // deferred), so an incoming remote record never carries one. Without
+            // this, a remote-wins resolution on a note-linked row would silently
+            // unlink it from its note by overwriting note_id with NULL.
+            record.noteId = try TranscriptRecord.fetchOne(db, key: record.id)?.noteId
             try record.save(db)
             try Self.prune(db, retention: self.retentionProvider())
         }
@@ -360,6 +369,166 @@ public final class HistoryStore: ObservableObject {
         bump()
     }
 
+    // MARK: - Notes (i2)
+
+    /// Alle notities, laatst-gewijzigd eerst.
+    public func notes() throws -> [Note] {
+        try dbQueue.read { db in
+            try NoteRecord
+                .order(Column("sort_key").desc)
+                .fetchAll(db)
+                .map(\.note)
+        }
+    }
+
+    /// Eén notitie op id, of `nil` als hij niet bestaat.
+    public func note(id: String) throws -> Note? {
+        try dbQueue.read { db in
+            try NoteRecord.fetchOne(db, key: id)?.note
+        }
+    }
+
+    /// Maakt een nieuwe notitie aan met de gegeven titel en retourneert hem.
+    @discardableResult
+    public func createNote(title: String) throws -> Note {
+        let now = ISO8601DateFormatter().string(from: Date())
+        let note = Note(
+            id: UUID().uuidString,
+            title: title.trimmingCharacters(in: .whitespacesAndNewlines),
+            createdAt: now,
+            modifiedAt: now
+        )
+        try dbQueue.write { db in
+            try NoteRecord(note: note).insert(db)
+        }
+        bump()
+        return note
+    }
+
+    /// Hernoemt een notitie en werkt zijn `modifiedAt` bij.
+    public func renameNote(id: String, title: String) throws {
+        let clean = title.trimmingCharacters(in: .whitespacesAndNewlines)
+        try dbQueue.write { db in
+            if var record = try NoteRecord.fetchOne(db, key: id) {
+                record.title = clean
+                record.modifiedAt = ISO8601DateFormatter().string(from: Date())
+                record.sortKey = Date().timeIntervalSince1970
+                try record.update(db)
+            }
+        }
+        bump()
+    }
+
+    /// Verwijdert een notitie. De gekoppelde opnames worden standaard NIET
+    /// weggegooid: hun `note_id` wordt op `NULL` gezet zodat ze als losse
+    /// Geschiedenis-items behouden blijven. Zet `deleteEntries` op `true` om ook
+    /// de opnames te verwijderen.
+    public func deleteNote(id: String, deleteEntries: Bool) throws {
+        var freedIds: [String] = []
+        try dbQueue.write { db in
+            if deleteEntries {
+                // Verwijder de gekoppelde transcripts (elk apart zodat sync ze als
+                // verwijdering kan doorgeven).
+                freedIds = try String.fetchAll(
+                    db,
+                    sql: "SELECT id FROM transcripts WHERE note_id = ?",
+                    arguments: [id]
+                )
+                try TranscriptRecord.deleteAll(db, keys: freedIds)
+            } else {
+                // Ontkoppel: note_id → NULL, zodat de opnames losse Geschiedenis-
+                // items worden. modified_at wordt bijgewerkt zodat een latere sync
+                // (uitgesteld) de wijziging zou zien.
+                freedIds = try String.fetchAll(
+                    db,
+                    sql: "SELECT id FROM transcripts WHERE note_id = ?",
+                    arguments: [id]
+                )
+                try db.execute(
+                    sql: "UPDATE transcripts SET note_id = NULL, modified_at = ? WHERE note_id = ?",
+                    arguments: [TranscriptRecord.nowMillis(), id]
+                )
+            }
+            try NoteRecord.deleteOne(db, key: id)
+        }
+        if deleteEntries {
+            for freed in freedIds { emit(.delete(id: freed)) }
+        } else {
+            for freed in freedIds { emit(.upsert(id: freed)) }
+        }
+        bump()
+    }
+
+    /// De opnames van een notitie, oudste eerst (chronologisch, zoals ze zijn
+    /// toegevoegd) — dat is de leesvolgorde in de notitie-detailweergave.
+    public func noteEntries(noteId: String) throws -> [TranscriptEntry] {
+        try dbQueue.read { db in
+            try TranscriptRecord
+                .filter(Column("note_id") == noteId)
+                .order(Column("sort_key").asc, Column("created_at").asc)
+                .fetchAll(db)
+                .map(\.entry)
+        }
+    }
+
+    /// Voegt een verse opname toe áán een notitie (i.p.v. als losse
+    /// Geschiedenis-entry). De opname krijgt `note_id` gezet en de notitie z'n
+    /// `modifiedAt` wordt naar nu geschoven. Retention-pruning wordt bewust NIET
+    /// toegepast op notitie-opnames (een notitie mag onbeperkt groeien).
+    public func appendToNote(_ entry: TranscriptEntry, noteId: String) throws {
+        let now = ISO8601DateFormatter().string(from: Date())
+        try dbQueue.write { db in
+            try TranscriptRecord(entry: entry, noteId: noteId).insert(db)
+            if var noteRecord = try NoteRecord.fetchOne(db, key: noteId) {
+                noteRecord.modifiedAt = now
+                noteRecord.sortKey = Date().timeIntervalSince1970
+                try noteRecord.update(db)
+            }
+        }
+        emit(.upsert(id: entry.id))
+        bump()
+    }
+
+    /// Verplaatst een bestaande (losse) opname naar een notitie: zet `note_id` en
+    /// verwijdert hem daarmee uit de losse Geschiedenis (want die filtert op
+    /// `note_id IS NULL`). Werkt de `modifiedAt` van de notitie bij.
+    public func moveEntryToNote(entryId: String, noteId: String) throws {
+        let now = ISO8601DateFormatter().string(from: Date())
+        var changed = false
+        try dbQueue.write { db in
+            if var record = try TranscriptRecord.fetchOne(db, key: entryId) {
+                record.noteId = noteId
+                record.modifiedAt = TranscriptRecord.nowMillis()
+                try record.update(db)
+                changed = true
+                if var noteRecord = try NoteRecord.fetchOne(db, key: noteId) {
+                    noteRecord.modifiedAt = now
+                    noteRecord.sortKey = Date().timeIntervalSince1970
+                    try noteRecord.update(db)
+                }
+            }
+        }
+        if changed { emit(.upsert(id: entryId)) }
+        bump()
+    }
+
+    /// Maakt een notitie-opname weer los: zet `note_id` op NULL zodat hij terug in
+    /// de losse Geschiedenis verschijnt (die filtert op `note_id IS NULL`). Spiegelt
+    /// ``moveEntryToNote`` — bumpt `modifiedAt` en zendt een upsert uit voor sync.
+    public func detachEntryFromNote(entryId: String) throws {
+        var changed = false
+        try dbQueue.write { db in
+            if var record = try TranscriptRecord.fetchOne(db, key: entryId) {
+                record.noteId = nil
+                record.modifiedAt = TranscriptRecord.nowMillis()
+                try record.update(db)
+                changed = true
+            }
+        }
+        if changed { emit(.upsert(id: entryId)) }
+        bump()
+    }
+
     // MARK: - Queries
 
     /// Fetches entries newest-first, optionally full-text filtered and/or scoped
@@ -386,6 +555,7 @@ public final class HistoryStore: ObservableObject {
     }
 
     /// Total number of entries matching the query/filter (ignores paging).
+    /// Note-linked entries (`note_id` set) are excluded, matching `entries(…)`.
     public func count(query: String? = nil, filter: HistoryFilter = .all) throws -> Int {
         try dbQueue.read { db in
             try Self.fetchCount(db, query: query, filter: filter)
@@ -472,9 +642,11 @@ public final class HistoryStore: ObservableObject {
         guard let limit = retention, limit > 0 else { return }
         // Ordered newest-first (pinned status does not affect ordering here;
         // it only exempts rows from the unpinned budget).
+        // Notitie-opnames (note_id gezet) tellen niet mee voor het bewaarlimiet —
+        // een notitie mag onbeperkt groeien (zie `appendToNote`).
         let rows = try Row.fetchAll(
             db,
-            sql: "SELECT id, pinned FROM transcripts ORDER BY sort_key DESC, created_at DESC"
+            sql: "SELECT id, pinned FROM transcripts WHERE note_id IS NULL ORDER BY sort_key DESC, created_at DESC"
         )
         var unpinnedKept = 0
         var toDelete: [String] = []
@@ -561,6 +733,11 @@ public final class HistoryStore: ObservableObject {
     ) -> (String, StatementArguments) {
         var conditions: [String] = []
         var args = StatementArguments()
+
+        // Notitie-gekoppelde opnames (note_id gezet) horen thuis in hun notitie en
+        // verschijnen NIET los in de Geschiedenis. `note_id IS NULL` = ongewijzigd
+        // gedrag voor alle bestaande (en losse) entries.
+        conditions.append("t.note_id IS NULL")
 
         if let pattern = query.flatMap(ftsPattern) {
             conditions.append("transcripts_fts MATCH ?")

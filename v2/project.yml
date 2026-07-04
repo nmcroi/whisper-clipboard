@@ -272,6 +272,12 @@ targets:
       # Gedeeld attributes-type: in BEIDE targets meegecompileerd (niet via
       # WhisperShared — dat zou GRDB/FluidAudio de extensie in trekken).
       - path: WhisperClipboardiOS/Shared/RecordingActivityAttributes.swift
+      # Stop-intent + RecordingStopBus: óók in BEIDE targets. De widget refereert
+      # StopRecordingIntent in Button(intent:); de app voert perform() uit (die
+      # draait in het app-proces). RecordingStopBus/RecordingStopHandling worden
+      # in de widget niet gebruikt maar horen bij hetzelfde bestand — onschadelijk
+      # (geen GRDB/FluidAudio-afhankelijkheid).
+      - path: WhisperClipboardiOS/Shared/StopRecordingIntent.swift
     info:
       path: WhisperClipboardiOSWidgets/Info.plist
       properties:

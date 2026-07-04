@@ -12,6 +12,7 @@ struct HistoryDetailiOSView: View {
     let entry: TranscriptEntry
 
     @State private var didCopy = false
+    @State private var showAddToNote = false
 
     var body: some View {
         ZStack {
@@ -27,10 +28,17 @@ struct HistoryDetailiOSView: View {
         .navigationTitle(title)
         .navigationBarTitleDisplayMode(.inline)
         .toolbar {
-            ToolbarItem(placement: .topBarTrailing) {
+            // Links geplaatst (naast de terug-chevron): rechtsboven zweeft het
+            // globale instellingen-tandwiel van RootView.
+            ToolbarItem(placement: .topBarLeading) {
                 Menu {
                     ShareLink(item: entry.text) {
                         Label("Deel", systemImage: "square.and.arrow.up")
+                    }
+                    Button {
+                        showAddToNote = true
+                    } label: {
+                        Label("Voeg toe aan notitie…", systemImage: "note.text.badge.plus")
                     }
                     Button(role: .destructive) {
                         try? app.history?.delete(id: entry.id)
@@ -43,6 +51,15 @@ struct HistoryDetailiOSView: View {
                         .foregroundStyle(Theme.accentText)
                 }
             }
+        }
+        .sheet(isPresented: $showAddToNote) {
+            AddToNoteSheet(entryId: entry.id) {
+                // De opname hoort nu bij een notitie en verdwijnt uit de losse
+                // Geschiedenis: sluit het detailscherm.
+                dismiss()
+            }
+            .environmentObject(app)
+            .preferredColorScheme(app.appearance.preferredColorScheme)
         }
     }
 

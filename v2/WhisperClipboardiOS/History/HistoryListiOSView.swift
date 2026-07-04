@@ -10,6 +10,11 @@ import WhisperShared
 struct HistoryListiOSView: View {
     @EnvironmentObject private var app: AppModel
     @State private var query = ""
+    /// De opname waarvoor de "Voeg toe aan notitie"-sheet open staat.
+    @State private var addToNoteTarget: AddToNoteTarget?
+
+    /// Identifiable-wikkel zodat `sheet(item:)` een losse entry-id kan dragen.
+    private struct AddToNoteTarget: Identifiable { let id: String }
 
     var body: some View {
         NavigationStack {
@@ -19,6 +24,11 @@ struct HistoryListiOSView: View {
             }
             .navigationTitle("Geschiedenis")
             .searchable(text: $query, prompt: "Zoeken")
+            .sheet(item: $addToNoteTarget) { target in
+                AddToNoteSheet(entryId: target.id)
+                    .environmentObject(app)
+                    .preferredColorScheme(app.appearance.preferredColorScheme)
+            }
         }
     }
 
@@ -45,6 +55,14 @@ struct HistoryListiOSView: View {
                         } label: {
                             Label("Verwijder", systemImage: "trash")
                         }
+                    }
+                    .swipeActions(edge: .leading) {
+                        Button {
+                            addToNoteTarget = AddToNoteTarget(id: entry.id)
+                        } label: {
+                            Label("Naar notitie", systemImage: "note.text.badge.plus")
+                        }
+                        .tint(Theme.accentText)
                     }
                 }
             }

@@ -107,6 +107,49 @@ public enum HistorySchema {
             """)
         }
 
+        migrator.registerMigration("v6_notes") { db in
+            // Notities (iPhone i2): een doorlopende, benoemde notitie waaraan je
+            // over uren/dagen kunt blijven toevoegen. Additief en veilig:
+            //  1. Een nieuwe `notes`-tabel (id/titel/aangemaakt/gewijzigd).
+            //  2. Een NULL-bare `note_id`-kolom op `transcripts`. Een transcript
+            //     met `note_id = NULL` gedraagt zich exact als vandaag (los in de
+            //     Geschiedenis). Met een `note_id` hoort het bij die notitie en
+            //     wordt het daar samengevoegd i.p.v. los te verschijnen.
+            // Bestaande rijen krijgen automatisch `note_id = NULL` (geen backfill
+            // nodig), dus lokale databases van bestaande gebruikers blijven intact.
+            //
+            // iCloud-sync van notities/`note_id` is BEWUST uitgesteld (net als de
+            // AIResult-sync), zie TranscriptCloudRecord — de `Transcript`-CKRecord
+            // stuurt `note_id` niet mee en er is (nog) geen `Note`-recordtype.
+            try db.create(table: "notes") { t in
+                t.column("id", .text).primaryKey()
+                t.column("title", .text).notNull().defaults(to: "")
+                // Raw ISO-8601 strings, consistent met transcripts.created_at.
+                t.column("created_at", .text).notNull()
+                t.column("modified_at", .text).notNull()
+                // Sorteersleutel (epoch-seconden van modified_at) voor snelle
+                // "laatst gewijzigd eerst"-ordening.
+                t.column("sort_key", .double).notNull().defaults(to: 0)
+            }
+            try db.create(
+                index: "idx_notes_sort",
+                on: "notes",
+                columns: ["sort_key"]
+            )
+            try db.alter(table: "transcripts") { t in
+                // NULL = losse Geschiedenis-entry (ongewijzigd gedrag). Niet-NULL
+                // = hoort bij die notitie. Geen FK-constraint: bij het verwijderen
+                // van een notitie zetten we `note_id` expliciet terug op NULL zodat
+                // de entries als losse Geschiedenis-items behouden blijven.
+                t.add(column: "note_id", .text)
+            }
+            try db.create(
+                index: "idx_transcripts_note",
+                on: "transcripts",
+                columns: ["note_id"]
+            )
+        }
+
         return migrator
     }
 }

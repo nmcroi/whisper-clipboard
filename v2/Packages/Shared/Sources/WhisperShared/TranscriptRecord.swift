@@ -28,6 +28,12 @@ public struct TranscriptRecord: Codable, FetchableRecord, PersistableRecord {
     /// (a pure display value type) — it is sync metadata carried only at this
     /// persistence layer and on the CloudKit record.
     public var modifiedAt: Int64
+    /// Notitie-koppeling (iPhone i2). `nil` = een losse Geschiedenis-entry
+    /// (ongewijzigd gedrag). Niet-`nil` = deze opname hoort bij die notitie en
+    /// wordt daar samengevoegd i.p.v. los in de Geschiedenis te verschijnen.
+    /// Sync-metadata alleen op deze laag: geen onderdeel van `Core.TranscriptEntry`
+    /// en (nog) niet meegestuurd naar CloudKit (bewust uitgesteld).
+    public var noteId: String?
 
     enum CodingKeys: String, CodingKey {
         case id
@@ -43,6 +49,7 @@ public struct TranscriptRecord: Codable, FetchableRecord, PersistableRecord {
         case sortKey = "sort_key"
         case speakerNames = "speaker_names"
         case modifiedAt = "modified_at"
+        case noteId = "note_id"
     }
 
     /// Explicit field-by-field initializer. Declared in the main type (not an
@@ -63,7 +70,8 @@ public struct TranscriptRecord: Codable, FetchableRecord, PersistableRecord {
         segments: String,
         sortKey: Double,
         speakerNames: String,
-        modifiedAt: Int64
+        modifiedAt: Int64,
+        noteId: String? = nil
     ) {
         self.id = id
         self.text = text
@@ -78,6 +86,7 @@ public struct TranscriptRecord: Codable, FetchableRecord, PersistableRecord {
         self.sortKey = sortKey
         self.speakerNames = speakerNames
         self.modifiedAt = modifiedAt
+        self.noteId = noteId
     }
 }
 
@@ -98,7 +107,11 @@ extension TranscriptRecord {
     ///   Defaults to "now" for locally-originated writes; the remote-apply path
     ///   passes the timestamp carried on the incoming CloudKit record so the LWW
     ///   comparison stays meaningful.
-    public init(entry: TranscriptEntry, modifiedAt: Int64 = TranscriptRecord.nowMillis()) {
+    public init(
+        entry: TranscriptEntry,
+        modifiedAt: Int64 = TranscriptRecord.nowMillis(),
+        noteId: String? = nil
+    ) {
         self.id = entry.id
         self.text = entry.text
         self.createdAt = entry.createdAt
@@ -123,6 +136,7 @@ extension TranscriptRecord {
             self.speakerNames = "{}"
         }
         self.modifiedAt = modifiedAt
+        self.noteId = noteId
     }
 
     /// Reconstructs the Core entry, decoding the segments JSON.

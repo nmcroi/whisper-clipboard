@@ -224,27 +224,123 @@ public actor ParakeetEngine: TranscriptionEngine {
         }
         defer { poller.cancel() }
 
-        do {
-            try await withDownloadWatchdog {
-                try await self.performDownloadAndLoad(progressHandler: progressHandler)
-            }
-        } catch {
-            // Corrupt / partial download: wipe the cache and retry once.
-            if Self.isLikelyCorruptDownload(error) {
-                Self.removeModelCache()
-                downloadProgress = 0
-                downloadedBytes = 0
-                do {
-                    try await withDownloadWatchdog {
-                        try await self.performDownloadAndLoad(progressHandler: progressHandler)
-                    }
-                } catch {
+        try await downloadWithRetry(progressHandler: progressHandler)
+    }
+
+    /// Drives the download/load through a bounded retry-with-backoff loop so a
+    /// stalled or dropped connection recovers on its own instead of surfacing a
+    /// hard failure to the UI — the fix for the ~425 MB encoder file that
+    /// reliably stalls partway on iOS over wifi/cellular.
+    ///
+    /// ## Why retrying makes progress (no in-process resume-data plumbing)
+    /// FluidAudio owns the actual transport (`URLSession.download(for:)`, no
+    /// resume data) and is a vendored SPM dependency we can't edit. But its
+    /// `downloadRepo` **skips any file already on disk** and only moves a file
+    /// to its final path once fully downloaded. So every file that *did*
+    /// complete (preprocessor, decoder, joint, vocab — and the encoder itself
+    /// once it finally lands) persists across attempts; a retry re-lists the
+    /// repo, finds those present, and only re-fetches what's still missing. Each
+    /// attempt therefore gives the big encoder file a fresh full watchdog window
+    /// rather than restarting the *whole* model set from zero. This is the
+    /// feasible recovery given a third-party downloader without resume support.
+    ///
+    /// Progress is deliberately **not** reset between attempts: `downloadProgress`
+    /// is monotonic and the disk-bytes poller keeps measuring real bytes-on-disk,
+    /// so the bar and the "X van Y MB" text continue from where they were instead
+    /// of snapping back to 0% on each retry.
+    private func downloadWithRetry(progressHandler: @escaping DownloadUtils.ProgressHandler) async throws {
+        var attempt = 0
+        while true {
+            attempt += 1
+            do {
+                try await withDownloadWatchdog {
+                    try await self.performDownloadAndLoad(progressHandler: progressHandler)
+                }
+                return
+            } catch {
+                // A partial/corrupt on-disk model can't be resumed — it must be
+                // wiped so the next attempt re-downloads cleanly. That resets the
+                // disk-bytes signal, so drop the surfaced fraction too (the bar is
+                // monotonic and would otherwise stay pinned high over an empty
+                // cache).
+                if Self.isLikelyCorruptDownload(error) {
+                    Self.removeModelCache()
+                    downloadProgress = 0
+                    downloadedBytes = 0
+                }
+
+                // Out of attempts, or an error a retry can't fix (e.g. offline
+                // with no connectivity): surface it in Dutch.
+                guard attempt < Self.maxDownloadAttempts, Self.isRecoverableDownloadError(error) else {
                     throw Self.mapDownloadError(error)
                 }
-            } else {
-                throw Self.mapDownloadError(error)
+
+                // Back off before the next attempt: 2s, 4s, 8s… capped. Gives a
+                // flaky connection a moment to recover rather than hammering it.
+                let backoff = Self.retryBackoff(forAttempt: attempt)
+                try? await Task.sleep(nanoseconds: UInt64(backoff * 1_000_000_000))
             }
         }
+    }
+
+    // MARK: - Retry policy
+
+    /// How many download/load attempts to make before surfacing a final failure.
+    /// The first is the initial try; the rest are watchdog/network-triggered
+    /// retries with backoff.
+    static let maxDownloadAttempts = 5
+
+    /// Exponential backoff (seconds) before retry `attempt` (1-based): 2, 4, 8,
+    /// 16… capped at 30s so a long-flaky connection still retries reasonably
+    /// promptly. `public`/`static` so it is unit-testable in isolation.
+    public static func retryBackoff(forAttempt attempt: Int) -> TimeInterval {
+        let raw = pow(2.0, Double(max(attempt, 1))) // attempt 1 → 2s
+        return min(raw, 30)
+    }
+
+    /// Whether a failed attempt is worth retrying. Retryable: the stall-watchdog
+    /// firing (`.downloadStalled`), a corrupt/partial download (a wipe-and-retry
+    /// fixes it), and transient network errors (connection lost/timeout/host
+    /// unreachable). Not retryable: a hard offline state with no route to the
+    /// network, which no amount of retrying will fix — surface it immediately so
+    /// the user knows to reconnect. `public`/`static` so the classification is
+    /// unit-testable without a live download.
+    public static func isRecoverableDownloadError(_ error: Error) -> Bool {
+        // The watchdog tripping is the primary retry trigger — the attempt got
+        // stuck, so cancel and try again with a fresh window.
+        if let engineError = error as? ParakeetEngineError {
+            switch engineError {
+            case .downloadStalled:
+                return true
+            case .noNetwork:
+                // Fully offline: retrying without connectivity is pointless.
+                return false
+            default:
+                return false
+            }
+        }
+        if isLikelyCorruptDownload(error) { return true }
+
+        let nsError = error as NSError
+        if nsError.domain == NSURLErrorDomain {
+            switch nsError.code {
+            case NSURLErrorNotConnectedToInternet:
+                // No network at all: don't burn retries on it.
+                return false
+            case NSURLErrorNetworkConnectionLost,
+                 NSURLErrorTimedOut,
+                 NSURLErrorCannotConnectToHost,
+                 NSURLErrorCannotFindHost,
+                 NSURLErrorDNSLookupFailed,
+                 NSURLErrorResourceUnavailable,
+                 NSURLErrorSecureConnectionFailed:
+                // Transient connectivity blips: a resume/retry can recover.
+                return true
+            default:
+                return false
+            }
+        }
+        return false
     }
 
     /// Downloads (if needed) and loads the models into a live manager.

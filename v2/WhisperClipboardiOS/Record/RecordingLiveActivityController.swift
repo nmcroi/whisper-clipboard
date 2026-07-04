@@ -25,6 +25,16 @@ final class RecordingLiveActivityController {
     private var lastUpdate: Date = .distantPast
     private var isPaused = false
 
+    /// Hoe lang na de laatste content-update de activiteit als "stale" geldt. Een
+    /// dood app-proces stopt met verversen → het systeem markeert de activiteit
+    /// stale en de widget toont dan een "Opname gestopt?"-hint i.p.v. te doen
+    /// alsof er nog wordt opgenomen.
+    private let staleAfter: TimeInterval = 120
+
+    private func staleDate(from now: Date = Date()) -> Date {
+        now.addingTimeInterval(staleAfter)
+    }
+
     // MARK: - Start
 
     /// Start de Live Activity, mits de gebruiker ze heeft toegestaan. Faalt stil.
@@ -47,7 +57,7 @@ final class RecordingLiveActivityController {
         do {
             activity = try Activity.request(
                 attributes: RecordingActivityAttributes(),
-                content: .init(state: state, staleDate: nil)
+                content: .init(state: state, staleDate: staleDate(from: now))
             )
         } catch {
             // Live Activity kon niet starten — geen ramp, opname loopt gewoon door.
@@ -89,7 +99,7 @@ final class RecordingLiveActivityController {
             startedAt: startedAt,
             isPaused: isPaused
         )
-        let content = ActivityContent(state: state, staleDate: nil)
+        let content = ActivityContent(state: state, staleDate: staleDate())
         // `Activity` is Sendable en de handle is procesbreed thread-safe, dus een
         // update van buiten de main actor is veilig. `nonisolated(unsafe)` haalt
         // de main-actor-regio-attributie van de gedeelde handle af zodat Swift 6
