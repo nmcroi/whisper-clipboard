@@ -1,7 +1,7 @@
 import Foundation
 
 /// Typed errors from the Claude client, each with a Dutch, user-facing message.
-enum ClaudeError: Error, LocalizedError, Equatable {
+public enum ClaudeError: Error, LocalizedError, Equatable {
     /// No API key configured.
     case missingKey
     /// 401 — the key is invalid / rejected.
@@ -13,7 +13,7 @@ enum ClaudeError: Error, LocalizedError, Equatable {
     /// Any other HTTP or decoding failure, with the server message when present.
     case server(String)
 
-    var errorDescription: String? {
+    public var errorDescription: String? {
         switch self {
         case .missingKey:
             return "Stel eerst je Claude API-key in bij Instellingen."
@@ -37,18 +37,18 @@ enum ClaudeError: Error, LocalizedError, Equatable {
 /// the Server-Sent Events stream by hand, yielding `text_delta` chunks. The API
 /// key is supplied per call (read from the Keychain by the caller) so this type
 /// holds no secrets.
-struct ClaudeClient {
+public struct ClaudeClient: Sendable {
 
     /// The model used for all AI-mode completions.
-    static let model = "claude-sonnet-5"
-    static let anthropicVersion = "2023-06-01"
-    static let endpoint = URL(string: "https://api.anthropic.com/v1/messages")!
-    static let maxTokens = 2048
+    public static let model = "claude-sonnet-5"
+    public static let anthropicVersion = "2023-06-01"
+    public static let endpoint = URL(string: "https://api.anthropic.com/v1/messages")!
+    public static let maxTokens = 2048
 
     private let apiKey: String
     private let session: URLSession
 
-    init(apiKey: String, session: URLSession = .shared) {
+    public init(apiKey: String, session: URLSession = .shared) {
         self.apiKey = apiKey
         self.session = session
     }
@@ -60,7 +60,7 @@ struct ClaudeClient {
     ///   - user: the user content (the transcript).
     /// - Returns: an async stream yielding text chunks; it finishes on
     ///   `message_stop` and throws a typed ``ClaudeError`` on failure.
-    func complete(system: String, user: String) -> AsyncThrowingStream<String, Error> {
+    public func complete(system: String, user: String) -> AsyncThrowingStream<String, Error> {
         AsyncThrowingStream { continuation in
             let task = Task {
                 do {
@@ -77,7 +77,7 @@ struct ClaudeClient {
     }
 
     /// Non-streaming convenience: accumulates the stream into a single string.
-    func completeText(system: String, user: String) async throws -> String {
+    public func completeText(system: String, user: String) async throws -> String {
         var accumulated = ""
         for try await chunk in complete(system: system, user: user) {
             accumulated += chunk
@@ -151,7 +151,7 @@ struct ClaudeClient {
     }
 
     /// The meaning of a single parsed SSE line.
-    enum SSEEvent: Equatable {
+    public enum SSEEvent: Equatable {
         case text(String)
         case error(String)
         case stop
@@ -162,7 +162,7 @@ struct ClaudeClient {
     /// tested against canned event streams (including multi-line data and
     /// error events). Non-`data:` lines (e.g. `event:` headers, blank lines)
     /// and unrecognized event types are `.ignore`.
-    static func parseSSELine(_ line: String) -> SSEEvent {
+    public static func parseSSELine(_ line: String) -> SSEEvent {
         guard line.hasPrefix("data:") else { return .ignore }
         let payload = line.dropFirst("data:".count).trimmingCharacters(in: .whitespaces)
         guard !payload.isEmpty,
@@ -191,7 +191,7 @@ struct ClaudeClient {
 
     // MARK: - Error mapping
 
-    static func mapURLError(_ error: URLError) -> ClaudeError {
+    public static func mapURLError(_ error: URLError) -> ClaudeError {
         switch error.code {
         case .notConnectedToInternet, .networkConnectionLost, .cannotConnectToHost,
              .cannotFindHost, .timedOut, .dataNotAllowed:
@@ -201,7 +201,7 @@ struct ClaudeClient {
         }
     }
 
-    static func mapHTTPError(status: Int, body: Data) -> ClaudeError {
+    public static func mapHTTPError(status: Int, body: Data) -> ClaudeError {
         switch status {
         case 401, 403:
             return .invalidKey

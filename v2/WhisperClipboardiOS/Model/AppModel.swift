@@ -27,6 +27,11 @@ final class AppModel: ObservableObject {
     /// sync). Dormant until the toggle is on AND an iCloud account is available.
     let historySync: HistorySyncEngine?
 
+    /// AI post-processing (Claude) service, shared by History- en Note-detail.
+    /// `nil` wanneer de DB niet geopend kon worden (geen store om resultaten in
+    /// te bewaren). Leest de API-key uit de Keychain van dit toestel.
+    let modes: ModesService?
+
     /// Whether iCloud sync is enabled. Persisted in `UserDefaults` under
     /// `ios.icloudSyncEnabled`; defaults to on (matches the Mac default).
     @Published var icloudSyncEnabled: Bool {
@@ -67,6 +72,7 @@ final class AppModel: ObservableObject {
         // lives in this app's own sandbox, isolated from the Mac's copy.
         let store = try? HistoryStore(retentionProvider: { nil })
         self.history = store
+        self.modes = store.map { ModesService(history: $0) }
         if let store {
             let engine = HistorySyncEngine(
                 store: store,

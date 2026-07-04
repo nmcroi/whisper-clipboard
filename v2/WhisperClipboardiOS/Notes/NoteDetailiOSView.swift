@@ -35,6 +35,10 @@ struct NoteDetailiOSView: View {
     /// Toont de picker om deze hele notitie samen te voegen met een andere.
     @State private var showMergeSheet = false
 
+    // MARK: AI-samenvatten (i3)
+    /// Toont de AI-sheet die op de samengevoegde notitie-tekst draait.
+    @State private var showSummarizeSheet = false
+
     // MARK: Losse sessie verplaatsen (task 4b)
     /// De entry-id waarvoor de "verplaats naar andere notitie"-picker open is.
     /// Verpakt in een Identifiable wrapper voor `.sheet(item:)`.
@@ -121,6 +125,17 @@ struct NoteDetailiOSView: View {
             }
             .environmentObject(app)
             .preferredColorScheme(app.appearance.preferredColorScheme)
+        }
+        // AI-samenvatten van de hele notitie (i3).
+        .sheet(isPresented: $showSummarizeSheet) {
+            if let modes = app.modes {
+                NoteSummarizeSheet(
+                    entry: summarizeEntry(),
+                    modes: modes
+                )
+                .environmentObject(app)
+                .preferredColorScheme(app.appearance.preferredColorScheme)
+            }
         }
         // Losse sessie verplaatsen naar een andere notitie (task 4b).
         .sheet(item: $movingEntry) { moving in
@@ -341,14 +356,14 @@ struct NoteDetailiOSView: View {
                 } label: {
                     Label("Voeg samen met andere notitie…", systemImage: "arrow.triangle.merge")
                 }
-                // Toekomstige i3: samenvatten van de hele notitie. Bewust nu al
-                // zichtbaar (uitgeschakeld) zodat de plek is gereserveerd.
+                // AI-samenvatten van de hele notitie (i3): draait op de
+                // samengevoegde tekst van alle opnames in deze notitie.
                 Button {
-                    // no-op: i3 (AI-samenvatting) komt in de volgende fase.
+                    showSummarizeSheet = true
                 } label: {
-                    Label("Samenvatten (binnenkort)", systemImage: "sparkles")
+                    Label("Samenvatten met AI…", systemImage: "sparkles")
                 }
-                .disabled(true)
+                .disabled(app.modes == nil)
                 Divider()
                 Button(role: .destructive) {
                     showDeleteConfirm = true
@@ -379,6 +394,20 @@ struct NoteDetailiOSView: View {
         }
         try? app.history?.deleteNote(id: note.id, deleteEntries: false)
         dismiss()
+    }
+
+    /// Bouwt een synthetische ``TranscriptEntry`` uit de samengevoegde tekst van
+    /// de hele notitie, waarop de AI-sheet draait. De id (`note:<noteId>`) verwijst
+    /// bewust niet naar een echt transcript: de FK op `ai_results` weigert daardoor
+    /// een insert, zodat notitie-runs niet als los transcript-resultaat blijven
+    /// hangen (i3 v1 toont/kopieert het resultaat, maar bewaart het niet).
+    private func summarizeEntry() -> TranscriptEntry {
+        TranscriptEntry(
+            id: "note:\(note.id)",
+            text: concatenatedText(fetchEntries()),
+            createdAt: "",
+            name: displayTitle
+        )
     }
 
     private func concatenatedText(_ entries: [TranscriptEntry]) -> String {

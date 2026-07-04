@@ -13,6 +13,7 @@ struct HistoryDetailiOSView: View {
 
     @State private var didCopy = false
     @State private var showAddToNote = false
+    @State private var showSettings = false
 
     var body: some View {
         ZStack {
@@ -21,6 +22,12 @@ struct HistoryDetailiOSView: View {
                 VStack(alignment: .leading, spacing: 20) {
                     header
                     bodyText
+                    if let modes = app.modes {
+                        Divider().overlay(Theme.border)
+                        AIRunnerView(entry: entry, modes: modes) {
+                            showSettings = true
+                        }
+                    }
                 }
                 .padding(20)
             }
@@ -60,6 +67,11 @@ struct HistoryDetailiOSView: View {
             }
             .environmentObject(app)
             .preferredColorScheme(app.appearance.preferredColorScheme)
+        }
+        .sheet(isPresented: $showSettings) {
+            SettingsSheet()
+                .environmentObject(app)
+                .preferredColorScheme(app.appearance.preferredColorScheme)
         }
     }
 

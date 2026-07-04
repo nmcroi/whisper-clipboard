@@ -2,14 +2,14 @@ import Foundation
 
 /// The display category a mode is grouped under in the chip row and settings
 /// editor. Ordered as the raw array (`allCases`) for a stable UI order.
-enum AIModeCategory: String, Codable, CaseIterable, Sendable {
+public enum AIModeCategory: String, Codable, CaseIterable, Sendable {
     case samenvatten = "Samenvatten"
     case structureren = "Structureren"
     case schrijven = "Schrijven"
     case opschonen = "Opschonen"
 
     /// SF Symbol shown next to the category heading.
-    var icon: String {
+    public var icon: String {
         switch self {
         case .samenvatten: return "text.alignleft"
         case .structureren: return "list.bullet.rectangle"
@@ -24,17 +24,17 @@ enum AIModeCategory: String, Codable, CaseIterable, Sendable {
 ///
 /// Built-in modes ship with the app and are read-only (but duplicatable).
 /// User-defined modes are persisted as JSON in Application Support.
-struct AIMode: Codable, Equatable, Identifiable, Sendable {
-    var id: String
-    var name: String
-    var systemPrompt: String
+public struct AIMode: Codable, Equatable, Identifiable, Sendable {
+    public var id: String
+    public var name: String
+    public var systemPrompt: String
     /// SF Symbol name shown on the chip / in the editor.
-    var icon: String
+    public var icon: String
     /// The group this mode is displayed under.
-    var category: AIModeCategory
-    var isBuiltin: Bool
+    public var category: AIModeCategory
+    public var isBuiltin: Bool
 
-    init(
+    public init(
         id: String = UUID().uuidString,
         name: String,
         systemPrompt: String,
@@ -56,7 +56,7 @@ struct AIMode: Codable, Equatable, Identifiable, Sendable {
 
     /// Custom decode so older `modes.json` files (written before `category`
     /// existed) still load — a missing category defaults to "Schrijven".
-    init(from decoder: Decoder) throws {
+    public init(from decoder: Decoder) throws {
         let container = try decoder.container(keyedBy: CodingKeys.self)
         id = try container.decode(String.self, forKey: .id)
         name = try container.decode(String.self, forKey: .name)
@@ -69,7 +69,7 @@ struct AIMode: Codable, Equatable, Identifiable, Sendable {
 
 extension AIMode {
     /// The small SF Symbol set offered in the custom-mode icon picker.
-    static let iconChoices: [String] = [
+    public static let iconChoices: [String] = [
         "sparkles",
         "text.alignleft",
         "text.justify",
@@ -89,7 +89,7 @@ extension AIMode {
 
     /// A shared instruction appended conceptually to every built-in prompt:
     /// answer in the transcript's language, no preamble, output only the result.
-    static let commonRules = """
+    public static let commonRules = """
     Schrijf je antwoord in de taal van het transcript (meestal Nederlands). \
     Geef geen inleiding, geen meta-opmerkingen en geen afsluiting — lever \
     uitsluitend het gevraagde resultaat.
@@ -98,7 +98,7 @@ extension AIMode {
     /// The built-in library, tuned for a Dutch AI consultant who records
     /// meetings, doctor visits and sales calls and reuses transcripts for
     /// summaries, action lists and LinkedIn posts. Grouped by category.
-    static let builtins: [AIMode] = [
+    public static let builtins: [AIMode] = [
 
         // MARK: Samenvatten
 
@@ -276,7 +276,7 @@ extension AIMode {
 
     /// Built-in modes grouped by category, in category order, ready for a
     /// sectioned display. Only categories that actually have modes appear.
-    static func grouped(_ modes: [AIMode]) -> [(category: AIModeCategory, modes: [AIMode])] {
+    public static func grouped(_ modes: [AIMode]) -> [(category: AIModeCategory, modes: [AIMode])] {
         AIModeCategory.allCases.compactMap { category in
             let matching = modes.filter { $0.category == category }
             return matching.isEmpty ? nil : (category, matching)

@@ -1,6 +1,7 @@
 import AppKit
 import Core
 import SwiftUI
+import WhisperShared
 
 /// The "AI" section shown below a transcript's body: a row of mode chips that
 /// run a Claude prompt mode on the transcript, live-streaming result cards with

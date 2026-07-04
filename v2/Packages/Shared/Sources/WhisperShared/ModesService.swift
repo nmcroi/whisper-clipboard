@@ -1,22 +1,21 @@
 import Core
 import Foundation
 import Observation
-import WhisperShared
 
 /// The live state of an AI mode running against a transcript, observed by the UI.
 @MainActor
 @Observable
-final class AIRun: Identifiable {
-    let id = UUID()
-    let transcriptId: String
-    let mode: AIMode
+public final class AIRun: Identifiable {
+    public let id = UUID()
+    public let transcriptId: String
+    public let mode: AIMode
     /// Text accumulated so far (streams in).
-    private(set) var output: String = ""
-    private(set) var isRunning = true
+    public private(set) var output: String = ""
+    public private(set) var isRunning = true
     /// A Dutch error message when the run failed.
-    private(set) var errorMessage: String?
+    public private(set) var errorMessage: String?
 
-    init(transcriptId: String, mode: AIMode) {
+    public init(transcriptId: String, mode: AIMode) {
         self.transcriptId = transcriptId
         self.mode = mode
     }
@@ -36,13 +35,13 @@ final class AIRun: Identifiable {
 /// — never as notifications.
 @MainActor
 @Observable
-final class ModesService {
+public final class ModesService {
 
     /// User-defined modes, loaded from and saved to `modes.json`.
-    private(set) var customModes: [AIMode] = []
+    public private(set) var customModes: [AIMode] = []
 
     /// In-flight runs, keyed by their `AIRun.id`. The UI renders these live.
-    private(set) var activeRuns: [AIRun] = []
+    public private(set) var activeRuns: [AIRun] = []
 
     private let history: HistoryStore
     private let modesURL: URL
@@ -51,7 +50,7 @@ final class ModesService {
     /// Builds a client for a key. Injectable so tests can stub the network.
     private let clientFactory: (String) -> ClaudeClient
 
-    init(
+    public init(
         history: HistoryStore,
         modesURL: URL? = nil,
         apiKeyProvider: @escaping () -> String? = { try? KeychainStore.read() },
@@ -67,18 +66,18 @@ final class ModesService {
     // MARK: - Mode listing / CRUD
 
     /// All modes shown to the user: built-ins first, then custom.
-    var allModes: [AIMode] {
+    public var allModes: [AIMode] {
         AIMode.builtins + customModes
     }
 
     /// Whether an API key is configured.
-    var hasAPIKey: Bool {
+    public var hasAPIKey: Bool {
         (apiKeyProvider()?.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty == false)
     }
 
     /// Adds a new custom mode (forced non-builtin, fresh id) and persists.
     @discardableResult
-    func addMode(name: String, systemPrompt: String, icon: String) throws -> AIMode {
+    public func addMode(name: String, systemPrompt: String, icon: String) throws -> AIMode {
         let mode = AIMode(name: name, systemPrompt: systemPrompt, icon: icon, isBuiltin: false)
         customModes.append(mode)
         try saveCustomModes()
@@ -86,7 +85,7 @@ final class ModesService {
     }
 
     /// Updates an existing custom mode in place. Built-in ids are ignored.
-    func updateMode(_ mode: AIMode) throws {
+    public func updateMode(_ mode: AIMode) throws {
         guard !mode.isBuiltin, let index = customModes.firstIndex(where: { $0.id == mode.id }) else {
             return
         }
@@ -95,14 +94,14 @@ final class ModesService {
     }
 
     /// Deletes a custom mode by id. Built-in ids are ignored.
-    func deleteMode(id: String) throws {
+    public func deleteMode(id: String) throws {
         customModes.removeAll { $0.id == id && !$0.isBuiltin }
         try saveCustomModes()
     }
 
     /// Creates an editable copy of any mode (used to duplicate a built-in).
     @discardableResult
-    func duplicate(_ mode: AIMode) throws -> AIMode {
+    public func duplicate(_ mode: AIMode) throws -> AIMode {
         try addMode(
             name: "\(mode.name) (kopie)",
             systemPrompt: mode.systemPrompt,
@@ -114,12 +113,12 @@ final class ModesService {
 
     /// The stable mode id used for free-form ("Eigen prompt") runs so they can
     /// be recognised in history and never collide with a saved mode.
-    static let freePromptModeId = "builtin.free_prompt"
+    public static let freePromptModeId = "builtin.free_prompt"
 
     /// Builds the system prompt for a free-form instruction: a fixed framing that
     /// tells Claude to execute the user's instruction against the transcript, in
     /// Dutch, without preamble.
-    static func freeInstructionSystemPrompt(_ instruction: String) -> String {
+    public static func freeInstructionSystemPrompt(_ instruction: String) -> String {
         """
         Je bent een assistent die de volgende opdracht uitvoert op een \
         transcriptie. Antwoord in de taal van het transcript (meestal Nederlands), \
@@ -132,7 +131,7 @@ final class ModesService {
 
     /// A short, single-line label derived from a free-form instruction, used as
     /// the result's `modeName` so history shows what was asked.
-    static func freePromptLabel(for instruction: String) -> String {
+    public static func freePromptLabel(for instruction: String) -> String {
         let flattened = instruction
             .trimmingCharacters(in: .whitespacesAndNewlines)
             .replacingOccurrences(of: "\n", with: " ")
@@ -152,7 +151,7 @@ final class ModesService {
     /// instruction as its system prompt, so the same streaming/persistence path
     /// as ``run(mode:on:)`` can drive it. The mode's `name` becomes the history
     /// label showing what was asked.
-    static func freeInstructionMode(_ instruction: String) -> AIMode {
+    public static func freeInstructionMode(_ instruction: String) -> AIMode {
         AIMode(
             id: freePromptModeId,
             name: freePromptLabel(for: instruction),
@@ -168,7 +167,7 @@ final class ModesService {
     /// result exactly like ``run(mode:on:)``. The stored result's `modeName`
     /// reflects the instruction so history shows what was asked.
     @discardableResult
-    func run(instruction: String, on transcript: TranscriptEntry) -> AIRun {
+    public func run(instruction: String, on transcript: TranscriptEntry) -> AIRun {
         run(mode: Self.freeInstructionMode(instruction), on: transcript)
     }
 
@@ -178,7 +177,7 @@ final class ModesService {
     /// success the result is persisted to `ai_results`. On failure the run
     /// carries a Dutch error message.
     @discardableResult
-    func run(mode: AIMode, on transcript: TranscriptEntry) -> AIRun {
+    public func run(mode: AIMode, on transcript: TranscriptEntry) -> AIRun {
         let run = AIRun(transcriptId: transcript.id, mode: mode)
         activeRuns.append(run)
 
@@ -211,7 +210,7 @@ final class ModesService {
     }
 
     /// Convenience for the menu bar: run a mode and return the full text (or throw).
-    func runToCompletion(mode: AIMode, on transcript: TranscriptEntry) async throws -> AIResult {
+    public func runToCompletion(mode: AIMode, on transcript: TranscriptEntry) async throws -> AIResult {
         guard let key = apiKeyProvider()?.trimmingCharacters(in: .whitespacesAndNewlines),
               !key.isEmpty
         else {
@@ -232,12 +231,12 @@ final class ModesService {
     }
 
     /// Persisted results for a transcript, newest first.
-    func results(for transcriptId: String) -> [AIResult] {
+    public func results(for transcriptId: String) -> [AIResult] {
         (try? history.aiResults(forTranscript: transcriptId)) ?? []
     }
 
     /// Deletes a stored AI result.
-    func deleteResult(id: String) {
+    public func deleteResult(id: String) {
         try? history.deleteAIResult(id: id)
     }
 
@@ -264,15 +263,10 @@ final class ModesService {
     // MARK: - Persistence of custom modes
 
     static func defaultModesURL() -> URL {
-        let base = (try? FileManager.default.url(
-            for: .applicationSupportDirectory,
-            in: .userDomainMask,
-            appropriateFor: nil,
-            create: true
-        )) ?? URL(fileURLWithPath: NSHomeDirectory()).appendingPathComponent("Library/Application Support")
-        return base
-            .appendingPathComponent("Whisper Clipboard v2", isDirectory: true)
-            .appendingPathComponent("modes.json", isDirectory: false)
+        // Uses the shared Application Support base ("Whisper Clipboard v2"), which
+        // resolves inside the app's own sandboxed container on iOS and under
+        // ~/Library/Application Support on the Mac — no platform branching needed.
+        AppSupport.baseDirectory.appendingPathComponent("modes.json", isDirectory: false)
     }
 
     private func loadCustomModes() {

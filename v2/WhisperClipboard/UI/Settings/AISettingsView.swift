@@ -1,4 +1,6 @@
+import Core
 import SwiftUI
+import WhisperShared
 
 /// The "AI" settings tab: Claude API key management (Keychain-backed) with a
 /// connection test, and a custom-mode editor. Built-in modes are read-only but

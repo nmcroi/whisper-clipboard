@@ -16,35 +16,35 @@ import Security
 ///   service, so a second secret (e.g. PLAUD, account ``plaudAccount``) lives
 ///   alongside the API key without any of the logic being duplicated. The static
 ///   members are implemented in terms of an instance for `account`.
-struct KeychainStore {
+public struct KeychainStore: Sendable {
 
     /// Errors surfaced by the wrapper, carrying the underlying `OSStatus` for
     /// diagnostics.
-    enum KeychainError: Error {
+    public enum KeychainError: Error {
         case unexpectedStatus(OSStatus)
     }
 
-    static let service = "nl.nielscroiset.whisperclipboard"
+    public static let service = "nl.nielscroiset.whisperclipboard"
     /// Account for the Claude API key (unchanged).
-    static let account = "anthropic-api-key"
+    public static let account = "anthropic-api-key"
     /// Account for the PLAUD credentials blob (email + password/token as JSON).
-    static let plaudAccount = "plaud-credentials"
+    public static let plaudAccount = "plaud-credentials"
 
     /// The keychain account this instance reads/writes.
-    let account: String
+    public let account: String
 
-    init(account: String) {
+    public init(account: String) {
         self.account = account
     }
 
     /// A store for the PLAUD credentials item.
-    static let plaud = KeychainStore(account: plaudAccount)
+    public static let plaud = KeychainStore(account: plaudAccount)
 
     // MARK: - Instance API (arbitrary account)
 
     /// Saves (or replaces) `value` for this account. An empty/blank value deletes
     /// the entry instead of storing whitespace.
-    func save(_ value: String) throws {
+    public func save(_ value: String) throws {
         let trimmed = value.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !trimmed.isEmpty else {
             try delete()
@@ -83,7 +83,7 @@ struct KeychainStore {
     }
 
     /// Reads the stored value for this account, or `nil` if none is set.
-    func read() throws -> String? {
+    public func read() throws -> String? {
         let query: [String: Any] = [
             kSecClass as String: kSecClassGenericPassword,
             kSecAttrService as String: Self.service,
@@ -106,7 +106,7 @@ struct KeychainStore {
     }
 
     /// Deletes the stored value for this account (no-op if none exists).
-    func delete() throws {
+    public func delete() throws {
         let query: [String: Any] = [
             kSecClass as String: kSecClassGenericPassword,
             kSecAttrService as String: Self.service,
@@ -119,7 +119,7 @@ struct KeychainStore {
     }
 
     /// Convenience: whether a non-empty value is currently stored for this account.
-    func hasValue() -> Bool {
+    public func hasValue() -> Bool {
         (try? read())?.isEmpty == false
     }
 
@@ -128,16 +128,16 @@ struct KeychainStore {
     private static let apiKeyStore = KeychainStore(account: account)
 
     /// Saves (or replaces) the Claude API key. Blank deletes.
-    static func save(_ key: String) throws { try apiKeyStore.save(key) }
+    public static func save(_ key: String) throws { try apiKeyStore.save(key) }
 
     /// Reads the stored API key, or `nil` if none is set.
-    static func read() throws -> String? { try apiKeyStore.read() }
+    public static func read() throws -> String? { try apiKeyStore.read() }
 
     /// Deletes the stored key (no-op if none exists).
-    static func delete() throws { try apiKeyStore.delete() }
+    public static func delete() throws { try apiKeyStore.delete() }
 
     /// Convenience: whether a non-empty key is currently stored.
-    static func hasKey() -> Bool { apiKeyStore.hasValue() }
+    public static func hasKey() -> Bool { apiKeyStore.hasValue() }
 }
 
 // MARK: - PLAUD credentials
@@ -147,21 +147,21 @@ struct KeychainStore {
 /// `AppSettings.plaudEmail` for display, but the password/token live **only**
 /// here. When `token` is present it is used directly as the bearer (the
 /// paste-a-token fallback); otherwise `password` drives an email+password login.
-struct PlaudCredentials: Codable, Equatable, Sendable {
-    var email: String
+public struct PlaudCredentials: Codable, Equatable, Sendable {
+    public var email: String
     /// PLAUD account password (empty when using a pasted token instead).
-    var password: String
+    public var password: String
     /// A raw bearer token pasted by the user (empty when using email+password).
-    var token: String
+    public var token: String
 
-    init(email: String = "", password: String = "", token: String = "") {
+    public init(email: String = "", password: String = "", token: String = "") {
         self.email = email
         self.password = password
         self.token = token
     }
 
     /// True when there is *something* to authenticate with.
-    var isConfigured: Bool {
+    public var isConfigured: Bool {
         !token.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
             || (!email.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
                 && !password.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
@@ -170,7 +170,7 @@ struct PlaudCredentials: Codable, Equatable, Sendable {
     // MARK: Keychain round-trip
 
     /// Loads the stored credentials, or `nil` when none are saved / unreadable.
-    static func load(from store: KeychainStore = .plaud) -> PlaudCredentials? {
+    public static func load(from store: KeychainStore = .plaud) -> PlaudCredentials? {
         guard let json = try? store.read(), let data = json.data(using: .utf8) else { return nil }
         return try? JSONDecoder().decode(PlaudCredentials.self, from: data)
     }
@@ -180,7 +180,7 @@ struct PlaudCredentials: Codable, Equatable, Sendable {
     /// email-only blob is useless (you can't authenticate with it), and the email
     /// is already mirrored into `AppSettings.plaudEmail` for display. So clearing
     /// the password removes the item rather than leaving a dangling secret.
-    func save(to store: KeychainStore = .plaud) throws {
+    public func save(to store: KeychainStore = .plaud) throws {
         let hasSecret = !password.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
             || !token.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
         guard hasSecret else {
