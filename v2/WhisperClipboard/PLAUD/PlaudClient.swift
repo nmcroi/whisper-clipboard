@@ -310,17 +310,22 @@ struct PlaudClient {
     /// returned URL, not the passed `destination`.
     @discardableResult
     func downloadAudio(_ recording: PlaudRecording, token: PlaudToken, to destination: URL) async throws -> URL {
-        // Primary: direct binary download.
+        // Primary: presigned URL with is_opus=false — this yields a
+        // macOS-decodable rendition (mp3/wav). PLAUD's raw device recordings are
+        // Opus, which AudioToolbox/AVFoundation on macOS CANNOT decode, so the
+        // direct binary download returns files the transcription pipeline can't
+        // open. The presigned non-opus path is therefore the correct primary.
         do {
-            let request = Self.makeDownloadRequest(id: recording.id, token: token)
-            return try await downloadToFile(request, preferredDestination: destination)
+            let presigned = try await fetchPresignedURL(id: recording.id, token: token)
+            var req = URLRequest(url: presigned)
+            req.setValue(Self.userAgent, forHTTPHeaderField: "User-Agent")
+            return try await downloadToFile(req, preferredDestination: destination)
         } catch let primaryError {
-            // Fallback: request a presigned URL, then fetch it (no auth header).
+            // Fallback: direct binary download (only useful when PLAUD serves a
+            // decodable container for this recording).
             do {
-                let presigned = try await fetchPresignedURL(id: recording.id, token: token)
-                var req = URLRequest(url: presigned)
-                req.setValue(Self.userAgent, forHTTPHeaderField: "User-Agent")
-                return try await downloadToFile(req, preferredDestination: destination)
+                let request = Self.makeDownloadRequest(id: recording.id, token: token)
+                return try await downloadToFile(request, preferredDestination: destination)
             } catch {
                 // Prefer the more specific/primary error when the fallback also failed.
                 throw primaryError
