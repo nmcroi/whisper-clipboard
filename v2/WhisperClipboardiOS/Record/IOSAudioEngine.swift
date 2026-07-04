@@ -60,10 +60,27 @@ final class IOSAudioEngine {
     private var continuation: AsyncStream<AudioBufferBox>.Continuation?
     private var isRunning = false
     private var interruptionObserver: NSObjectProtocol?
+    private var mediaResetObserver: NSObjectProtocol?
+    /// Bewaard zodat we de tap na een onderbreking opnieuw kunnen installeren.
+    private var tapHandler: (@Sendable (AVAudioPCMBuffer, AVAudioTime) -> Void)?
+    private var nativeFormat: AVAudioFormat?
 
-    /// Called (on the main actor) when the OS interrupts capture, so the record
-    /// controller can finalize what was captured so far.
+    /// Called (on the main actor) when the OS interrupts capture and we could NOT
+    /// keep it alive — the record controller finalizes what was captured so far.
+    /// Used as the fallback (media-services reset, `.ended` zonder `shouldResume`,
+    /// of een mislukte hervatting).
     var onInterruption: (() -> Void)?
+
+    /// Called (on the main actor) when capture is PAUSED by an interruption but
+    /// the session/stream stays alive. The controller reflects this in the UI.
+    var onPause: (() -> Void)?
+
+    /// Called (on the main actor) when a paused capture is successfully RESUMED.
+    var onResume: (() -> Void)?
+
+    /// True while capture is paused by an interruption (engine stopped, maar de
+    /// sessie en de stream leven nog).
+    private(set) var isPaused = false
 
     private var startUptime: Double?
 
@@ -123,11 +140,34 @@ final class IOSAudioEngine {
         ) { [weak self] note in
             guard
                 let raw = note.userInfo?[AVAudioSessionInterruptionTypeKey] as? UInt,
-                let type = AVAudioSession.InterruptionType(rawValue: raw),
-                type == .began
+                let type = AVAudioSession.InterruptionType(rawValue: raw)
             else { return }
-            // Hop to the main actor (the observer queue is .main but the closure
-            // is nonisolated) and let the controller finalize the capture.
+
+            switch type {
+            case .began:
+                Task { @MainActor [weak self] in self?.handleInterruptionBegan() }
+            case .ended:
+                // shouldResume: mag de audio weer opstarten?
+                let options: AVAudioSession.InterruptionOptions
+                if let optRaw = note.userInfo?[AVAudioSessionInterruptionOptionKey] as? UInt {
+                    options = AVAudioSession.InterruptionOptions(rawValue: optRaw)
+                } else {
+                    options = []
+                }
+                let shouldResume = options.contains(.shouldResume)
+                Task { @MainActor [weak self] in self?.handleInterruptionEnded(shouldResume: shouldResume) }
+            @unknown default:
+                break
+            }
+        }
+
+        // Defensief: bij een media-services-reset is de hele audiostack weg —
+        // hervatten kan niet, dus we vallen terug op stop-and-transcribe.
+        mediaResetObserver = NotificationCenter.default.addObserver(
+            forName: AVAudioSession.mediaServicesWereResetNotification,
+            object: AVAudioSession.sharedInstance(),
+            queue: .main
+        ) { [weak self] _ in
             Task { @MainActor [weak self] in
                 guard let self, self.isRunning else { return }
                 self.onInterruption?()
@@ -139,6 +179,52 @@ final class IOSAudioEngine {
         if let interruptionObserver {
             NotificationCenter.default.removeObserver(interruptionObserver)
             self.interruptionObserver = nil
+        }
+        if let mediaResetObserver {
+            NotificationCenter.default.removeObserver(mediaResetObserver)
+            self.mediaResetObserver = nil
+        }
+    }
+
+    // MARK: - Interruption pause / resume
+
+    /// Onderbreking begonnen: PAUZEER de capture. Stop de `AVAudioEngine` maar
+    /// houd de audiosessie én de streaming-transcriptiesessie levend (niet
+    /// deactiveren, niet finaliseren) zodat we naadloos kunnen hervatten.
+    private func handleInterruptionBegan() {
+        guard isRunning, !isPaused else { return }
+        isPaused = true
+        engine.inputNode.removeTap(onBus: 0)
+        engine.pause()
+        levelMeter.reset()
+        onPause?()
+    }
+
+    /// Onderbreking klaar: hervat de capture als dat mag én lukt; anders val terug
+    /// op stop-and-transcribe.
+    private func handleInterruptionEnded(shouldResume: Bool) {
+        guard isRunning, isPaused else { return }
+        guard shouldResume, resumeCapture() else {
+            // Kan niet hervatten → finaliseer wat we hebben.
+            onInterruption?()
+            return
+        }
+        isPaused = false
+        onResume?()
+    }
+
+    /// Herinstalleert de tap en herstart de engine op dezelfde stream. Geeft
+    /// `false` bij falen (dan valt de aanroeper terug op stoppen).
+    private func resumeCapture() -> Bool {
+        guard let tapHandler, let nativeFormat else { return false }
+        do {
+            try AVAudioSession.sharedInstance().setActive(true, options: [])
+            engine.inputNode.installTap(onBus: 0, bufferSize: 4096, format: nativeFormat, block: tapHandler)
+            engine.prepare()
+            try engine.start()
+            return true
+        } catch {
+            return false
         }
     }
 
@@ -171,6 +257,9 @@ final class IOSAudioEngine {
                 self?.handle(buffer: boxed.buffer)
             }
         }
+        // Bewaar tap + formaat zodat we na een onderbreking kunnen hervatten.
+        self.tapHandler = tapHandler
+        self.nativeFormat = nativeFormat
         inputNode.installTap(onBus: 0, bufferSize: 4096, format: nativeFormat, block: tapHandler)
 
         engine.prepare()
@@ -194,9 +283,12 @@ final class IOSAudioEngine {
     private func teardown() {
         guard isRunning else { return }
         isRunning = false
+        isPaused = false
         engine.inputNode.removeTap(onBus: 0)
         engine.stop()
         startUptime = nil
+        tapHandler = nil
+        nativeFormat = nil
         levelMeter.reset()
         continuation?.finish()
         continuation = nil

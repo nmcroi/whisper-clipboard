@@ -51,9 +51,17 @@ struct RecordView: View {
                     controller.toggle()
                 }
                 if controller.isRecording {
-                    Text(Self.formatElapsed(controller.elapsed))
-                        .font(ThemeFont.ui(28, weight: .semibold).monospacedDigit())
-                        .foregroundStyle(Theme.text)
+                    VStack(spacing: 12) {
+                        LevelBars(level: controller.isPaused ? 0 : controller.level)
+                        Text(Self.formatElapsed(controller.elapsed))
+                            .font(ThemeFont.ui(28, weight: .semibold).monospacedDigit())
+                            .foregroundStyle(Theme.text)
+                        if controller.isPaused {
+                            Label("Gepauzeerd (onderbreking)", systemImage: "pause.circle")
+                                .font(ThemeFont.ui(13, weight: .medium))
+                                .foregroundStyle(Theme.danger)
+                        }
+                    }
                 }
                 Spacer()
                 if let result = controller.lastResult, !controller.isRecording {
@@ -81,6 +89,36 @@ struct RecordView: View {
     private static func formatElapsed(_ seconds: Double) -> String {
         let total = Int(seconds)
         return String(format: "%02d:%02d", total / 60, total % 60)
+    }
+}
+
+// MARK: - Level bars
+
+/// Een cluster gele niveau-balken dat op de live RMS-`level` reageert. Poort van
+/// de Mac-`LevelBars`: de balkhoogtes komen uit één scalair niveau via een
+/// center-gewogen profiel (midden hoger dan de randen).
+private struct LevelBars: View {
+    let level: Double
+
+    private let barCount = 7
+
+    var body: some View {
+        HStack(spacing: 4) {
+            ForEach(0..<barCount, id: \.self) { index in
+                Capsule()
+                    .fill(Theme.accent)
+                    .frame(width: 4, height: height(for: index))
+            }
+        }
+        .frame(height: 32, alignment: .center)
+        .animation(.easeOut(duration: 0.12), value: level)
+    }
+
+    private func height(for index: Int) -> CGFloat {
+        let distance = abs(Double(index) - Double(barCount - 1) / 2)
+        let profile = 1.0 - distance / Double(barCount)
+        let magnitude = max(0.15, level) * profile
+        return CGFloat(6 + magnitude * 24)
     }
 }
 

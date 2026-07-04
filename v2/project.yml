@@ -198,6 +198,9 @@ targets:
       - package: FluidAudio
       - package: GRDB
         product: GRDB
+      # De widget-extensie (Live Activity). xcodegen bedt een app_extension-
+      # target automatisch in wanneer die als dependency wordt opgevoerd.
+      - target: WhisperClipboardiOSWidgets
     postCompileScripts:
       - name: Copy bundled fonts into the app bundle
         basedOnDependencyAnalysis: false
@@ -223,6 +226,12 @@ targets:
         UISupportedInterfaceOrientations:
           - UIInterfaceOrientationPortrait
         NSMicrophoneUsageDescription: "Whisper Clipboard gebruikt de microfoon om je spraak lokaal op je iPhone om te zetten naar tekst. Er verlaat geen audio je toestel."
+        # Achtergrond-opname: laat de mic-capture doorlopen wanneer de app op de
+        # achtergrond staat of het scherm vergrendeld is.
+        UIBackgroundModes:
+          - audio
+        # Live Activity (Dynamic Island + lock-screen banner) tijdens de opname.
+        NSSupportsLiveActivities: true
         # Bundled Inter (UI) + Merriweather (wordmark) fonts.
         UIAppFonts:
           - Inter.ttf
@@ -245,6 +254,42 @@ targets:
         # Ad-hoc / dev signing so simulator + generic device builds run without a
         # Developer account. Real signing is supplied on the command line for a
         # device/TestFlight build (mirrors the mac target's parameterization).
+        CODE_SIGN_STYLE: Manual
+        CODE_SIGN_IDENTITY: "-"
+        CODE_SIGNING_REQUIRED: "NO"
+        CODE_SIGNING_ALLOWED: "NO"
+        DEVELOPMENT_TEAM: ""
+
+  # WidgetKit-extensie van de iOS-app. Bevat alleen de Live Activity (Dynamic
+  # Island + lock-screen banner) voor een lopende opname. Bewust licht: geen
+  # GRDB/FluidAudio — alle data reist via de ActivityAttributes/ContentState.
+  WhisperClipboardiOSWidgets:
+    type: app-extension
+    platform: iOS
+    deploymentTarget: "17.0"
+    sources:
+      - path: WhisperClipboardiOSWidgets
+      # Gedeeld attributes-type: in BEIDE targets meegecompileerd (niet via
+      # WhisperShared — dat zou GRDB/FluidAudio de extensie in trekken).
+      - path: WhisperClipboardiOS/Shared/RecordingActivityAttributes.swift
+    info:
+      path: WhisperClipboardiOSWidgets/Info.plist
+      properties:
+        CFBundleDisplayName: Whisper Clipboard
+        CFBundleShortVersionString: $(MARKETING_VERSION)
+        CFBundleVersion: $(CURRENT_PROJECT_VERSION)
+        NSExtension:
+          NSExtensionPointIdentifier: com.apple.widgetkit-extension
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: nl.nielscroiset.whisperclipboard.ios.widgets
+        PRODUCT_NAME: WhisperClipboardiOSWidgets
+        GENERATE_INFOPLIST_FILE: false
+        SWIFT_VERSION: "6.0"
+        MARKETING_VERSION: "2.0.1"
+        CURRENT_PROJECT_VERSION: "2"
+        TARGETED_DEVICE_FAMILY: "1"
+        # Zelfde ad-hoc/dev-signing als de app zodat CI/dev-builds niet breken.
         CODE_SIGN_STYLE: Manual
         CODE_SIGN_IDENTITY: "-"
         CODE_SIGNING_REQUIRED: "NO"

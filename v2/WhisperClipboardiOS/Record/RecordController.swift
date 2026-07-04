@@ -15,6 +15,7 @@ final class RecordController: ObservableObject {
 
     @Published private(set) var isRecording = false
     @Published private(set) var isTranscribing = false
+    @Published private(set) var isPaused = false
     @Published private(set) var elapsed: Double = 0
     @Published private(set) var level: Double = 0
     @Published private(set) var lastResult: String?
@@ -26,6 +27,7 @@ final class RecordController: ObservableObject {
     private var feedTask: Task<Void, Never>?
     private var tickTask: Task<Void, Never>?
     private var levelCancellable: AnyObject?
+    private let liveActivity = RecordingLiveActivityController()
 
     func attach(app: AppModel) {
         self.app = app
@@ -59,12 +61,26 @@ final class RecordController: ObservableObject {
         audio.onInterruption = { [weak self] in
             Task { await self?.stopAndTranscribe() }
         }
+        audio.onPause = { [weak self] in
+            guard let self else { return }
+            self.isPaused = true
+            self.statusLine = "Gepauzeerd (onderbreking)"
+            self.liveActivity.setPaused(true)
+        }
+        audio.onResume = { [weak self] in
+            guard let self else { return }
+            self.isPaused = false
+            self.statusLine = "Bezig met opnemen…"
+            self.liveActivity.setPaused(false)
+        }
         self.audio = audio
 
         do {
             try await engine.startStreaming(locale: Locale(identifier: "nl_NL"))
             let stream = try await audio.start(convertingTo: format)
             isRecording = true
+            isPaused = false
+            liveActivity.start()
             startTicking(audio: audio)
             // Pump captured buffers into the engine off the record loop.
             feedTask = Task { [weak self] in
@@ -76,6 +92,7 @@ final class RecordController: ObservableObject {
         } catch {
             await engine.cancel()
             self.audio = nil
+            liveActivity.end()
             fail(error.localizedDescription)
         }
     }
@@ -87,7 +104,10 @@ final class RecordController: ObservableObject {
                 await MainActor.run {
                     guard let self, self.isRecording else { return }
                     self.elapsed = audio.elapsed
-                    self.level = audio.levelMeter.level
+                    // Tijdens pauze geen levels doorsturen (blijft op 0 staan).
+                    let live = audio.isPaused ? 0 : audio.levelMeter.level
+                    self.level = live
+                    self.liveActivity.push(level: live)
                 }
                 try? await Task.sleep(nanoseconds: 60_000_000)
             }
@@ -99,9 +119,11 @@ final class RecordController: ObservableObject {
     private func stopAndTranscribe() async {
         guard isRecording, let app else { return }
         isRecording = false
+        isPaused = false
         tickTask?.cancel()
         tickTask = nil
         level = 0
+        liveActivity.end()
 
         audio?.stop()
         // Let the last in-flight buffers drain into the engine.
@@ -162,9 +184,11 @@ final class RecordController: ObservableObject {
 
     private func fail(_ message: String) {
         isRecording = false
+        isPaused = false
         isTranscribing = false
         tickTask?.cancel()
         tickTask = nil
+        liveActivity.end()
         app?.errorMessage = message
         statusLine = "Er ging iets mis. Tik om opnieuw te proberen."
     }

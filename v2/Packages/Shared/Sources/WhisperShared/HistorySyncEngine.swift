@@ -204,13 +204,18 @@ public final class HistorySyncEngine: NSObject {
     /// framework (`SecTask*`), which is precise and non-trapping — this correctly
     /// returns false for ad-hoc dev builds, CI, and the test host.
     ///
-    /// On **iOS** those `SecTask` SPIs are not in the public SDK. A signed iOS
-    /// build (the only way it reaches a device or TestFlight) always carries the
-    /// entitlement, so there the accurate proxy is "is there an iCloud ubiquity
-    /// token" — handled by the next guard in `accountIsAvailable`. The unsigned
-    /// `generic/platform=iOS` verify build never launches, and CI has no account,
-    /// so neither reaches CKContainer. We therefore return `true` here on iOS and
-    /// let the ubiquity-token check gate it.
+    /// On **iOS** the `SecTask*` entitlement SPIs are not in the public SDK, so we
+    /// read `com.apple.developer.icloud-container-identifiers` from the embedded
+    /// provisioning profile instead. Dev and TestFlight builds always embed
+    /// `embedded.mobileprovision`; a build signed WITHOUT the iCloud container (the
+    /// wifi test builds, whose App ID has no iCloud capability yet) carries a
+    /// profile that doesn't list the container, so this returns false and the
+    /// engine stays dormant instead of trapping in `CKContainer(identifier:)`.
+    /// An App Store build has no embedded profile → we assume entitled, since
+    /// Apple guarantees the signed entitlements match the App ID. This matches
+    /// every signing path this project uses: we either sign with the real iCloud
+    /// entitlements against an iCloud-enabled App ID (→ profile lists it → true),
+    /// or without them against a plain App ID (→ absent → false).
     static func hasCloudKitEntitlement(for containerIdentifier: String) -> Bool {
         #if os(macOS)
         guard let task = SecTaskCreateFromSelf(nil) else { return false }
@@ -221,9 +226,32 @@ public final class HistorySyncEngine: NSObject {
         }
         return false
         #else
-        return true
+        guard let url = Bundle.main.url(forResource: "embedded", withExtension: "mobileprovision"),
+              let data = try? Data(contentsOf: url) else {
+            // No embedded profile (App Store build) → trust the signed entitlements.
+            return true
+        }
+        guard let ids = Self.icloudContainerIDs(fromProfile: data) else { return false }
+        return ids.contains(containerIdentifier)
         #endif
     }
+
+    #if !os(macOS)
+    /// Extracts `icloud-container-identifiers` from a `.mobileprovision`. The file
+    /// is CMS-signed, but the profile plist sits as plain XML between the `<plist>`
+    /// tags — we slice that out and parse it (no CMS decoding needed).
+    private static func icloudContainerIDs(fromProfile data: Data) -> [String]? {
+        guard let start = data.range(of: Data("<plist".utf8)),
+              let end = data.range(of: Data("</plist>".utf8)) else { return nil }
+        let plistData = data[start.lowerBound..<end.upperBound]
+        guard
+            let plist = try? PropertyListSerialization.propertyList(
+                from: plistData, options: [], format: nil) as? [String: Any],
+            let entitlements = plist["Entitlements"] as? [String: Any]
+        else { return nil }
+        return entitlements["com.apple.developer.icloud-container-identifiers"] as? [String]
+    }
+    #endif
 
     // MARK: - Outbound
 
