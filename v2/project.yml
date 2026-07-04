@@ -99,6 +99,9 @@ targets:
       properties:
         CFBundleDevelopmentRegion: nl
         CFBundleDisplayName: Whisper Clipboard
+        # Also the menu-bar app-name when active (defaults to PRODUCT_NAME
+        # "WhisperClipboard" without a space otherwise).
+        CFBundleName: Whisper Clipboard
         CFBundleIconFile: AppIcon
         CFBundleShortVersionString: $(MARKETING_VERSION)
         CFBundleVersion: $(CURRENT_PROJECT_VERSION)

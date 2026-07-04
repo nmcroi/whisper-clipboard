@@ -319,6 +319,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         trackedWindows.insert(id)
         openWindowCount += 1
         NSApp.setActivationPolicy(.regular)
+        // Becoming .regular alone shows the window on top but leaves the
+        // previously-active app owning the menu bar. Activate so Whisper
+        // Clipboard actually becomes frontmost and its menu bar appears.
+        NSApp.activate(ignoringOtherApps: true)
     }
 
     @objc private func windowWillClose(_ notification: Notification) {
