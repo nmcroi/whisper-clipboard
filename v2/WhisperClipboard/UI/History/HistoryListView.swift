@@ -126,6 +126,7 @@ struct HistoryListView: View {
         case .all: return "Alles"
         case .mic: return "Microfoon"
         case .file: return "Bestanden"
+        case .plaud: return "PLAUD"
         }
     }
 

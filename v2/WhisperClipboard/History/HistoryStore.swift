@@ -8,6 +8,7 @@ enum HistoryFilter: String, CaseIterable, Sendable {
     case all
     case mic
     case file
+    case plaud
 }
 
 /// @MainActor store wrapping a GRDB `DatabaseQueue` at
@@ -458,6 +459,9 @@ final class HistoryStore: ObservableObject {
             // "Bestand" also covers live-captions sessions (both are non-mic).
             conditions.append("t.source IN (?, ?)")
             _ = args.append(contentsOf: StatementArguments(["file", "captions"]))
+        case .plaud:
+            conditions.append("t.source = ?")
+            _ = args.append(contentsOf: StatementArguments(["plaud"]))
         }
 
         let clause = conditions.isEmpty ? "" : "WHERE " + conditions.joined(separator: " AND ")
