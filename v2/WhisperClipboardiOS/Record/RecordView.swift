@@ -103,11 +103,14 @@ private struct RecordButton: View {
                     // Live level ripple while recording.
                     .scaleEffect(isRecording ? 1 + CGFloat(level) * 0.08 : 1)
 
-                RoundedRectangle(cornerRadius: isRecording ? 8 : 30, style: .continuous)
+                // Proportions match the app icon: the rounded square is ~42% of
+                // the ring's diameter (not a fat fill), so button and icon read
+                // as the same motif.
+                RoundedRectangle(cornerRadius: isRecording ? 8 : 14, style: .continuous)
                     .fill(isRecording ? Theme.danger : Theme.accent)
                     .frame(
-                        width: isRecording ? 46 : 96,
-                        height: isRecording ? 46 : 96
+                        width: isRecording ? 46 : 56,
+                        height: isRecording ? 46 : 56
                     )
 
                 if isBusy {
