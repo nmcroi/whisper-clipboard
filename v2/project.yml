@@ -12,8 +12,8 @@ settings:
   base:
     SWIFT_VERSION: "6.0"
     SWIFT_STRICT_CONCURRENCY: complete # Swift 6 language mode
-    MARKETING_VERSION: "2.0.0"
-    CURRENT_PROJECT_VERSION: "1"
+    MARKETING_VERSION: "2.0.1"
+    CURRENT_PROJECT_VERSION: "2"
     # Signing is deliberately parameterized so the SAME project builds two ways:
     #   • Local dev / CI (this file as-is): ad-hoc identity "-", no team, so a
     #     plain `xcodebuild` runs without a Developer account or provisioning.
@@ -140,8 +140,8 @@ targets:
         PRODUCT_NAME: WhisperClipboard
         GENERATE_INFOPLIST_FILE: false
         SWIFT_VERSION: "6.0"
-        MARKETING_VERSION: "2.0.0"
-        CURRENT_PROJECT_VERSION: "1"
+        MARKETING_VERSION: "2.0.1"
+        CURRENT_PROJECT_VERSION: "2"
 
   WhisperClipboardTests:
     type: bundle.unit-test

@@ -242,9 +242,14 @@ ok "codesign --verify --deep --strict passed"
 # multi-minute notarization round-trip. (Skipped ad-hoc, which has neither.)
 if [[ "${ADHOC}" -eq 0 ]]; then
   autoupdate_ok() {  # Developer ID authority AND a secure timestamp present?
-    local au="$1"
-    codesign -dvv "${au}" 2>&1 | grep -q "Authority=Developer ID Application" \
-      && codesign -dvv "${au}" 2>&1 | grep -q "^Timestamp="
+    # NOTE: capture codesign's output first instead of piping into `grep -q`.
+    # Under `set -o pipefail`, grep -q exits on first match and codesign dies
+    # with SIGPIPE (141) — the pipeline then reads as failure even though the
+    # signature is fine. That false negative burned a full release run.
+    local au="$1" out
+    out="$(codesign -dvv "${au}" 2>&1 || true)"
+    grep -q "Authority=Developer ID Application" <<< "${out}" \
+      && grep -q "^Timestamp=" <<< "${out}"
   }
   while IFS= read -r -d '' au; do
     if ! autoupdate_ok "${au}"; then
