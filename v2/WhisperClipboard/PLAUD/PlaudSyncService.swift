@@ -52,6 +52,14 @@ final class PlaudSyncService {
     /// True while a sync run is in flight (guards against overlap).
     private(set) var isSyncing = false
 
+    /// TEMPORARY test throttle: cap how many new recordings a single sync
+    /// downloads+imports (newest first). Nil = no cap (full history). Set to a
+    /// small number to verify the pipeline end-to-end without pulling a large
+    /// backlog. When a run is capped, the checkpoint is NOT advanced, so the
+    /// remaining recordings stay eligible and each subsequent sync fetches the
+    /// next batch. TODO: promote to an AppSettings option and default to nil.
+    static let maxRecordingsPerSync: Int? = 1
+
     // MARK: - Dependencies
 
     /// Current settings (enabled flag, interval, email). Read on demand.
@@ -199,7 +207,21 @@ final class PlaudSyncService {
             let token = try await client.token(for: credentials)
             let recordings = try await client.listRecordings(token: token, since: since)
             // Single-pass dedup against the persisted processed set.
-            let toDownload = recordings.filter { !processed.contains($0.id) }
+            let allNew = recordings.filter { !processed.contains($0.id) }
+            // Newest first, then optionally cap this run (test throttle). When
+            // capped, we leave older items for later runs and hold the checkpoint.
+            let sortedNew = allNew.sorted {
+                ($0.startTime ?? .distantPast) > ($1.startTime ?? .distantPast)
+            }
+            let toDownload: [PlaudRecording]
+            let didCap: Bool
+            if let cap = Self.maxRecordingsPerSync, sortedNew.count > cap {
+                toDownload = Array(sortedNew.prefix(cap))
+                didCap = true
+            } else {
+                toDownload = sortedNew
+                didCap = false
+            }
 
             guard !toDownload.isEmpty else {
                 recordCheckpoint(runStartedAt)
@@ -260,9 +282,10 @@ final class PlaudSyncService {
             }
 
             store.save(processed)
-            // Only advance the checkpoint when nothing was left behind; otherwise
-            // the next run must still be able to re-list the skipped/refused items.
-            if allHandled {
+            // Only advance the checkpoint when nothing was left behind: every
+            // intended item handled AND the run wasn't capped (a capped run
+            // deliberately leaves newer-than-checkpoint items for the next sync).
+            if allHandled && !didCap {
                 recordCheckpoint(runStartedAt)
             }
             setSuccess(imported: acceptedURLs.count)
