@@ -20,6 +20,12 @@ struct PlaudSettingsView: View {
     /// and after every save/test, so `body` never does a synchronous Keychain read
     /// (`SecItemCopyMatching`) on each SwiftUI render.
     @State private var credentialsSaved = false
+    /// True while the interval "Aangepast…" custom field is shown. Set on appear to
+    /// match a stored value that isn't one of the presets, and toggled by the Picker.
+    @State private var intervalIsCustom = false
+    /// The raw text in the custom-interval field (minutes). Committed (clamped) on
+    /// submit/blur; kept as text so a mid-edit empty field doesn't reset to 1.
+    @State private var customIntervalText = ""
 
     enum TestState: Equatable {
         case idle
@@ -27,6 +33,14 @@ struct PlaudSettingsView: View {
         case success
         case failure(String)
     }
+
+    /// Sensible interval presets (minutes) offered in the menu, plus an
+    /// "Aangepast…" escape hatch for any other value.
+    private static let intervalPresets = [5, 10, 15, 30, 60, 120, 240]
+
+    /// Window presets (days) offered near the sync section; `0` = "Alles" (all
+    /// history). Wired to `plaudSyncWindowDays`.
+    private static let windowPresets = [7, 30, 90, 365, 0]
 
     var body: some View {
         ScrollView {
@@ -177,24 +191,79 @@ struct PlaudSettingsView: View {
             .toggleStyle(.switch)
             .tint(Theme.accent)
 
-            // Interval stepper.
-            HStack {
-                Text("Interval")
-                    .font(ThemeFont.ui(13))
-                    .foregroundStyle(Theme.text)
-                Spacer()
-                Stepper(value: Binding(
-                    get: { environment.settings.plaudSyncIntervalMinutes },
-                    set: { newValue in
-                        environment.settings.plaudSyncIntervalMinutes = PlaudSyncLogic.clampIntervalMinutes(newValue)
-                        environment.plaudSync.refresh()
+            // Interval: a menu of sensible presets plus an "Aangepast…" option that
+            // reveals a numeric field for any value (1…1440 min).
+            VStack(alignment: .leading, spacing: 8) {
+                HStack {
+                    Text("Interval")
+                        .font(ThemeFont.ui(13))
+                        .foregroundStyle(Theme.text)
+                    Spacer()
+                    Picker("", selection: intervalPickerSelection) {
+                        ForEach(Self.intervalPresets, id: \.self) { minutes in
+                            Text(Self.intervalLabel(minutes)).tag(minutes)
+                        }
+                        Divider()
+                        Text("Aangepast…").tag(Self.customIntervalTag)
                     }
-                ), in: 1...240, step: 1) {
-                    Text("Elke \(environment.settings.plaudSyncIntervalMinutes) min")
-                        .font(ThemeFont.ui(12))
-                        .foregroundStyle(Theme.textSecondary)
-                        .monospacedDigit()
+                    .labelsHidden()
+                    .fixedSize()
+                    .tint(Theme.accent)
                 }
+
+                if intervalIsCustom {
+                    HStack(spacing: 8) {
+                        TextField("minuten", text: $customIntervalText)
+                            .textFieldStyle(.plain)
+                            .font(ThemeFont.ui(12))
+                            .foregroundStyle(Theme.text)
+                            .multilineTextAlignment(.trailing)
+                            .frame(width: 64)
+                            .padding(.horizontal, 10)
+                            .padding(.vertical, 6)
+                            .background(Theme.surfaceHover)
+                            .clipShape(RoundedRectangle(cornerRadius: Theme.Metrics.radius))
+                            .overlay(RoundedRectangle(cornerRadius: Theme.Metrics.radius).strokeBorder(Theme.border, lineWidth: 1))
+                            .onSubmit(commitCustomInterval)
+                        Text("minuten (1–1440)")
+                            .font(ThemeFont.ui(11))
+                            .foregroundStyle(Theme.textSecondary)
+                        Button("Toepassen", action: commitCustomInterval)
+                            .buttonStyle(SecondaryButtonStyle())
+                        Spacer(minLength: 0)
+                    }
+                }
+            }
+            .disabled(!environment.settings.plaudSyncEnabled)
+            .opacity(environment.settings.plaudSyncEnabled ? 1 : 0.5)
+
+            // Sync window: how far back a sync looks. Same preset-menu pattern.
+            HStack {
+                VStack(alignment: .leading, spacing: 2) {
+                    Text("Haal de laatste dagen op")
+                        .font(ThemeFont.ui(13))
+                        .foregroundStyle(Theme.text)
+                    Text("Beperkt hoe ver terug een synchronisatie zoekt. Voorkomt dat de eerste keer je hele PLAUD-geschiedenis wordt opgehaald.")
+                        .font(ThemeFont.ui(11))
+                        .foregroundStyle(Theme.textSecondary)
+                        .fixedSize(horizontal: false, vertical: true)
+                }
+                Spacer(minLength: 12)
+                Picker("", selection: Binding(
+                    get: { environment.settings.plaudSyncWindowDays },
+                    set: { environment.settings.plaudSyncWindowDays = max(0, $0) }
+                )) {
+                    ForEach(Self.windowPresets, id: \.self) { days in
+                        Text(Self.windowLabel(days)).tag(days)
+                    }
+                    // Show a stored non-preset value as a selectable extra tag so the
+                    // menu doesn't blank out (e.g. a hand-edited settings.json).
+                    if !Self.windowPresets.contains(environment.settings.plaudSyncWindowDays) {
+                        Text(Self.windowLabel(environment.settings.plaudSyncWindowDays))
+                            .tag(environment.settings.plaudSyncWindowDays)
+                    }
+                }
+                .labelsHidden()
                 .fixedSize()
                 .tint(Theme.accent)
             }
@@ -270,6 +339,74 @@ struct PlaudSettingsView: View {
         return formatter.string(from: date)
     }
 
+    // MARK: - Interval picker helpers
+
+    /// Sentinel tag for the "Aangepast…" menu item (an out-of-range minute value so
+    /// it can never collide with a real interval).
+    private static let customIntervalTag = -1
+
+    /// Binding driving the interval Picker. Reading maps the stored interval to a
+    /// preset tag, or the custom tag when it isn't a preset (so a custom value shows
+    /// as "Aangepast…" selected). Writing either applies a preset immediately or
+    /// switches into custom mode (seeding the field with the current value).
+    private var intervalPickerSelection: Binding<Int> {
+        Binding(
+            get: {
+                let current = environment.settings.plaudSyncIntervalMinutes
+                if intervalIsCustom { return Self.customIntervalTag }
+                return Self.intervalPresets.contains(current) ? current : Self.customIntervalTag
+            },
+            set: { tag in
+                if tag == Self.customIntervalTag {
+                    // Enter custom mode; seed the field with the current interval.
+                    customIntervalText = String(environment.settings.plaudSyncIntervalMinutes)
+                    intervalIsCustom = true
+                } else {
+                    intervalIsCustom = false
+                    applyInterval(tag)
+                }
+            }
+        )
+    }
+
+    /// Applies a new poll interval (clamped) and reschedules the sync timer so the
+    /// change takes effect without relaunch.
+    private func applyInterval(_ minutes: Int) {
+        environment.settings.plaudSyncIntervalMinutes = PlaudSyncLogic.clampIntervalMinutes(minutes)
+        environment.plaudSync.refresh()
+    }
+
+    /// Commits the custom-interval field: parse → clamp → apply. An unparseable or
+    /// empty field falls back to the current stored value (no-op) and re-syncs the
+    /// text so the field shows the effective value.
+    private func commitCustomInterval() {
+        let trimmed = customIntervalText.trimmingCharacters(in: .whitespaces)
+        if let value = Int(trimmed) {
+            applyInterval(value)
+        }
+        // Reflect the clamped/effective value back into the field.
+        customIntervalText = String(environment.settings.plaudSyncIntervalMinutes)
+    }
+
+    /// A Dutch label for an interval preset, e.g. "Elke 30 minuten" / "Elk uur".
+    private static func intervalLabel(_ minutes: Int) -> String {
+        switch minutes {
+        case 60: return "Elk uur"
+        case 120: return "Elke 2 uur"
+        case 240: return "Elke 4 uur"
+        default: return "Elke \(minutes) minuten"
+        }
+    }
+
+    /// A Dutch label for a window preset (days); `0` = "Alles".
+    private static func windowLabel(_ days: Int) -> String {
+        switch days {
+        case 0: return "Alles"
+        case 365: return "1 jaar"
+        default: return "\(days) dagen"
+        }
+    }
+
     // MARK: - Derived
 
     private var credentialsEntered: Bool {
@@ -289,6 +426,13 @@ struct PlaudSettingsView: View {
 
     private func loadCredentials() {
         guard !loaded else { return }
+        // Open the interval control in custom mode when the stored value isn't a
+        // preset, seeding the field so it shows the actual value.
+        let interval = environment.settings.plaudSyncIntervalMinutes
+        if !Self.intervalPresets.contains(interval) {
+            intervalIsCustom = true
+            customIntervalText = String(interval)
+        }
         if let creds = PlaudCredentials.load() {
             email = creds.email
             password = creds.password

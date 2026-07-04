@@ -43,4 +43,41 @@ public enum PlaudSyncLogic {
     public static func clampIntervalMinutes(_ minutes: Int) -> Int {
         min(max(minutes, 1), 24 * 60)
     }
+
+    // MARK: - Sync window
+
+    /// The earliest recording start-time a sync of `windowDays` should consider,
+    /// relative to `now`. `windowDays <= 0` means "no window" (all history) → nil.
+    /// Negative day counts are treated as 0 (defensive; the UI clamps to ≥ 0).
+    public static func windowCutoff(windowDays: Int, now: Date) -> Date? {
+        guard windowDays > 0 else { return nil }
+        return now.addingTimeInterval(-Double(windowDays) * 24 * 60 * 60)
+    }
+
+    /// The effective `since` to hand PLAUD's list endpoint, combining the persisted
+    /// checkpoint (minus an overlap margin, so a recording that landed slightly out
+    /// of order is never missed) with the sync window:
+    ///
+    /// - `windowDays == 0` → checkpoint-only behaviour: `checkpoint − overlap`, or
+    ///   `nil` on a first run (no checkpoint = list all history once).
+    /// - `windowDays > 0` → the **later** (more recent) of the checkpoint bound and
+    ///   the window cutoff, so even a first sync with an empty checkpoint only pulls
+    ///   the last N days instead of the entire history. Once a checkpoint exists and
+    ///   is newer than the cutoff, it wins (incremental sync stays cheap).
+    public static func effectiveSince(
+        checkpoint: Date?,
+        overlap: TimeInterval,
+        windowDays: Int,
+        now: Date
+    ) -> Date? {
+        let checkpointBound = checkpoint.map { $0.addingTimeInterval(-overlap) }
+        guard let cutoff = windowCutoff(windowDays: windowDays, now: now) else {
+            // No window: pure checkpoint behaviour (nil on first run = all history).
+            return checkpointBound
+        }
+        guard let checkpointBound else { return cutoff }
+        // Both present: the more recent bound wins (never look back past the window,
+        // and never re-list further than the checkpoint already covers).
+        return max(checkpointBound, cutoff)
+    }
 }

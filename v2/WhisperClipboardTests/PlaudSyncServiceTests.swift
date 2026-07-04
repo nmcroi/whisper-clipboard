@@ -24,11 +24,16 @@ final class PlaudSyncServiceTests: XCTestCase {
     }
 
     private func makeService(
+        windowDays: Int = 0,
         importer: @escaping ([URL]) -> [URL] = { $0 },
         isBusy: @escaping () -> Bool = { false }
     ) -> PlaudSyncService {
         var settings = AppSettings()
         settings.plaudSyncEnabled = true
+        // Default the checkpoint/dedup tests to windowDays == 0 (all history) so
+        // they exercise the classic checkpoint behaviour; the window tests pass an
+        // explicit value.
+        settings.plaudSyncWindowDays = windowDays
         let client = PlaudClient(session: PlaudRouteURLProtocol.session(), region: .us)
         return PlaudSyncService(
             settings: { settings },
@@ -202,6 +207,85 @@ final class PlaudSyncServiceTests: XCTestCase {
             FileManager.default.fileExists(atPath: checkpointURL.path),
             "a rejected recording holds the checkpoint back"
         )
+    }
+
+    // MARK: - Sync window (replaces the old per-sync throttle)
+
+    /// A first run (empty checkpoint) with a 30-day window imports only recordings
+    /// whose start_time is inside the window; an older one is filtered out
+    /// client-side even though the list endpoint returns it.
+    func testFirstRunWithWindowFetchesOnlyRecentRecordings() async throws {
+        let nowMs = Int(Date().timeIntervalSince1970 * 1000)
+        let dayMs = 24 * 60 * 60 * 1000
+        // One recent (2 days old) and one ancient (100 days old) recording.
+        let recentMs = nowMs - 2 * dayMs
+        let ancientMs = nowMs - 100 * dayMs
+
+        PlaudRouteURLProtocol.handler = { request in
+            if request.url?.path.hasPrefix("/file/download/") == true {
+                return (200, ["Content-Type": "audio/mpeg"], Data([1, 2, 3]))
+            }
+            return (200, [:], PlaudClientIntegrationTests.listPage(startTimes: [recentMs, ancientMs]))
+        }
+
+        var imported: [[URL]] = []
+        let service = makeService(windowDays: 30, importer: { imported.append($0); return $0 })
+        await service.performSync(trigger: .manual)
+
+        // Only the recent recording is inside the 30-day window.
+        XCTAssertEqual(service.lastImportedCount, 1, "only the in-window recording is imported")
+        XCTAssertEqual(imported.count, 1)
+        XCTAssertEqual(imported.first?.count, 1)
+        XCTAssertNil(service.lastError)
+    }
+
+    /// windowDays == 0 (all history): even an ancient recording on a first run is
+    /// fetched — nothing is filtered out.
+    func testWindowZeroFetchesAllHistory() async throws {
+        let nowMs = Int(Date().timeIntervalSince1970 * 1000)
+        let ancientMs = nowMs - 365 * 24 * 60 * 60 * 1000 // a year old
+
+        PlaudRouteURLProtocol.handler = { request in
+            if request.url?.path.hasPrefix("/file/download/") == true {
+                return (200, ["Content-Type": "audio/mpeg"], Data([1, 2, 3]))
+            }
+            return (200, [:], PlaudClientIntegrationTests.listPage(startTimes: [ancientMs]))
+        }
+
+        var imported: [[URL]] = []
+        let service = makeService(windowDays: 0, importer: { imported.append($0); return $0 })
+        await service.performSync(trigger: .manual)
+
+        XCTAssertEqual(service.lastImportedCount, 1, "windowDays == 0 fetches all history")
+        XCTAssertEqual(imported.count, 1)
+        XCTAssertNil(service.lastError)
+    }
+
+    /// The checkpoint/processed semantics still hold with a window: a first run
+    /// inside the window imports and advances the checkpoint; a second run dedups.
+    func testWindowStillDedupsAndCheckpointsAcrossRuns() async throws {
+        let nowMs = Int(Date().timeIntervalSince1970 * 1000)
+        PlaudRouteURLProtocol.handler = { request in
+            if request.url?.path.hasPrefix("/file/download/") == true {
+                return (200, ["Content-Type": "audio/mpeg"], Data([5]))
+            }
+            return (200, [:], PlaudClientIntegrationTests.listPage(startTimes: [nowMs]))
+        }
+
+        var imported: [[URL]] = []
+        let service = makeService(windowDays: 30, importer: { imported.append($0); return $0 })
+
+        await service.performSync(trigger: .manual)
+        XCTAssertEqual(service.lastImportedCount, 1)
+        // Checkpoint advanced.
+        let cpURL = tempDir.appendingPathComponent("plaud-last-sync.json")
+        XCTAssertTrue(FileManager.default.fileExists(atPath: cpURL.path))
+
+        // Second run: same recording is processed → dedup → imports 0.
+        await service.performSync(trigger: .manual)
+        XCTAssertEqual(service.lastImportedCount, 0)
+        XCTAssertEqual(imported.count, 1, "no re-import of the dedup'd recording")
+        XCTAssertNil(service.lastError)
     }
 
     /// Missing credentials fail fast with the Dutch message, no network.

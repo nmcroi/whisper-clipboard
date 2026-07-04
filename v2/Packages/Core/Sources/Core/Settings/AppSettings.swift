@@ -80,6 +80,11 @@ public struct AppSettings: Codable, Equatable, Sendable {
     /// Poll interval (minutes) when PLAUD sync is enabled. Clamped to a sane range
     /// at the call site. Default 15.
     public var plaudSyncIntervalMinutes: Int
+    /// How far back (in days) a sync looks for recordings. Bounds both the `since`
+    /// passed to PLAUD's list endpoint and a client-side cutoff, so a first sync on
+    /// a large account only pulls the last N days instead of the entire history.
+    /// `0` = no window (all history). Default 30.
+    public var plaudSyncWindowDays: Int
     /// The PLAUD account email. Shown in Settings; the password/token live **only**
     /// in the Keychain (never here). Empty = not configured.
     public var plaudEmail: String
@@ -107,6 +112,7 @@ public struct AppSettings: Codable, Equatable, Sendable {
         watchedFolders: [String] = [],
         plaudSyncEnabled: Bool = false,
         plaudSyncIntervalMinutes: Int = 15,
+        plaudSyncWindowDays: Int = 30,
         plaudEmail: String = ""
     ) {
         self.hotkeyMode = hotkeyMode
@@ -131,6 +137,7 @@ public struct AppSettings: Codable, Equatable, Sendable {
         self.watchedFolders = watchedFolders
         self.plaudSyncEnabled = plaudSyncEnabled
         self.plaudSyncIntervalMinutes = plaudSyncIntervalMinutes
+        self.plaudSyncWindowDays = plaudSyncWindowDays
         self.plaudEmail = plaudEmail
     }
 
@@ -144,7 +151,7 @@ public struct AppSettings: Codable, Equatable, Sendable {
         case diarizeImports
         case historyRetention, initialPrompt, hudLingerSeconds
         case removeFillers, autoExportEnabled, autoExportDirectory, autoExportFormat, watchedFolders
-        case plaudSyncEnabled, plaudSyncIntervalMinutes, plaudEmail
+        case plaudSyncEnabled, plaudSyncIntervalMinutes, plaudSyncWindowDays, plaudEmail
     }
 
     public init(from decoder: Decoder) throws {
@@ -172,6 +179,7 @@ public struct AppSettings: Codable, Equatable, Sendable {
         self.watchedFolders = try c.decodeIfPresent([String].self, forKey: .watchedFolders) ?? d.watchedFolders
         self.plaudSyncEnabled = try c.decodeIfPresent(Bool.self, forKey: .plaudSyncEnabled) ?? d.plaudSyncEnabled
         self.plaudSyncIntervalMinutes = try c.decodeIfPresent(Int.self, forKey: .plaudSyncIntervalMinutes) ?? d.plaudSyncIntervalMinutes
+        self.plaudSyncWindowDays = try c.decodeIfPresent(Int.self, forKey: .plaudSyncWindowDays) ?? d.plaudSyncWindowDays
         self.plaudEmail = try c.decodeIfPresent(String.self, forKey: .plaudEmail) ?? d.plaudEmail
     }
 }

@@ -8,12 +8,20 @@ import Observation
 /// ## Strategy
 /// A periodic **timer poll** (every `plaudSyncIntervalMinutes`, default 15) plus
 /// a manual "Synchroniseer nu". Each run: resolve a token (login from stored
-/// email+password, or use a pasted token), list recordings **newer than the last
-/// successful sync** (minus an overlap margin), dedup them against a persisted set
-/// of processed recording ids, download each new one's audio to a dedicated PLAUD
-/// dir, and enqueue it into ``FileImportService`` — which gives transcription,
-/// diarization, history, auto-export and AI for free. The interval clamp lives in
-/// the pure ``Core/PlaudSyncLogic``.
+/// email+password, or use a pasted token), list recordings within the **sync
+/// window** and **newer than the last successful sync** (minus an overlap margin),
+/// dedup them against a persisted set of processed recording ids, download each
+/// new one's audio to a dedicated PLAUD dir, and enqueue it into
+/// ``FileImportService`` — which gives transcription, diarization, history,
+/// auto-export and AI for free. The interval clamp and the window/`since` math
+/// live in the pure ``Core/PlaudSyncLogic``.
+///
+/// ## Sync window
+/// `plaudSyncWindowDays` (default 30; 0 = all history) bounds how far back a sync
+/// reaches. It shapes the effective `since` passed to the list endpoint — so even
+/// a first sync on an empty checkpoint only pulls the last N days, not the entire
+/// history — and is re-applied client-side as a belt-and-suspenders cutoff on each
+/// listed recording's `startTime`, since PLAUD's `since` may be coarse.
 ///
 /// ## De-duplication across restarts
 /// Every downloaded recording's PLAUD `id` is persisted to a small
@@ -51,14 +59,6 @@ final class PlaudSyncService {
     private(set) var lastError: String?
     /// True while a sync run is in flight (guards against overlap).
     private(set) var isSyncing = false
-
-    /// TEMPORARY test throttle: cap how many new recordings a single sync
-    /// downloads+imports (newest first). Nil = no cap (full history). Set to a
-    /// small number to verify the pipeline end-to-end without pulling a large
-    /// backlog. When a run is capped, the checkpoint is NOT advanced, so the
-    /// remaining recordings stay eligible and each subsequent sync fetches the
-    /// next batch. TODO: promote to an AppSettings option and default to nil.
-    static let maxRecordingsPerSync: Int? = 1
 
     // MARK: - Dependencies
 
@@ -197,30 +197,39 @@ final class PlaudSyncService {
         // Capture the run's start *before* the network call: on success we persist
         // this as the new checkpoint, so anything that lands in PLAUD's cloud
         // during this run is still re-fetched next time (belt-and-braces with the
-        // overlap margin below).
+        // overlap margin below). The window cutoff is anchored to the same instant.
         let runStartedAt = Date()
-        // Only ask PLAUD for recordings newer than the last success, minus an
-        // overlap margin; nil on a first run (full history once).
-        let since = lastSuccessfulSync.map { $0.addingTimeInterval(-Self.syncOverlapMargin) }
+        let windowDays = settings().plaudSyncWindowDays
+        // The effective `since`: the more recent of (checkpoint − overlap) and the
+        // window cutoff (now − windowDays). On a first run with a window this is the
+        // window cutoff (not nil), so an empty checkpoint doesn't pull all history;
+        // with windowDays == 0 it's the checkpoint bound (nil on the first run).
+        let since = PlaudSyncLogic.effectiveSince(
+            checkpoint: lastSuccessfulSync,
+            overlap: Self.syncOverlapMargin,
+            windowDays: windowDays,
+            now: runStartedAt
+        )
+        // A client-side cutoff re-applied to each listed recording, since PLAUD's
+        // `since` may be coarse. nil when there is no window (windowDays == 0).
+        let windowCutoff = PlaudSyncLogic.windowCutoff(windowDays: windowDays, now: runStartedAt)
 
         do {
             let token = try await client.token(for: credentials)
             let recordings = try await client.listRecordings(token: token, since: since)
-            // Single-pass dedup against the persisted processed set.
-            let allNew = recordings.filter { !processed.contains($0.id) }
-            // Newest first, then optionally cap this run (test throttle). When
-            // capped, we leave older items for later runs and hold the checkpoint.
-            let sortedNew = allNew.sorted {
-                ($0.startTime ?? .distantPast) > ($1.startTime ?? .distantPast)
-            }
-            let toDownload: [PlaudRecording]
-            let didCap: Bool
-            if let cap = Self.maxRecordingsPerSync, sortedNew.count > cap {
-                toDownload = Array(sortedNew.prefix(cap))
-                didCap = true
+            // Belt-and-suspenders: drop anything older than the window cutoff even
+            // if it slipped through PLAUD's `since` filter. A recording with no
+            // start_time is kept (we can't prove it's out of range).
+            let windowed: [PlaudRecording]
+            if let windowCutoff {
+                windowed = recordings.filter { ($0.startTime ?? .distantFuture) >= windowCutoff }
             } else {
-                toDownload = sortedNew
-                didCap = false
+                windowed = recordings
+            }
+            // Single-pass dedup against the persisted processed set, newest first.
+            let allNew = windowed.filter { !processed.contains($0.id) }
+            let toDownload = allNew.sorted {
+                ($0.startTime ?? .distantPast) > ($1.startTime ?? .distantPast)
             }
 
             guard !toDownload.isEmpty else {
@@ -282,10 +291,11 @@ final class PlaudSyncService {
             }
 
             store.save(processed)
-            // Only advance the checkpoint when nothing was left behind: every
-            // intended item handled AND the run wasn't capped (a capped run
-            // deliberately leaves newer-than-checkpoint items for the next sync).
-            if allHandled && !didCap {
+            // Only advance the checkpoint when nothing was left behind — every
+            // intended item was downloaded AND accepted. A refused batch, a failed
+            // download, or a busy break holds the checkpoint so the next run
+            // re-lists (including items older than the 24h overlap margin).
+            if allHandled {
                 recordCheckpoint(runStartedAt)
             }
             setSuccess(imported: acceptedURLs.count)

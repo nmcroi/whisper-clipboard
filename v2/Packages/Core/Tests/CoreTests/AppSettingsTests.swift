@@ -172,16 +172,19 @@ import Foundation
 
     // MARK: - PLAUD sync fields
 
-    /// PLAUD sync defaults to OFF, 15-minute interval, no email (opt-in).
+    /// PLAUD sync defaults to OFF, 15-minute interval, 30-day window, no email (opt-in).
     @Test func plaudDefaultsAreOff() {
         let d = AppSettings()
         #expect(d.plaudSyncEnabled == false)
         #expect(d.plaudSyncIntervalMinutes == 15)
+        #expect(d.plaudSyncWindowDays == 30)
         #expect(d.plaudEmail == "")
     }
 
     /// An older settings.json missing the PLAUD keys still decodes, each field
-    /// falling back to its default rather than failing the whole load.
+    /// falling back to its default rather than failing the whole load. In
+    /// particular, a file written before `plaudSyncWindowDays` existed must fall
+    /// back to the 30-day default (not 0/all-history).
     @Test func plaudFieldsFallBackWhenMissingFromJSON() throws {
         let json = """
         {"hotkeyMode":"toggle","language":"nl","engine":"parakeet","cleanOutput":true,"replacements":[],"directInsertion":false,"insertionDeniedBundleIds":[],"saveRecordings":false,"saveCaptions":false,"initialPrompt":""}
@@ -189,14 +192,29 @@ import Foundation
         let decoded = try JSONDecoder().decode(AppSettings.self, from: json)
         #expect(decoded.plaudSyncEnabled == false)
         #expect(decoded.plaudSyncIntervalMinutes == 15)
+        #expect(decoded.plaudSyncWindowDays == 30)
         #expect(decoded.plaudEmail == "")
     }
 
-    /// Explicit PLAUD values round-trip through JSON coding.
+    /// A settings.json that carries the other PLAUD keys but predates
+    /// `plaudSyncWindowDays` still decodes the window to its 30-day default.
+    @Test func plaudSyncWindowDaysFallsBackToDefaultWhenMissingFromJSON() throws {
+        let json = """
+        {"plaudSyncEnabled":true,"plaudSyncIntervalMinutes":60,"plaudEmail":"a@b.nl"}
+        """.data(using: .utf8)!
+        let decoded = try JSONDecoder().decode(AppSettings.self, from: json)
+        #expect(decoded.plaudSyncEnabled == true)
+        #expect(decoded.plaudSyncIntervalMinutes == 60)
+        #expect(decoded.plaudSyncWindowDays == 30)
+    }
+
+    /// Explicit PLAUD values round-trip through JSON coding, including the window
+    /// (and its "all history" sentinel, 0).
     @Test func plaudFieldsRoundTripThroughCoding() throws {
         var settings = AppSettings()
         settings.plaudSyncEnabled = true
         settings.plaudSyncIntervalMinutes = 30
+        settings.plaudSyncWindowDays = 90
         settings.plaudEmail = "niels@example.com"
 
         let data = try JSONEncoder().encode(settings)
@@ -204,6 +222,17 @@ import Foundation
 
         #expect(decoded.plaudSyncEnabled == true)
         #expect(decoded.plaudSyncIntervalMinutes == 30)
+        #expect(decoded.plaudSyncWindowDays == 90)
         #expect(decoded.plaudEmail == "niels@example.com")
+    }
+
+    /// The "all history" sentinel (0) round-trips and is not confused with the
+    /// missing-key fallback (30).
+    @Test func plaudSyncWindowDaysZeroRoundTrips() throws {
+        var settings = AppSettings()
+        settings.plaudSyncWindowDays = 0
+        let data = try JSONEncoder().encode(settings)
+        let decoded = try JSONDecoder().decode(AppSettings.self, from: data)
+        #expect(decoded.plaudSyncWindowDays == 0)
     }
 }
