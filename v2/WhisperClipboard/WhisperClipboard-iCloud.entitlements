@@ -1,0 +1,49 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<!--
+  iCloud RELEASE variant of the Mac entitlements (i2). This is a SUPERSET of
+  WhisperClipboard.entitlements: it adds CloudKit for cross-device history sync.
+
+  WHY A SEPARATE FILE:
+    The default project (WhisperClipboard.entitlements) stays minimal so the
+    ad-hoc-signed dev / CI verify build launches with no provisioning profile.
+    Adding iCloud entitlements to an ad-hoc build can BLOCK launch (the OS
+    validates the container against a profile that ad-hoc signing can't carry).
+    So this variant is used ONLY by the Developer-ID release signing step, which
+    also embeds a matching provisioning profile.
+
+  HOW TO USE (release only — see Packaging/RELEASING.md):
+    Sign with:  --entitlements WhisperClipboard/WhisperClipboard-iCloud.entitlements
+    AND embed a Developer-ID provisioning profile that includes the
+    iCloud.nl.nielscroiset.whisperclipboard container.
+    Runtime dormancy (HistorySyncEngine.accountIsAvailable) means an ad-hoc build
+    that never gets this entitlement simply shows "iCloud niet beschikbaar" — it
+    does not crash — so day-to-day dev is unaffected.
+
+  TODO(Niels) — developer portal, one-time (NOT automatable here):
+    1. Apple Developer portal → Identifiers → App IDs: ensure the Mac App ID
+       nl.nielscroiset.whisperclipboard has the iCloud capability enabled and is
+       associated with the CloudKit container
+       iCloud.nl.nielscroiset.whisperclipboard (create the container if absent).
+    2. Do the same for the iOS App ID nl.nielscroiset.whisperclipboard.ios,
+       pointing at the SAME container so both platforms share one private zone.
+    3. Create a Developer-ID provisioning profile for the Mac App ID that
+       includes the iCloud container, download it, and reference it in the
+       release signing step (build_release.sh).
+    4. In CloudKit Console, deploy the "Transcript" record type schema to
+       Production before shipping (dev schema is auto-created on first write).
+-->
+<plist version="1.0">
+<dict>
+	<key>com.apple.security.device.audio-input</key>
+	<true/>
+	<key>com.apple.developer.icloud-services</key>
+	<array>
+		<string>CloudKit</string>
+	</array>
+	<key>com.apple.developer.icloud-container-identifiers</key>
+	<array>
+		<string>iCloud.nl.nielscroiset.whisperclipboard</string>
+	</array>
+</dict>
+</plist>

@@ -26,6 +26,8 @@ struct GeneralSettingsView: View {
                 Divider().overlay(Theme.border)
                 diarizationSection
                 Divider().overlay(Theme.border)
+                icloudSyncSection
+                Divider().overlay(Theme.border)
                 hudSection
                 Divider().overlay(Theme.border)
                 loginItemSection
@@ -209,6 +211,46 @@ struct GeneralSettingsView: View {
             }
             .toggleStyle(.switch)
             .tint(Theme.accent)
+        }
+    }
+
+    // MARK: - iCloud sync
+
+    private var icloudSyncSection: some View {
+        VStack(alignment: .leading, spacing: 10) {
+            Text("iCloud-synchronisatie")
+                .font(ThemeFont.ui(15, weight: .semibold))
+                .foregroundStyle(Theme.text)
+
+            Toggle(isOn: Binding(
+                get: { environment.settings.icloudSyncEnabled },
+                set: { environment.settings.icloudSyncEnabled = $0 }
+            )) {
+                VStack(alignment: .leading, spacing: 2) {
+                    Text("Geschiedenis synchroniseren via iCloud")
+                        .font(ThemeFont.ui(13, weight: .medium))
+                        .foregroundStyle(Theme.text)
+                    Text("Deelt je transcript-geschiedenis met je andere apparaten (bijv. je iPhone) via je eigen iCloud. Er komt geen externe server aan te pas; opnames, wijzigingen en verwijderingen volgen automatisch mee.")
+                        .font(ThemeFont.ui(11))
+                        .foregroundStyle(Theme.textSecondary)
+                        .fixedSize(horizontal: false, vertical: true)
+                }
+            }
+            .toggleStyle(.switch)
+            .tint(Theme.accent)
+
+            HStack(spacing: 12) {
+                Text("Status: \(environment.historySync.status.dutchLabel)")
+                    .font(ThemeFont.ui(11))
+                    .foregroundStyle(Theme.textSecondary)
+                    .fixedSize(horizontal: false, vertical: true)
+                Spacer()
+                Button("Synchroniseer nu") {
+                    Task { await environment.historySync.syncNow() }
+                }
+                .font(ThemeFont.ui(11, weight: .medium))
+                .disabled(!environment.settings.icloudSyncEnabled)
+            }
         }
     }
 

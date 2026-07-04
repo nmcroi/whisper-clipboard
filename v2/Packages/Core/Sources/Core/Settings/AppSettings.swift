@@ -89,6 +89,14 @@ public struct AppSettings: Codable, Equatable, Sendable {
     /// in the Keychain (never here). Empty = not configured.
     public var plaudEmail: String
 
+    // MARK: - iCloud sync (i2)
+
+    /// Sync the transcript history across the user's devices via their own iCloud
+    /// (CKSyncEngine on the private CloudKit database). On by default; goes
+    /// dormant automatically when iCloud is unavailable (no account, or a build
+    /// without the CloudKit entitlement).
+    public var icloudSyncEnabled: Bool
+
     public init(
         hotkeyMode: HotkeyMode = .toggle,
         language: String = "nl",
@@ -113,7 +121,8 @@ public struct AppSettings: Codable, Equatable, Sendable {
         plaudSyncEnabled: Bool = false,
         plaudSyncIntervalMinutes: Int = 15,
         plaudSyncWindowDays: Int = 30,
-        plaudEmail: String = ""
+        plaudEmail: String = "",
+        icloudSyncEnabled: Bool = true
     ) {
         self.hotkeyMode = hotkeyMode
         self.language = language
@@ -139,6 +148,7 @@ public struct AppSettings: Codable, Equatable, Sendable {
         self.plaudSyncIntervalMinutes = plaudSyncIntervalMinutes
         self.plaudSyncWindowDays = plaudSyncWindowDays
         self.plaudEmail = plaudEmail
+        self.icloudSyncEnabled = icloudSyncEnabled
     }
 
     // Tolerant decoding: any key missing from an older/newer on-disk settings.json
@@ -152,6 +162,7 @@ public struct AppSettings: Codable, Equatable, Sendable {
         case historyRetention, initialPrompt, hudLingerSeconds
         case removeFillers, autoExportEnabled, autoExportDirectory, autoExportFormat, watchedFolders
         case plaudSyncEnabled, plaudSyncIntervalMinutes, plaudSyncWindowDays, plaudEmail
+        case icloudSyncEnabled
     }
 
     public init(from decoder: Decoder) throws {
@@ -181,5 +192,6 @@ public struct AppSettings: Codable, Equatable, Sendable {
         self.plaudSyncIntervalMinutes = try c.decodeIfPresent(Int.self, forKey: .plaudSyncIntervalMinutes) ?? d.plaudSyncIntervalMinutes
         self.plaudSyncWindowDays = try c.decodeIfPresent(Int.self, forKey: .plaudSyncWindowDays) ?? d.plaudSyncWindowDays
         self.plaudEmail = try c.decodeIfPresent(String.self, forKey: .plaudEmail) ?? d.plaudEmail
+        self.icloudSyncEnabled = try c.decodeIfPresent(Bool.self, forKey: .icloudSyncEnabled) ?? d.icloudSyncEnabled
     }
 }

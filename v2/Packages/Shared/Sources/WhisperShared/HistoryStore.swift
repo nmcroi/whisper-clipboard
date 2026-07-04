@@ -32,6 +32,28 @@ public final class HistoryStore: ObservableObject {
     private let dbQueue: DatabaseQueue
     private let retentionProvider: () -> Int?
 
+    // MARK: - Sync hook (i2)
+
+    /// Observer invoked after every local mutation, carrying the change so the
+    /// iCloud sync engine can enqueue the matching CloudKit record change. `nil`
+    /// when no sync engine is attached (dev builds, tests, users without iCloud):
+    /// the store then behaves exactly as before.
+    ///
+    /// Not fired for changes applied *from* a remote fetch — see `applyingRemote`.
+    public var onChange: ((HistoryChange) -> Void)?
+
+    /// Re-entrancy guard: set while applying a fetched remote change so the
+    /// outbound `onChange` hook is suppressed (a remote upsert must not bounce
+    /// straight back out as a local upsert, which would loop the two devices).
+    private var applyingRemote = false
+
+    /// Emits a change to the sync observer unless we are currently applying a
+    /// remote fetch.
+    private func emit(_ change: HistoryChange) {
+        guard !applyingRemote, let onChange else { return }
+        onChange(change)
+    }
+
     /// Whether this store is backed by the durable on-disk database. When `false`
     /// (an ephemeral in-memory fallback), the one-time v3 migration imports into
     /// RAM but must NOT persist the "migration done" flag — otherwise the durable
@@ -92,6 +114,7 @@ public final class HistoryStore: ObservableObject {
             try TranscriptRecord(entry: entry).insert(db)
             try Self.prune(db, retention: self.retentionProvider())
         }
+        emit(.upsert(id: entry.id))
         bump()
     }
 
@@ -99,29 +122,38 @@ public final class HistoryStore: ObservableObject {
         _ = try dbQueue.write { db in
             try TranscriptRecord.deleteOne(db, key: id)
         }
+        emit(.delete(id: id))
         bump()
     }
 
     public func rename(id: String, name: String) throws {
         let clean = name.trimmingCharacters(in: .whitespacesAndNewlines)
+        var changed = false
         try dbQueue.write { db in
             if var record = try TranscriptRecord.fetchOne(db, key: id) {
                 record.name = clean
+                record.modifiedAt = TranscriptRecord.nowMillis()
                 try record.update(db)
+                changed = true
             }
         }
+        if changed { emit(.upsert(id: id)) }
         bump()
     }
 
     public func setPinned(id: String, _ pinned: Bool) throws {
+        var changed = false
         try dbQueue.write { db in
             if var record = try TranscriptRecord.fetchOne(db, key: id), record.pinned != pinned {
                 record.pinned = pinned
+                record.modifiedAt = TranscriptRecord.nowMillis()
                 try record.update(db)
+                changed = true
                 // Unpinning may push the entry over the retention limit.
                 try Self.prune(db, retention: self.retentionProvider())
             }
         }
+        if changed { emit(.upsert(id: id)) }
         bump()
     }
 
@@ -139,13 +171,17 @@ public final class HistoryStore: ObservableObject {
     ///
     /// The FTS index updates automatically via the sync triggers.
     public func updateText(id: String, text: String) throws {
+        var changed = false
         try dbQueue.write { db in
             if var record = try TranscriptRecord.fetchOne(db, key: id) {
                 record.text = text
                 record.segments = "[]"
+                record.modifiedAt = TranscriptRecord.nowMillis()
                 try record.update(db)
+                changed = true
             }
         }
+        if changed { emit(.upsert(id: id)) }
         bump()
     }
 
@@ -155,8 +191,9 @@ public final class HistoryStore: ObservableObject {
     /// body text. The rebuilt text is speaker-aware (grouped turns) when the kept
     /// segments carry speakers, matching the export format.
     public func updateSegments(id: String, segments: [TranscriptSegment]) throws {
+        var changed = false
         try dbQueue.write { db in
-            if var record = try TranscriptRecord.fetchOne(db, key: id) {
+            if let record = try TranscriptRecord.fetchOne(db, key: id) {
                 let rebuilt = Self.rebuildText(from: segments)
                 var rebuiltEntry = record.entry
                 rebuiltEntry.segments = segments
@@ -166,9 +203,12 @@ public final class HistoryStore: ObservableObject {
                 var updated = TranscriptRecord(entry: rebuiltEntry)
                 updated.pinned = record.pinned
                 updated.speakerNames = record.speakerNames
+                // `TranscriptRecord(entry:)` already stamped modifiedAt = now.
                 try updated.update(db)
+                changed = true
             }
         }
+        if changed { emit(.upsert(id: id)) }
         bump()
     }
 
@@ -177,6 +217,7 @@ public final class HistoryStore: ObservableObject {
     /// raw label ("Spreker 1") shows again.
     public func setSpeakerName(transcriptId: String, rawSpeaker: String, name: String) throws {
         let clean = name.trimmingCharacters(in: .whitespacesAndNewlines)
+        var changed = false
         try dbQueue.write { db in
             if var record = try TranscriptRecord.fetchOne(db, key: transcriptId) {
                 var map = record.entry.speakerNames
@@ -191,9 +232,12 @@ public final class HistoryStore: ObservableObject {
                 } else {
                     record.speakerNames = "{}"
                 }
+                record.modifiedAt = TranscriptRecord.nowMillis()
                 try record.update(db)
+                changed = true
             }
         }
+        if changed { emit(.upsert(id: transcriptId)) }
         bump()
     }
 
@@ -213,10 +257,77 @@ public final class HistoryStore: ObservableObject {
 
     /// Removes every entry (used by "wis geschiedenis" flows).
     public func deleteAll() throws {
+        // Capture the ids first so each removal can be propagated to iCloud as a
+        // record deletion (a bulk `DELETE` gives us no per-row hook).
+        let ids: [String] = try dbQueue.read { db in
+            try String.fetchAll(db, sql: "SELECT id FROM transcripts")
+        }
         _ = try dbQueue.write { db in
             try TranscriptRecord.deleteAll(db)
         }
+        for id in ids { emit(.delete(id: id)) }
         bump()
+    }
+
+    // MARK: - Sync integration (i2)
+
+    /// Fetches the raw persistence record for `id` (including its `modifiedAt`
+    /// clock and JSON blobs), or `nil` if absent. The sync engine uses this to
+    /// materialize the CloudKit record for an outbound `.upsert`.
+    public func record(id: String) throws -> TranscriptRecord? {
+        try dbQueue.read { db in
+            try TranscriptRecord.fetchOne(db, key: id)
+        }
+    }
+
+    /// The `modifiedAt` clocks for a set of ids, keyed by id. Used by the
+    /// conflict resolver to compare a locally-held row against an incoming remote
+    /// record without materializing the whole entry. Missing ids are absent.
+    public func modifiedAt(ids: [String]) throws -> [String: Int64] {
+        guard !ids.isEmpty else { return [:] }
+        return try dbQueue.read { db in
+            let rows = try Row.fetchAll(
+                db,
+                sql: "SELECT id, modified_at FROM transcripts WHERE id IN (\(databaseQuestionMarks(count: ids.count)))",
+                arguments: StatementArguments(ids)
+            )
+            var out: [String: Int64] = [:]
+            for row in rows { out[row["id"]] = row["modified_at"] }
+            return out
+        }
+    }
+
+    /// Applies a record fetched from iCloud, WITHOUT re-emitting an outbound
+    /// change (the `applyingRemote` guard is held for the duration). This is the
+    /// inbound half of sync: the engine has already run last-writer-wins and only
+    /// calls this when the remote copy should win. Retention pruning runs so a
+    /// remote insert still respects the local limit.
+    ///
+    /// The incoming `record` carries the remote `modifiedAt`, which is persisted
+    /// verbatim so both devices converge on the same clock for that row.
+    public func applyRemoteUpsert(_ record: TranscriptRecord) throws {
+        applyingRemote = true
+        defer { applyingRemote = false }
+        try dbQueue.write { db in
+            try record.save(db)
+            try Self.prune(db, retention: self.retentionProvider())
+        }
+        bump()
+    }
+
+    /// Removes a record deleted remotely, without re-emitting an outbound delete.
+    public func applyRemoteDelete(id: String) throws {
+        applyingRemote = true
+        defer { applyingRemote = false }
+        _ = try dbQueue.write { db in
+            try TranscriptRecord.deleteOne(db, key: id)
+        }
+        bump()
+    }
+
+    /// Builds the `?,?,…` placeholder list for an `IN (…)` clause.
+    private func databaseQuestionMarks(count: Int) -> String {
+        Array(repeating: "?", count: count).joined(separator: ",")
     }
 
     // MARK: - AI results (M4)

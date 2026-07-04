@@ -66,6 +66,14 @@ APP_NAME="WhisperClipboard"
 BUNDLE_ID="nl.nielscroiset.whisperclipboard"
 PROD_ENTITLEMENTS="${V2_DIR}/WhisperClipboard/WhisperClipboard.entitlements"
 ADHOC_ENTITLEMENTS="${SCRIPT_DIR}/adhoc.entitlements"
+# iCloud (CKSyncEngine) release variant — a SUPERSET of PROD_ENTITLEMENTS that
+# adds the CloudKit container. NOT used automatically: signing with it requires a
+# Developer-ID provisioning profile that includes the
+# iCloud.nl.nielscroiset.whisperclipboard container (see RELEASING.md → "iCloud").
+# Until that profile exists in the developer portal, the shipped build uses the
+# minimal PROD_ENTITLEMENTS and the app runs with iCloud sync dormant. To ship
+# sync: create the profile, embed it, and point signing at this file instead.
+ICLOUD_ENTITLEMENTS="${V2_DIR}/WhisperClipboard/WhisperClipboard-iCloud.entitlements"
 DIST_DIR="${SCRIPT_DIR}/dist"          # gitignored output
 BUILD_DIR="${DIST_DIR}/build"          # xcodebuild export dir (throwaway)
 export DEVELOPER_DIR="${DEVELOPER_DIR:-/Applications/Xcode.app/Contents/Developer}"

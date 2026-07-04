@@ -23,6 +23,20 @@ final class AppModel: ObservableObject {
     /// as an error banner rather than crashing).
     let history: HistoryStore?
 
+    /// iCloud history sync (i2). `nil` when the DB couldn't be opened (no store to
+    /// sync). Dormant until the toggle is on AND an iCloud account is available.
+    let historySync: HistorySyncEngine?
+
+    /// Whether iCloud sync is enabled. Persisted in `UserDefaults` under
+    /// `ios.icloudSyncEnabled`; defaults to on (matches the Mac default).
+    @Published var icloudSyncEnabled: Bool {
+        didSet {
+            guard icloudSyncEnabled != oldValue else { return }
+            UserDefaults.standard.set(icloudSyncEnabled, forKey: Self.icloudSyncKey)
+            Task { await historySync?.settingChanged() }
+        }
+    }
+
     /// Chosen appearance. Persisted in `UserDefaults` under `ios.appearance`.
     @Published var appearance: AppSettings.AppearanceMode {
         didSet { Self.persistAppearance(appearance) }
@@ -40,12 +54,31 @@ final class AppModel: ObservableObject {
     @Published var errorMessage: String?
 
     private static let appearanceKey = "ios.appearance"
+    private static let icloudSyncKey = "ios.icloudSyncEnabled"
 
     init() {
         self.appearance = Self.loadAppearance()
+        // Default the toggle on when unset (register the default so a first launch
+        // reads `true` rather than UserDefaults' bare-bool `false`).
+        UserDefaults.standard.register(defaults: [Self.icloudSyncKey: true])
+        let syncEnabled = UserDefaults.standard.bool(forKey: Self.icloudSyncKey)
+        self.icloudSyncEnabled = syncEnabled
         // Retention is unlimited for now (settings round adds a control). The DB
         // lives in this app's own sandbox, isolated from the Mac's copy.
-        self.history = try? HistoryStore(retentionProvider: { nil })
+        let store = try? HistoryStore(retentionProvider: { nil })
+        self.history = store
+        if let store {
+            let engine = HistorySyncEngine(
+                store: store,
+                isEnabled: { UserDefaults.standard.bool(forKey: Self.icloudSyncKey) }
+            )
+            self.historySync = engine
+            // Bring sync up if enabled + an iCloud account is available; dormant
+            // otherwise (e.g. an unsigned simulator build with no CloudKit).
+            Task { await engine.start() }
+        } else {
+            self.historySync = nil
+        }
     }
 
     // MARK: - Model lifecycle

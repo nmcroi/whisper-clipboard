@@ -33,6 +33,37 @@ Developer-account actief is.
    > een back-up met `generate_keys -x sparkle_private_key.pem` en bewaar dat
    > bestand veilig buiten de repo (bijv. in je wachtwoordmanager).
 
+## iCloud-synchronisatie (i2) — eenmalig in de Developer-portal
+
+iCloud-sync van de geschiedenis werkt via **CKSyncEngine** op de privé-CloudKit-
+database in je eigen iCloud (container `iCloud.nl.nielscroiset.whisperclipboard`).
+De code degradeert netjes: zonder entitlement/account blijft sync slapend
+("iCloud niet beschikbaar"), dus ad-hoc dev-builds en CI crashen nooit. Om sync
+in de **échte** release aan te zetten, moet dit eenmalig in de portal klaarstaan
+(dit kan ik niet automatiseren — doe je zelf):
+
+1. **CloudKit-container aanmaken.** Developer-portal ▸ Certificates, IDs &
+   Profiles ▸ Identifiers ▸ (filter op iCloud Containers) ▸ "+" ▸
+   `iCloud.nl.nielscroiset.whisperclipboard`.
+2. **Mac App ID koppelen.** App ID `nl.nielscroiset.whisperclipboard` ▸ iCloud-
+   capability aan ▸ bovenstaande container aanvinken.
+3. **iOS App ID koppelen.** App ID `nl.nielscroiset.whisperclipboard.ios` ▸
+   iCloud aan ▸ **dezelfde** container (zo delen Mac en iPhone één privé-zone).
+4. **Developer-ID provisioning profile (Mac).** Maak een provisioning profile
+   voor de Mac App ID dat de iCloud-container bevat, download het, en verwijs
+   ernaar in de signeerstap. Zet in `build_release.sh` de signering op
+   `WhisperClipboard-iCloud.entitlements` (de superset-variant) i.p.v. de
+   minimale `WhisperClipboard.entitlements`, en embed het profile.
+   > Zonder dit profile: laat de build op de minimale entitlements staan — de app
+   > draait dan gewoon door, alleen met iCloud-sync uit.
+5. **iOS device/TestFlight-build.** Tekent met een profile voor de iOS App ID +
+   container; de entitlements zitten al in `WhisperClipboardiOS.entitlements`.
+6. **CloudKit-schema naar Production.** In de CloudKit Console het record-type
+   `Transcript` (velden: `text`, `createdAt`, `name`, `pinned`, `language`,
+   `model`, `source`, `duration`, `segments`, `speakerNames`, `modifiedAt`) naar
+   Production deployen vóór release. In Development wordt het schema automatisch
+   aangemaakt bij de eerste schrijfactie, dus test eerst met een dev-build.
+
 ## Per release
 
 1. **Versie ophogen** in `v2/project.yml`:

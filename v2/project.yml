@@ -81,6 +81,10 @@ targets:
         excludes:
           - "Resources/Info.plist"
           - "WhisperClipboard.entitlements"
+          # iCloud release-variant entitlements (superset). NOT the default
+          # entitlements — used only by the Developer-ID release signing step
+          # (see Packaging/RELEASING.md). Excluded so it isn't compiled as source.
+          - "WhisperClipboard-iCloud.entitlements"
           # Fonts are copied intact into Contents/Resources/Fonts by the
           # postCompileScripts phase below (ATSApplicationFontsPath = Fonts).
           - "Resources/Fonts"
@@ -184,6 +188,7 @@ targets:
       - path: WhisperClipboardiOS
         excludes:
           - "Resources/Info.plist"
+          - "WhisperClipboardiOS.entitlements"
           # Fonts are copied intact into the app bundle root by the
           # postCompileScripts phase below (UIAppFonts references them by name).
           - "Resources/Fonts"
@@ -227,6 +232,10 @@ targets:
         PRODUCT_BUNDLE_IDENTIFIER: nl.nielscroiset.whisperclipboard.ios
         PRODUCT_NAME: WhisperClipboardiOS
         GENERATE_INFOPLIST_FILE: false
+        # iCloud CloudKit entitlements (i2). Only validated at signing, so with
+        # CODE_SIGNING_ALLOWED=NO the generic-device verify build still compiles;
+        # a real TestFlight/device build supplies a matching provisioning profile.
+        CODE_SIGN_ENTITLEMENTS: WhisperClipboardiOS/WhisperClipboardiOS.entitlements
         SWIFT_VERSION: "6.0"
         MARKETING_VERSION: "2.0.1"
         CURRENT_PROJECT_VERSION: "2"

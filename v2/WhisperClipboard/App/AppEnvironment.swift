@@ -45,6 +45,10 @@ final class AppEnvironment: ObservableObject {
             if settings.appearance != oldValue.appearance {
                 applyAppearanceToAppKitSurfaces()
             }
+            // React to the iCloud-sync toggle: start or go dormant.
+            if settings.icloudSyncEnabled != oldValue.icloudSyncEnabled {
+                Task { await historySync.settingChanged() }
+            }
         }
     }
 
@@ -82,6 +86,9 @@ final class AppEnvironment: ObservableObject {
     let dictation: DictationController
     let hotkeys: HotkeyManager
     let history: HistoryStore
+    /// iCloud history sync (i2). Dormant on ad-hoc dev builds / without an iCloud
+    /// account; the "iCloud-synchronisatie" settings section shows its status.
+    let historySync: HistorySyncEngine
     let fileImport: FileImportService
     /// AI prompt modes (M4): built-in + custom, runs against transcripts.
     let modes: ModesService
@@ -150,6 +157,14 @@ final class AppEnvironment: ObservableObject {
 
         // AI prompt modes (M4). The API key is read from the Keychain on demand.
         self.modes = ModesService(history: history)
+
+        // iCloud history sync (i2). Constructed here so it can install its
+        // outbound change hook on the store immediately; it stays dormant until
+        // `bootstrap()` calls `start()` (which checks the toggle + iCloud account).
+        self.historySync = HistorySyncEngine(
+            store: history,
+            isEnabled: { settingsRef().icloudSyncEnabled }
+        )
 
         // File-import pipeline. Refuses while dictation is recording/transcribing,
         // mirroring the Python "one job at a time" guard.
@@ -347,6 +362,9 @@ final class AppEnvironment: ObservableObject {
         // disabled it schedules nothing; enabling it later re-schedules via
         // `plaudSync.refresh()`.
         plaudSync.start()
+
+        // Bring up iCloud history sync if enabled + available (dormant otherwise).
+        Task { await historySync.start() }
 
         Task {
             await resolveEngineSelection()

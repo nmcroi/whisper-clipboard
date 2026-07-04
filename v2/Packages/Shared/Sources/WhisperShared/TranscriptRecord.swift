@@ -23,6 +23,11 @@ public struct TranscriptRecord: Codable, FetchableRecord, PersistableRecord {
     public var sortKey: Double
     /// JSON-encoded `[String: String]` speaker rename map (raw label → name).
     public var speakerNames: String
+    /// Last-writer-wins clock for iCloud sync (i2): milliseconds since the 1970
+    /// epoch, bumped on every local mutation. Not part of `Core.TranscriptEntry`
+    /// (a pure display value type) — it is sync metadata carried only at this
+    /// persistence layer and on the CloudKit record.
+    public var modifiedAt: Int64
 
     enum CodingKeys: String, CodingKey {
         case id
@@ -37,6 +42,42 @@ public struct TranscriptRecord: Codable, FetchableRecord, PersistableRecord {
         case segments
         case sortKey = "sort_key"
         case speakerNames = "speaker_names"
+        case modifiedAt = "modified_at"
+    }
+
+    /// Explicit field-by-field initializer. Declared in the main type (not an
+    /// extension) so it *suppresses* the synthesized internal memberwise init and
+    /// becomes the single public one. Used by the CloudKit mapping to build a
+    /// record straight from a fetched `CKRecord`'s fields, carrying the remote
+    /// `modifiedAt` and pre-computed `sortKey` through unchanged.
+    public init(
+        id: String,
+        text: String,
+        createdAt: String,
+        name: String,
+        pinned: Bool,
+        language: String,
+        model: String,
+        source: String,
+        duration: Double,
+        segments: String,
+        sortKey: Double,
+        speakerNames: String,
+        modifiedAt: Int64
+    ) {
+        self.id = id
+        self.text = text
+        self.createdAt = createdAt
+        self.name = name
+        self.pinned = pinned
+        self.language = language
+        self.model = model
+        self.source = source
+        self.duration = duration
+        self.segments = segments
+        self.sortKey = sortKey
+        self.speakerNames = speakerNames
+        self.modifiedAt = modifiedAt
     }
 }
 
@@ -44,9 +85,20 @@ extension TranscriptRecord {
     private static let segmentEncoder = JSONEncoder()
     private static let segmentDecoder = JSONDecoder()
 
+    /// Current wall-clock time as milliseconds since the 1970 epoch — the unit of
+    /// the `modified_at` last-writer-wins clock.
+    public static func nowMillis() -> Int64 {
+        Int64((Date().timeIntervalSince1970 * 1000).rounded())
+    }
+
     /// Builds a record from a Core entry, encoding segments to JSON and deriving
     /// the sort key from the entry's timestamp (falling back to 0 when absent).
-    public init(entry: TranscriptEntry) {
+    ///
+    /// - Parameter modifiedAt: the last-writer-wins clock in epoch milliseconds.
+    ///   Defaults to "now" for locally-originated writes; the remote-apply path
+    ///   passes the timestamp carried on the incoming CloudKit record so the LWW
+    ///   comparison stays meaningful.
+    public init(entry: TranscriptEntry, modifiedAt: Int64 = TranscriptRecord.nowMillis()) {
         self.id = entry.id
         self.text = entry.text
         self.createdAt = entry.createdAt
@@ -70,6 +122,7 @@ extension TranscriptRecord {
         } else {
             self.speakerNames = "{}"
         }
+        self.modifiedAt = modifiedAt
     }
 
     /// Reconstructs the Core entry, decoding the segments JSON.

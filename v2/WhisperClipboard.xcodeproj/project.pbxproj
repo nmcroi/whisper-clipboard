@@ -77,6 +77,7 @@
 		B26A7036B10AA0BF4F2FDBCE /* EngineSelectorTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 0AEE5D15EFE4C778C60B0AD8 /* EngineSelectorTests.swift */; };
 		B4A501ED4ADE36EC09F9838C /* WhisperShared in Frameworks */ = {isa = PBXBuildFile; productRef = 7DD87E9E1D5880D46E20B706 /* WhisperShared */; };
 		B61EF769A6AB553AFEC5757D /* AudioEngine.swift in Sources */ = {isa = PBXBuildFile; fileRef = 5DBE222C3711913D4763EB80 /* AudioEngine.swift */; };
+		B8D15A97F1920833E01A4F2C /* HistorySyncTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 5ACB156EE28BE19D3F0F9C80 /* HistorySyncTests.swift */; };
 		B969EBB017308A95725A7695 /* AppleSpeechEngine.swift in Sources */ = {isa = PBXBuildFile; fileRef = A7C6E4DC1F209E80189F098D /* AppleSpeechEngine.swift */; };
 		BD3A834B172889D96D12A7A0 /* HistoryListView.swift in Sources */ = {isa = PBXBuildFile; fileRef = FE89950D719818CF278F1B78 /* HistoryListView.swift */; };
 		C0A21750932154EEB0110290 /* ImportQueueView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 8FDE7327C4F5CDCD5A605058 /* ImportQueueView.swift */; };
@@ -159,6 +160,7 @@
 		537600B94C3D5EF528A8F839 /* PlaudClient+Wire.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = "PlaudClient+Wire.swift"; sourceTree = "<group>"; };
 		5592BB0E945E69DD5A8CE883 /* RecordingHUDView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = RecordingHUDView.swift; sourceTree = "<group>"; };
 		5A371BB195FE432609342261 /* HistoryListiOSView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = HistoryListiOSView.swift; sourceTree = "<group>"; };
+		5ACB156EE28BE19D3F0F9C80 /* HistorySyncTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = HistorySyncTests.swift; sourceTree = "<group>"; };
 		5B2B0F8529FE44C8AC06C8DB /* Theme.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Theme.swift; sourceTree = "<group>"; };
 		5DBE222C3711913D4763EB80 /* AudioEngine.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AudioEngine.swift; sourceTree = "<group>"; };
 		5FC4B7A680996810C9521A5B /* InsertionService.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = InsertionService.swift; sourceTree = "<group>"; };
@@ -375,6 +377,7 @@
 				0AEE5D15EFE4C778C60B0AD8 /* EngineSelectorTests.swift */,
 				3EBDC0CAE1917D0966227CD7 /* FileImportTests.swift */,
 				3E44C52D87944BB2ACF887D5 /* HistoryStoreTests.swift */,
+				5ACB156EE28BE19D3F0F9C80 /* HistorySyncTests.swift */,
 				29387B38D94A0836DCEBC319 /* InsertionLogicTests.swift */,
 				1AF3E700DDA13883FF10D49C /* KeychainStoreTests.swift */,
 				826BBAD27D8C8176815452C8 /* ModesServiceTests.swift */,
@@ -897,6 +900,7 @@
 				B26A7036B10AA0BF4F2FDBCE /* EngineSelectorTests.swift in Sources */,
 				ECFD72BECB52043A9E5B1AFC /* FileImportTests.swift in Sources */,
 				81098231E10D346FF13C9760 /* HistoryStoreTests.swift in Sources */,
+				B8D15A97F1920833E01A4F2C /* HistorySyncTests.swift in Sources */,
 				2B499ED1D007731BA854B105 /* InsertionLogicTests.swift in Sources */,
 				D9D72C8E2222F74E989D0A57 /* KeychainStoreTests.swift in Sources */,
 				6C3562966E81A6BDF339669F /* ModesServiceTests.swift in Sources */,
@@ -929,6 +933,7 @@
 				ASSETCATALOG_COMPILER_GLOBAL_ACCENT_COLOR_NAME = AccentColor;
 				CODE_SIGNING_ALLOWED = NO;
 				CODE_SIGNING_REQUIRED = NO;
+				CODE_SIGN_ENTITLEMENTS = WhisperClipboardiOS/WhisperClipboardiOS.entitlements;
 				CODE_SIGN_IDENTITY = "-";
 				CODE_SIGN_STYLE = Manual;
 				CURRENT_PROJECT_VERSION = 2;
@@ -1019,6 +1024,7 @@
 				ASSETCATALOG_COMPILER_GLOBAL_ACCENT_COLOR_NAME = AccentColor;
 				CODE_SIGNING_ALLOWED = NO;
 				CODE_SIGNING_REQUIRED = NO;
+				CODE_SIGN_ENTITLEMENTS = WhisperClipboardiOS/WhisperClipboardiOS.entitlements;
 				CODE_SIGN_IDENTITY = "-";
 				CODE_SIGN_STYLE = Manual;
 				CURRENT_PROJECT_VERSION = 2;

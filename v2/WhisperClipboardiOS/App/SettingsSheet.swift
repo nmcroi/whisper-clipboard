@@ -23,6 +23,17 @@ struct SettingsSheet: View {
                     .listRowBackground(Theme.surface)
 
                     Section {
+                        Toggle("Synchroniseren via iCloud", isOn: $app.icloudSyncEnabled)
+                            .tint(Theme.accent)
+                        LabeledContent("Status", value: app.historySync?.status.dutchLabel ?? "Niet beschikbaar")
+                    } header: {
+                        Text("iCloud")
+                    } footer: {
+                        Text("Deelt je geschiedenis met je Mac en andere apparaten via je eigen iCloud. Er komt geen externe server aan te pas.")
+                    }
+                    .listRowBackground(Theme.surface)
+
+                    Section {
                         LabeledContent("Model", value: "Parakeet TDT 0.6b v3")
                         LabeledContent("Taal", value: "Nederlands")
                     } header: {

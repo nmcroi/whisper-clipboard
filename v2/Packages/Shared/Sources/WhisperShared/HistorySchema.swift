@@ -89,6 +89,24 @@ public enum HistorySchema {
             }
         }
 
+        migrator.registerMigration("v5_modified_at") { db in
+            // Last-writer-wins clock for iCloud sync (i2). Milliseconds since the
+            // 1970 epoch, updated on every local mutation. Existing rows are
+            // backfilled from their created_at (sort_key epoch seconds → ms) so an
+            // already-populated history gets sensible, ordered timestamps rather
+            // than all collapsing to a single migration instant — this keeps the
+            // conflict resolver deterministic on the very first sync.
+            try db.alter(table: "transcripts") { t in
+                t.add(column: "modified_at", .integer).notNull().defaults(to: 0)
+            }
+            // Backfill: sort_key holds epoch SECONDS derived from created_at.
+            try db.execute(sql: """
+                UPDATE transcripts
+                SET modified_at = CAST(sort_key * 1000 AS INTEGER)
+                WHERE sort_key > 0
+            """)
+        }
+
         return migrator
     }
 }
