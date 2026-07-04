@@ -2,6 +2,7 @@ import Combine
 import Core
 import Foundation
 import SwiftUI
+import UIKit
 import WhisperShared
 
 /// The app-wide environment for the iOS companion: the shared Parakeet engine,
@@ -30,6 +31,11 @@ final class AppModel: ObservableObject {
     /// Current model-download / readiness state, driving the onboarding card.
     @Published var modelStatus: ModelAssetStatus = .unknown
 
+    /// Byte-level download progress ("X van Y MB"), nil when not downloading.
+    /// Kept separate from `modelStatus` so the fraction and the byte text update
+    /// together without widening the shared `ModelAssetStatus` enum.
+    @Published var downloadBytes: ModelDownloadByteProgress?
+
     /// The last user-facing error message (nil = none).
     @Published var errorMessage: String?
 
@@ -56,14 +62,24 @@ final class AppModel: ObservableObject {
 
     /// Kicks off the model download, streaming progress into `modelStatus`.
     func downloadModel() async {
+        errorMessage = nil
         modelStatus = .downloading(progress: 0)
-        // Poll the engine's progress while the download runs.
+        // Keep the screen awake for the duration — a multi-minute download over
+        // a locked/dimmed screen is where interrupted, half-written models come
+        // from (Issue 3). Restored in the defer below.
+        UIApplication.shared.isIdleTimerDisabled = true
+        defer { UIApplication.shared.isIdleTimerDisabled = false }
+
+        // Poll the engine's fraction *and* byte progress while the download runs
+        // so both the bar and the "X van Y MB" text keep moving.
         let pollTask = Task { [weak self] in
             while !Task.isCancelled {
                 guard let self else { return }
                 let status = await self.engine.assetStatus(for: Locale(identifier: "nl_NL"))
+                let bytes = await self.engine.downloadByteProgress()
                 await MainActor.run {
                     if case .downloading = status { self.modelStatus = status }
+                    self.downloadBytes = bytes
                 }
                 try? await Task.sleep(nanoseconds: 300_000_000)
             }
@@ -71,9 +87,11 @@ final class AppModel: ObservableObject {
         do {
             try await engine.downloadAssets(for: Locale(identifier: "nl_NL"))
             pollTask.cancel()
+            downloadBytes = nil
             modelStatus = .installed
         } catch {
             pollTask.cancel()
+            downloadBytes = nil
             modelStatus = .needsDownload(progress: 0)
             errorMessage = error.localizedDescription
         }

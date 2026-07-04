@@ -24,6 +24,14 @@ struct ModelDownloadCard: View {
                 .fixedSize(horizontal: false, vertical: true)
 
             content
+
+            if let message = app.errorMessage {
+                Text(message)
+                    .font(ThemeFont.ui(13))
+                    .foregroundStyle(Theme.danger)
+                    .multilineTextAlignment(.center)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
         }
         .padding(24)
         .frame(maxWidth: .infinity)
@@ -38,9 +46,14 @@ struct ModelDownloadCard: View {
             VStack(spacing: 8) {
                 ProgressView(value: progress)
                     .tint(Theme.accent)
-                Text("\(Int(progress * 100))%")
+                Text(progressLabel(progress))
                     .font(ThemeFont.ui(13))
                     .foregroundStyle(Theme.textTertiary)
+                    .contentTransition(.numericText())
+                Text("Houd de app open tijdens het downloaden.")
+                    .font(ThemeFont.ui(12))
+                    .foregroundStyle(Theme.textTertiary)
+                    .multilineTextAlignment(.center)
             }
         case .unsupported:
             Text("Dit toestel wordt niet ondersteund.")
@@ -50,7 +63,8 @@ struct ModelDownloadCard: View {
             Button {
                 Task { await app.downloadModel() }
             } label: {
-                Text("Download model")
+                // After a failure the button doubles as the retry action.
+                Text(app.errorMessage == nil ? "Download model" : "Opnieuw proberen")
                     .font(ThemeFont.ui(16, weight: .semibold))
                     .foregroundStyle(Theme.onAccent)
                     .frame(maxWidth: .infinity)
@@ -60,5 +74,14 @@ struct ModelDownloadCard: View {
             }
             .buttonStyle(.plain)
         }
+    }
+
+    /// "45% · 210 van 460 MB" when byte progress is known, else just the percent.
+    private func progressLabel(_ progress: Double) -> String {
+        let percent = "\(Int(progress * 100))%"
+        if let bytes = app.downloadBytes, bytes.totalMB > 0 {
+            return "\(percent) · \(bytes.downloadedMB) van \(bytes.totalMB) MB"
+        }
+        return percent
     }
 }

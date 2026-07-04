@@ -35,6 +35,7 @@
 		463C978E557855ECA13C3458 /* AppModel.swift in Sources */ = {isa = PBXBuildFile; fileRef = 32A9004EDE806642B923E452 /* AppModel.swift */; };
 		4BDDCF7572F25E1E6DBBAA23 /* SettingsStore.swift in Sources */ = {isa = PBXBuildFile; fileRef = BBA22F137A5DF55B46EBD685 /* SettingsStore.swift */; };
 		4E8D973EBAB9038CB45D3734 /* PlaudClient+Wire.swift in Sources */ = {isa = PBXBuildFile; fileRef = 537600B94C3D5EF528A8F839 /* PlaudClient+Wire.swift */; };
+		4EC23057A189024DCE75043D /* ParakeetDownloadLogicTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = E46A46581981C43742CDC217 /* ParakeetDownloadLogicTests.swift */; };
 		52E5BB9F4A48187EC048627D /* AppDelegate.swift in Sources */ = {isa = PBXBuildFile; fileRef = 3E6F593C654F6C75A43A5B71 /* AppDelegate.swift */; };
 		53867CAAD0C55DB9D93E6762 /* HistoryListiOSView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 5A371BB195FE432609342261 /* HistoryListiOSView.swift */; };
 		590D692DC0F95AEB2FF2197D /* GeneralSettingsView.swift in Sources */ = {isa = PBXBuildFile; fileRef = D7500F947869E624B24DFED7 /* GeneralSettingsView.swift */; };
@@ -206,6 +207,7 @@
 		DDDECC86EDC33F1B2C84B7E5 /* TranscriptAISection.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TranscriptAISection.swift; sourceTree = "<group>"; };
 		E06A7C66B070227464AECBE6 /* AppEnvironment.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AppEnvironment.swift; sourceTree = "<group>"; };
 		E26E8FA797302D8A82313DD6 /* E2EImportSmokeTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = E2EImportSmokeTests.swift; sourceTree = "<group>"; };
+		E46A46581981C43742CDC217 /* ParakeetDownloadLogicTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ParakeetDownloadLogicTests.swift; sourceTree = "<group>"; };
 		ECC243434513F757853F766B /* ClaudeClientTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ClaudeClientTests.swift; sourceTree = "<group>"; };
 		EE4F2660720F65B2FB777D02 /* PrivacyInfo.xcprivacy */ = {isa = PBXFileReference; path = PrivacyInfo.xcprivacy; sourceTree = "<group>"; };
 		F30CAC045B5E61407E6D9629 /* Assets.xcassets */ = {isa = PBXFileReference; lastKnownFileType = folder.assetcatalog; path = Assets.xcassets; sourceTree = "<group>"; };
@@ -376,6 +378,7 @@
 				29387B38D94A0836DCEBC319 /* InsertionLogicTests.swift */,
 				1AF3E700DDA13883FF10D49C /* KeychainStoreTests.swift */,
 				826BBAD27D8C8176815452C8 /* ModesServiceTests.swift */,
+				E46A46581981C43742CDC217 /* ParakeetDownloadLogicTests.swift */,
 				262D15BDDAC407881937D976 /* PlaudClientIntegrationTests.swift */,
 				0C36E5184063E965F3533564 /* PlaudClientTests.swift */,
 				5304E58CA703C5A0CADE2DAF /* PlaudKeychainTests.swift */,
@@ -897,6 +900,7 @@
 				2B499ED1D007731BA854B105 /* InsertionLogicTests.swift in Sources */,
 				D9D72C8E2222F74E989D0A57 /* KeychainStoreTests.swift in Sources */,
 				6C3562966E81A6BDF339669F /* ModesServiceTests.swift in Sources */,
+				4EC23057A189024DCE75043D /* ParakeetDownloadLogicTests.swift in Sources */,
 				8D2621B8B672C89D6DFFF324 /* PlaudClientIntegrationTests.swift in Sources */,
 				3B47B9E874821DC3ABB0DD00 /* PlaudClientTests.swift in Sources */,
 				A4487DD6BF12E714782660FB /* PlaudKeychainTests.swift in Sources */,
