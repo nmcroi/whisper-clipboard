@@ -42,11 +42,14 @@ struct SettingsSheet: View {
                     Section {
                         Toggle("Synchroniseren via iCloud", isOn: $app.icloudSyncEnabled)
                             .tint(Theme.accent)
-                        LabeledContent("Status", value: app.historySync?.status.dutchLabel ?? "Niet beschikbaar")
+                            // Voorlopig uitgeschakeld: het CloudKit-Production-schema
+                            // is nog niet uitgerold, dus sync aanzetten kan de app
+                            // laten crashen. Wordt na de vakantie ingericht.
+                            .disabled(true)
                     } header: {
                         Text("iCloud")
                     } footer: {
-                        Text("Deelt je geschiedenis met je Mac en andere apparaten via je eigen iCloud. Er komt geen externe server aan te pas.")
+                        Text("iCloud-synchronisatie komt binnenkort. De geschiedenis en notities blijven voorlopig lokaal op dit toestel.")
                     }
                     .listRowBackground(Theme.surface)
 
