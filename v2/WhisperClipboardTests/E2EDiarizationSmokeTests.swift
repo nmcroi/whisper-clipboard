@@ -3,6 +3,7 @@ import Core
 import FluidAudio
 import GRDB
 import XCTest
+import WhisperShared
 @testable import WhisperClipboard
 
 /// End-to-end smoke test for speaker diarization on file import, against the

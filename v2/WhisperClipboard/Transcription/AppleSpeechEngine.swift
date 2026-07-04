@@ -2,6 +2,7 @@ import AVFoundation
 import Core
 import Foundation
 import Speech
+import WhisperShared
 
 /// Errors from the Apple Speech backend.
 enum AppleSpeechEngineError: LocalizedError {

@@ -2,6 +2,7 @@ import AVFoundation
 import Core
 import GRDB
 import XCTest
+import WhisperShared
 @testable import WhisperClipboard
 
 /// End-to-end smoke test for the live-captions rolling-window path against the

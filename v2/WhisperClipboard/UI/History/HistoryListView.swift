@@ -2,6 +2,7 @@ import Core
 import Combine
 import Foundation
 import SwiftUI
+import WhisperShared
 
 /// The full history browser: a searchable, filterable list on the left and the
 /// selected transcript's detail on the right.

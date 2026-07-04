@@ -1,5 +1,6 @@
 import Core
 import Foundation
+import WhisperShared
 
 /// Writes every newly completed transcript to a user-chosen folder on disk, in a
 /// user-chosen format, when auto-export is enabled.

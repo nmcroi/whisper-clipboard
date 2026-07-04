@@ -1,5 +1,6 @@
 import Core
 import Foundation
+import WhisperShared
 
 /// Pure accumulation logic for streaming transcription results, factored out of
 /// ``AppleSpeechEngine`` so it can be unit-tested without any Speech framework

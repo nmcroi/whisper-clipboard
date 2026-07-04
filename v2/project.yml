@@ -64,6 +64,12 @@ packages:
     from: "2.6.0"
   Core:
     path: Packages/Core
+  # Cross-platform (macOS + iOS) layer shared by the mac app and the iOS
+  # companion: the TranscriptionEngine protocol + ParakeetEngine, the GRDB
+  # HistoryStore/schema/records, AppSupport, and TranscriptSourceStyle. Depends
+  # on Core, GRDB and FluidAudio via its own manifest.
+  WhisperShared:
+    path: Packages/Shared
 
 targets:
   WhisperClipboard:
@@ -81,6 +87,7 @@ targets:
     dependencies:
       - package: KeyboardShortcuts
       - package: Core
+      - package: WhisperShared
       - package: FluidAudio
       - package: GRDB
         product: GRDB
@@ -157,6 +164,7 @@ targets:
       - package: GRDB
         product: GRDB
       - package: Core
+      - package: WhisperShared
       # FluidAudio is used by the gated diarization E2E test (SystemInfo guard).
       - package: FluidAudio
     settings:
@@ -164,6 +172,75 @@ targets:
         PRODUCT_BUNDLE_IDENTIFIER: nl.nielscroiset.whisperclipboardTests
         GENERATE_INFOPLIST_FILE: true
         SWIFT_VERSION: "6.0"
+
+  # iOS companion app. Record → transcribe locally with Parakeet (Dutch) →
+  # history. Shares the data + engine layer with the mac app via WhisperShared;
+  # its history DB lives in this app's own sandboxed Application Support.
+  WhisperClipboardiOS:
+    type: application
+    platform: iOS
+    deploymentTarget: "17.0"
+    sources:
+      - path: WhisperClipboardiOS
+        excludes:
+          - "Resources/Info.plist"
+          # Fonts are copied intact into the app bundle root by the
+          # postCompileScripts phase below (UIAppFonts references them by name).
+          - "Resources/Fonts"
+    dependencies:
+      - package: Core
+      - package: WhisperShared
+      - package: FluidAudio
+      - package: GRDB
+        product: GRDB
+    postCompileScripts:
+      - name: Copy bundled fonts into the app bundle
+        basedOnDependencyAnalysis: false
+        script: |
+          FONTS_SRC="${SRCROOT}/WhisperClipboardiOS/Resources/Fonts"
+          FONTS_DST="${TARGET_BUILD_DIR}/${UNLOCALIZED_RESOURCES_FOLDER_PATH}"
+          mkdir -p "${FONTS_DST}"
+          cp "${FONTS_SRC}/Inter.ttf" "${FONTS_DST}/"
+          cp "${FONTS_SRC}/Merriweather.ttf" "${FONTS_DST}/"
+    info:
+      path: WhisperClipboardiOS/Resources/Info.plist
+      properties:
+        CFBundleDevelopmentRegion: nl
+        CFBundleDisplayName: Whisper Clipboard
+        CFBundleName: Whisper Clipboard
+        CFBundleShortVersionString: $(MARKETING_VERSION)
+        CFBundleVersion: $(CURRENT_PROJECT_VERSION)
+        LSRequiresIPhoneOS: true
+        UILaunchScreen: {}
+        UIApplicationSceneManifest:
+          UIApplicationSupportsMultipleScenes: false
+        # Portrait-primary: the record UI is a single vertical column.
+        UISupportedInterfaceOrientations:
+          - UIInterfaceOrientationPortrait
+        NSMicrophoneUsageDescription: "Whisper Clipboard gebruikt de microfoon om je spraak lokaal op je iPhone om te zetten naar tekst. Er verlaat geen audio je toestel."
+        # Bundled Inter (UI) + Merriweather (wordmark) fonts.
+        UIAppFonts:
+          - Inter.ttf
+          - Merriweather.ttf
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: nl.nielscroiset.whisperclipboard.ios
+        PRODUCT_NAME: WhisperClipboardiOS
+        GENERATE_INFOPLIST_FILE: false
+        SWIFT_VERSION: "6.0"
+        MARKETING_VERSION: "2.0.1"
+        CURRENT_PROJECT_VERSION: "2"
+        TARGETED_DEVICE_FAMILY: "1"
+        ASSETCATALOG_COMPILER_APPICON_NAME: AppIcon
+        ASSETCATALOG_COMPILER_GLOBAL_ACCENT_COLOR_NAME: AccentColor
+        # Ad-hoc / dev signing so simulator + generic device builds run without a
+        # Developer account. Real signing is supplied on the command line for a
+        # device/TestFlight build (mirrors the mac target's parameterization).
+        CODE_SIGN_STYLE: Manual
+        CODE_SIGN_IDENTITY: "-"
+        CODE_SIGNING_REQUIRED: "NO"
+        CODE_SIGNING_ALLOWED: "NO"
+        DEVELOPMENT_TEAM: ""
 
 schemes:
   WhisperClipboard:
@@ -176,3 +253,10 @@ schemes:
       config: Debug
       targets:
         - WhisperClipboardTests
+
+  WhisperClipboardiOS:
+    build:
+      targets:
+        WhisperClipboardiOS: all
+    run:
+      config: Debug

@@ -1,4 +1,5 @@
 import XCTest
+import WhisperShared
 @testable import WhisperClipboard
 
 /// Tests for the shared `JSONIdentitySet` store extracted in finding #8, and the

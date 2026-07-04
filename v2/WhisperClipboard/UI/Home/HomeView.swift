@@ -2,6 +2,7 @@ import AppKit
 import Core
 import SwiftUI
 import UniformTypeIdentifiers
+import WhisperShared
 
 /// The main window root: a dark `NavigationSplitView` with a tight sidebar
 /// (Home / Geschiedenis) and a detail pane per tab.

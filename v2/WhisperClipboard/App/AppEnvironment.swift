@@ -3,6 +3,7 @@ import Core
 import Foundation
 import GRDB
 import SwiftUI
+import WhisperShared
 
 /// Produces a history timestamp string matching the Python app's
 /// `isoformat(timespec="seconds")` shape (no fractional seconds, local offset).

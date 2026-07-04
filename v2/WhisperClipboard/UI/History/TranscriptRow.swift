@@ -1,6 +1,7 @@
 import Core
 import Foundation
 import SwiftUI
+import WhisperShared
 
 /// A single history row: title (name or first words), relative Dutch date,
 /// duration, source glyph, and (in full mode) a pin toggle. Used both in the

@@ -2,6 +2,7 @@ import AudioToolbox
 import AVFoundation
 import CoreAudio
 import Foundation
+import WhisperShared
 
 /// Errors surfaced by ``SystemAudioTap``, in Dutch.
 enum SystemAudioTapError: LocalizedError {

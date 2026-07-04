@@ -2,6 +2,7 @@ import AVFoundation
 import Combine
 import Core
 import Foundation
+import WhisperShared
 
 /// Orchestrates the dictation lifecycle: idle → recording → transcribing →
 /// ready, mirroring the guard semantics of the Python `WhisperClipboardApp`.

@@ -3,6 +3,7 @@ import Core
 import Foundation
 import Observation
 import UniformTypeIdentifiers
+import WhisperShared
 
 // MARK: - Supported media types
 

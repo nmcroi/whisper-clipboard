@@ -2,6 +2,7 @@ import Core
 import Foundation
 import GRDB
 import XCTest
+import WhisperShared
 @testable import WhisperClipboard
 
 /// Tests for the M4 `ai_results` bridge on ``HistoryStore``, against a temp DB.

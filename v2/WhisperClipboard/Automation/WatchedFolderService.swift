@@ -1,5 +1,6 @@
 import Core
 import Foundation
+import WhisperShared
 
 /// Watches one or more folders and auto-transcribes newly-arrived audio/video
 /// files by handing them to the existing ``FileImportService``.

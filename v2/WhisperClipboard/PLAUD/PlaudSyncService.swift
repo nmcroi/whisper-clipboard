@@ -1,6 +1,7 @@
 import Core
 import Foundation
 import Observation
+import WhisperShared
 
 /// Pulls PLAUD cloud recordings and feeds them into the existing
 /// ``FileImportService`` transcription pipeline.

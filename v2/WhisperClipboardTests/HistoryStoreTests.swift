@@ -2,6 +2,7 @@ import Core
 import Foundation
 import GRDB
 import XCTest
+import WhisperShared
 @testable import WhisperClipboard
 
 @MainActor

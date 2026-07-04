@@ -3,6 +3,7 @@ import Combine
 import Core
 import Foundation
 import NaturalLanguage
+import WhisperShared
 
 /// @MainActor orchestrator for live captions from system audio (M6).
 ///

@@ -1,6 +1,7 @@
 import Core
 import FluidAudio
 import Foundation
+import WhisperShared
 
 /// Errors from the FluidAudio diarizer backend, surfaced in Dutch.
 enum DiarizationError: LocalizedError {

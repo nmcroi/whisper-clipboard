@@ -1,6 +1,7 @@
 import Combine
 import Core
 import Foundation
+import WhisperShared
 
 /// Observable holder for the speech model's install/download status, for the
 /// settings and onboarding UI. Bridges the actor-isolated engine to the main

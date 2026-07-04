@@ -2,6 +2,7 @@ import AppKit
 import Core
 import Foundation
 import SwiftUI
+import WhisperShared
 
 /// Full detail for one transcript: editable title, metadata, and a **readable,
 /// grouped** transcript body (speaker turns for diarized entries, sentence

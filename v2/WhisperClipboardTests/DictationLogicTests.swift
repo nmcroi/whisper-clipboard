@@ -1,4 +1,5 @@
 import XCTest
+import WhisperShared
 @testable import WhisperClipboard
 
 final class TransitionDebouncerTests: XCTestCase {

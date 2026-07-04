@@ -1,6 +1,7 @@
 import AVFoundation
 import Combine
 import Foundation
+import WhisperShared
 
 /// Errors surfaced by ``AudioEngine``.
 enum AudioEngineError: LocalizedError {

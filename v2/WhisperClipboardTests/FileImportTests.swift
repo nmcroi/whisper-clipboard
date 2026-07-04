@@ -1,5 +1,6 @@
 import AVFoundation
 import XCTest
+import WhisperShared
 @testable import WhisperClipboard
 
 // MARK: - Supported extensions

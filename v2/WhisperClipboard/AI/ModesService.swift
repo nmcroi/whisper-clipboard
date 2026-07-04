@@ -1,6 +1,7 @@
 import Core
 import Foundation
 import Observation
+import WhisperShared
 
 /// The live state of an AI mode running against a transcript, observed by the UI.
 @MainActor
