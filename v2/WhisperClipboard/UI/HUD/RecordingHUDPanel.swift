@@ -70,11 +70,12 @@ final class RecordingHUDController {
         // the panel was created).
         panel.appearance = appearanceProvider()
 
-        let restingOrigin = restingOrigin(for: panel)
         panel.layoutIfNeeded()
 
         if isFreshShow {
-            // Start slightly below and transparent, then animate up + fade in.
+            // Open at the remembered (or default bottom-center) position, arriving
+            // with a subtle upward drift + fade.
+            let restingOrigin = restingOrigin(for: panel)
             panel.setFrameOrigin(NSPoint(x: restingOrigin.x, y: restingOrigin.y - Self.entranceDrift))
             panel.alphaValue = 0
             panel.orderFrontRegardless()
@@ -86,9 +87,9 @@ final class RecordingHUDController {
                 panel.animator().setFrameOrigin(restingOrigin)
             }
         } else {
-            // Already visible (e.g. recording → transcribing → finished):
-            // just make sure it's positioned and fully opaque.
-            panel.setFrameOrigin(restingOrigin)
+            // Already visible (recording → transcribing → finished): leave it
+            // exactly where it is — including wherever the user just dragged it —
+            // and only ensure it's fully opaque and frontmost.
             panel.alphaValue = 1
             panel.orderFrontRegardless()
         }
@@ -96,6 +97,9 @@ final class RecordingHUDController {
 
     private func hidePanel() {
         guard let panel else { return }
+        // Remember where the user left the panel so the next recording reopens
+        // there (captured before the exit animation nudges it).
+        Self.saveOrigin(panel.frame.origin)
         showHideGeneration += 1
         let myGeneration = showHideGeneration
         let restingOrigin = panel.frame.origin
@@ -132,7 +136,9 @@ final class RecordingHUDController {
         panel.level = .statusBar
         panel.collectionBehavior = [.canJoinAllSpaces, .fullScreenAuxiliary]
         panel.hidesOnDeactivate = false
-        panel.isMovableByWindowBackground = false
+        // Draggable by its background; interactive controls (the stop button)
+        // still consume their own clicks. Position is remembered across sessions.
+        panel.isMovableByWindowBackground = true
         panel.backgroundColor = .clear
         panel.isOpaque = false
         panel.hasShadow = false
@@ -141,14 +147,15 @@ final class RecordingHUDController {
         return panel
     }
 
-    /// The panel's resting position: bottom-center of the active screen.
+    /// The panel's opening position: the user's remembered spot when it's still
+    /// (mostly) on a visible screen, otherwise the default bottom-center.
     private func restingOrigin(for panel: NSPanel) -> NSPoint {
-        let screen = Self.activeScreen()
-        let visible = screen.visibleFrame
         let size = panel.frame.size
-        let x = visible.midX - size.width / 2
-        let y = visible.minY + 80
-        return NSPoint(x: x, y: y)
+        if let saved = Self.savedOrigin(), Self.isReasonablyVisible(origin: saved, size: size) {
+            return saved
+        }
+        let visible = Self.activeScreen().visibleFrame
+        return NSPoint(x: visible.midX - size.width / 2, y: visible.minY + 80)
     }
 
     /// Screen containing the mouse, falling back to the main screen.
@@ -157,6 +164,34 @@ final class RecordingHUDController {
         return NSScreen.screens.first { $0.frame.contains(mouse) }
             ?? NSScreen.main
             ?? NSScreen.screens[0]
+    }
+
+    // MARK: - Remembered position
+
+    private static let originXKey = "hudOriginX"
+    private static let originYKey = "hudOriginY"
+
+    private static func saveOrigin(_ origin: NSPoint) {
+        UserDefaults.standard.set(Double(origin.x), forKey: originXKey)
+        UserDefaults.standard.set(Double(origin.y), forKey: originYKey)
+    }
+
+    private static func savedOrigin() -> NSPoint? {
+        let defaults = UserDefaults.standard
+        guard defaults.object(forKey: originXKey) != nil,
+              defaults.object(forKey: originYKey) != nil else { return nil }
+        return NSPoint(x: defaults.double(forKey: originXKey), y: defaults.double(forKey: originYKey))
+    }
+
+    /// A saved origin is only reused when a meaningful chunk of the panel would
+    /// still land on some screen, so a disconnected monitor can't strand the HUD
+    /// off screen (it then falls back to the default position).
+    private static func isReasonablyVisible(origin: NSPoint, size: NSSize) -> Bool {
+        let rect = NSRect(origin: origin, size: size)
+        return NSScreen.screens.contains { screen in
+            let overlap = screen.visibleFrame.intersection(rect)
+            return overlap.width >= 60 && overlap.height >= 20
+        }
     }
 }
 
