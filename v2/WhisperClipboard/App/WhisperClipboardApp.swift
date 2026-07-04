@@ -46,8 +46,24 @@ private struct WindowConfigurator: NSViewRepresentable {
 
     func makeNSView(context: Context) -> NSView {
         let view = NSView()
+        configureWhenReady(view, attempt: 0)
+        return view
+    }
+
+    /// Waits (briefly, retrying) until the view is in its window, then applies
+    /// the autosave frame AND promotes the app to a regular, frontmost app.
+    ///
+    /// Without the activation, a content window opening while another app is
+    /// frontmost appears on top but the *previous* app keeps owning the menu
+    /// bar. `windowDidBecomeKey` can't fix this — a window only becomes key once
+    /// the app is already active — so we force it here, the moment the main
+    /// window actually reaches the screen.
+    private func configureWhenReady(_ view: NSView, attempt: Int) {
         DispatchQueue.main.async {
-            guard let window = view.window else { return }
+            guard let window = view.window else {
+                if attempt < 20 { configureWhenReady(view, attempt: attempt + 1) }
+                return
+            }
             if window.frameAutosaveName.isEmpty {
                 let hasSaved = UserDefaults.standard.string(forKey: "NSWindow Frame \(autosaveName)") != nil
                 window.setFrameAutosaveName(autosaveName)
@@ -56,8 +72,10 @@ private struct WindowConfigurator: NSViewRepresentable {
                     window.center()
                 }
             }
+            NSApp.setActivationPolicy(.regular)
+            NSApp.activate(ignoringOtherApps: true)
+            window.makeKeyAndOrderFront(nil)
         }
-        return view
     }
 
     func updateNSView(_ nsView: NSView, context: Context) {}
