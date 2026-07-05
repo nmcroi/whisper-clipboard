@@ -11,7 +11,7 @@ enum Notifications {
 
     /// Posts a banner with `body` (and optional `title`). Requests authorization
     /// on first use. Never throws; failures are logged and swallowed.
-    static func post(_ body: String, title: String = "Whisper Clipboard") {
+    static func post(_ body: String, title: String = "Whisper Clip") {
         Task { await deliver(title: title, body: body) }
     }
 

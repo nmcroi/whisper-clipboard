@@ -20,7 +20,7 @@ enum SystemAudioTapError: LocalizedError {
     var errorDescription: String? {
         switch self {
         case .permissionDenied:
-            return "Geen toegang tot systeemaudio. Sta 'Whisper Clipboard' toe in Systeeminstellingen › Privacy en beveiliging › Schermopname en systeemaudio."
+            return "Geen toegang tot systeemaudio. Sta 'Whisper Clip' toe in Systeeminstellingen › Privacy en beveiliging › Schermopname en systeemaudio."
         case .tapCreationFailed(let status):
             return "De systeemaudio-tap kon niet worden gemaakt (foutcode \(status))."
         case .noAudioDevice:

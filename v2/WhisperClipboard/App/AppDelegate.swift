@@ -108,7 +108,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         )
 
         menu.addItem(
-            makeItem(title: "Open Whisper Clipboard", action: #selector(openHome), key: "o")
+            makeItem(title: "Open Whisper Clip", action: #selector(openHome), key: "o")
         )
         menu.addItem(
             makeItem(title: "Geschiedenis", action: #selector(openHistory), key: "")
@@ -156,7 +156,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         }
 
         menu.addItem(
-            makeItem(title: "Stop Whisper Clipboard", action: #selector(quit), key: "q")
+            makeItem(title: "Stop Whisper Clip", action: #selector(quit), key: "q")
         )
 
         item.menu = menu

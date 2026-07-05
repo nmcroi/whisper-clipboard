@@ -5,7 +5,7 @@ struct WhisperClipboardApp: App {
     @NSApplicationDelegateAdaptor(AppDelegate.self) private var appDelegate
 
     var body: some Scene {
-        Window("Whisper Clipboard", id: "main") {
+        Window("Whisper Clip", id: "main") {
             HomeView()
                 .environmentObject(appDelegate.environment)
                 // Min width fits the Geschiedenis three-pane layout without

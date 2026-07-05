@@ -17,7 +17,7 @@ struct ModelDownloadCard: View {
                 .font(ThemeFont.ui(18, weight: .semibold))
                 .foregroundStyle(Theme.text)
 
-            Text("Whisper Clipboard transcribeert volledig op je iPhone. Download eenmalig het Nederlandse Parakeet-model (~460 MB). Daarna werkt alles offline.")
+            Text("Whisper Clip transcribeert volledig op je iPhone. Download eenmalig het Nederlandse Parakeet-model (~460 MB). Daarna werkt alles offline.")
                 .font(ThemeFont.ui(14))
                 .foregroundStyle(Theme.textSecondary)
                 .multilineTextAlignment(.center)

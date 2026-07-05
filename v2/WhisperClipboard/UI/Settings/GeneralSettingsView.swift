@@ -317,7 +317,7 @@ struct GeneralSettingsView: View {
                     Text("Start bij inloggen")
                         .font(ThemeFont.ui(13, weight: .medium))
                         .foregroundStyle(Theme.text)
-                    Text("Whisper Clipboard start automatisch op de achtergrond wanneer je inlogt.")
+                    Text("Whisper Clip start automatisch op de achtergrond wanneer je inlogt.")
                         .font(ThemeFont.ui(11))
                         .foregroundStyle(Theme.textSecondary)
                         .fixedSize(horizontal: false, vertical: true)

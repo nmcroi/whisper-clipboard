@@ -202,7 +202,7 @@ struct Wordmark: View {
     var size: CGFloat = 26
 
     var body: some View {
-        Text.accentDotted("Whisper Clipboard")
+        Text.accentDotted("Whisper Clip")
         .font(ThemeFont.wordmark(size, weight: .bold))
     }
 }

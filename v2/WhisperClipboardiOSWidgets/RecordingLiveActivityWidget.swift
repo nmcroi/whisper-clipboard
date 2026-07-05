@@ -128,7 +128,7 @@ private struct LockScreenView: View {
         HStack(spacing: 14) {
             RecordingDot(isPaused: state.isPaused, isStale: isStale)
             VStack(alignment: .leading, spacing: 4) {
-                Text("Whisper Clipboard")
+                Text("Whisper Clip")
                     .font(.headline)
                     .foregroundStyle(WidgetTheme.text.opacity(isStale ? 0.55 : 1))
                 Text(subtitle)

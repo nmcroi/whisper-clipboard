@@ -37,7 +37,7 @@ struct AutomationSettingsView: View {
             Text.accentDotted("Automatisering")
             .font(ThemeFont.ui(18, weight: .bold))
 
-            Text("Laat Whisper Clipboard werk uit handen nemen: stopwoorden opschonen, transcripties automatisch bewaren en hele mappen vanzelf transcriberen.")
+            Text("Laat Whisper Clip werk uit handen nemen: stopwoorden opschonen, transcripties automatisch bewaren en hele mappen vanzelf transcriberen.")
                 .font(ThemeFont.ui(11))
                 .foregroundStyle(Theme.textSecondary)
                 .fixedSize(horizontal: false, vertical: true)
