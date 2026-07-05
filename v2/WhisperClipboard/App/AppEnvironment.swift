@@ -292,9 +292,14 @@ final class AppEnvironment: ObservableObject {
         // Direct insertion wiring (M5). Capture the frontmost app at recording
         // start; attempt insertion at completion (clipboard-only when disabled).
         dictation.captureInsertionTarget = { InsertionService.captureFrontmost() }
-        dictation.insertionHandler = { [weak self] text, target in
+        // Momentopname van het klembord VÓÓR de transcriptie erop komt, zodat de
+        // insertion-restore het echte vorige klembord van de gebruiker terugzet.
+        dictation.pasteboardSnapshotProvider = { [weak self] in
+            self?.insertion.snapshotPasteboard()
+        }
+        dictation.insertionHandler = { [weak self] text, target, snapshot in
             guard let self else { return .clipboardOnly(reason: .disabled) }
-            return self.insertion.insert(text, settings: self.settings, target: target)
+            return self.insertion.insert(text, settings: self.settings, target: target, snapshot: snapshot)
         }
     }
 
@@ -323,7 +328,20 @@ final class AppEnvironment: ObservableObject {
         }
     }
 
+    /// Minimum dictation duration (seconds) worth diarizing. Mirrors
+    /// ``FileImportService``'s guard: short quick dictations rarely have multiple
+    /// speakers and diarization on <10s is unreliable — and, crucially, skipping
+    /// them keeps the fast dictate-to-clipboard path free of any model load.
+    private static let minDictationDiarizeDuration: Double = 10
+
     /// Builds a `TranscriptEntry` from a finished dictation and stores it.
+    ///
+    /// Latency note: the transcript text is **already on the clipboard** by the
+    /// time this runs (``DictationController/completeTranscription`` copies it
+    /// before firing `onTranscriptCompleted`). So the entry is persisted straight
+    /// away here, and speaker recognition — when enabled and applicable — runs
+    /// afterwards on a detached task, updating the stored entry's segments in
+    /// place. Nothing on the dictate-to-clipboard hot path waits for diarization.
     private func saveCompletedTranscript(_ completion: DictationController.TranscriptCompletion) {
         let entry = TranscriptEntry(
             id: UUID().uuidString,
@@ -344,6 +362,36 @@ final class AppEnvironment: ObservableObject {
             autoExport.exportIfEnabled(entry)
         } catch {
             NSLog("AppEnvironment: failed to save transcript: %@", String(describing: error))
+        }
+
+        // Optional speaker recognition (diarization) for the just-finished
+        // dictation. Runs off the hot path (the text is already copied + stored),
+        // and only when: the master toggle is on, we retained the recording's
+        // samples (Parakeet 16 kHz path), the clip is long enough, and it has
+        // segments to label. On any failure the entry simply keeps its plain
+        // segments — dictation is never blocked or crashed by diarization.
+        guard settings.speakerRecognitionEnabled,
+              let samples = completion.samples,
+              !samples.isEmpty,
+              completion.duration >= Self.minDictationDiarizeDuration,
+              !completion.segments.isEmpty
+        else { return }
+
+        let entryId = entry.id
+        let segments = completion.segments
+        Task { [weak self] in
+            guard let self else { return }
+            do {
+                let turns = try await self.diarizationService.diarize(samples: samples)
+                guard !turns.isEmpty else { return }
+                let labelled = SpeakerMerge.assign(segments: segments, turns: turns)
+                // Only write back if diarization actually assigned any speaker.
+                guard labelled != segments else { return }
+                try self.history.updateSegmentsPreservingText(id: entryId, segments: labelled)
+            } catch {
+                // Best-effort: keep the plain-segment transcript already saved.
+                NSLog("AppEnvironment: dictation diarization skipped: %@", String(describing: error))
+            }
         }
     }
 

@@ -1,0 +1,41 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+	<!-- Whisper Clipboard doet geen tracking en verzamelt/verstuurt geen data:
+	     transcriptie draait volledig op het toestel; de enige netwerkoproepen zijn
+	     door de gebruiker gestarte Claude-API-verzoeken met diens eigen sleutel. -->
+	<key>NSPrivacyTracking</key>
+	<false/>
+	<key>NSPrivacyTrackingDomains</key>
+	<array/>
+	<key>NSPrivacyCollectedDataTypes</key>
+	<array/>
+	<key>NSPrivacyAccessedAPITypes</key>
+	<array>
+		<!-- UserDefaults: alleen de eigen defaults van de app (instellingen,
+		     laatst gekozen taal, e.d.). Vereiste-reden-categorie met reden CA92.1
+		     ("toegang tot informatie in de defaults van de app zelf"). -->
+		<dict>
+			<key>NSPrivacyAccessedAPIType</key>
+			<string>NSPrivacyAccessedAPICategoryUserDefaults</string>
+			<key>NSPrivacyAccessedAPITypeReasons</key>
+			<array>
+				<string>CA92.1</string>
+			</array>
+		</dict>
+		<!-- Systeem-opstarttijd: IOSAudioEngine gebruikt
+		     DispatchTime.now().uptimeNanoseconds om de opnameduur (verstreken tijd)
+		     te meten. Vereiste-reden-categorie met reden 35F9.1 ("verstreken tijd
+		     meten voor gebeurtenissen binnen de app"). -->
+		<dict>
+			<key>NSPrivacyAccessedAPIType</key>
+			<string>NSPrivacyAccessedAPICategorySystemBootTime</string>
+			<key>NSPrivacyAccessedAPITypeReasons</key>
+			<array>
+				<string>35F9.1</string>
+			</array>
+		</dict>
+	</array>
+</dict>
+</plist>

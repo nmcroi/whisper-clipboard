@@ -51,7 +51,14 @@ final class DictationController: ObservableObject {
     /// Delivers the processed transcript for direct insertion into the target app
     /// (captured at `start()`). Returns the outcome so the HUD line can reflect it.
     /// Nil-safe: when unset, dictation stays clipboard-only.
-    var insertionHandler: ((_ text: String, _ target: InsertionTarget?) -> InsertionOutcome)?
+    /// De `snapshot` is het klembord zoals het was VÓÓR onze transcriptie erop
+    /// kwam (gemaakt vlak vóór `Clipboard.copy`), zodat de restore-stap het echte
+    /// vorige klembord van de gebruiker kan terugzetten.
+    var insertionHandler: ((_ text: String, _ target: InsertionTarget?, _ snapshot: InsertionService.PasteboardSnapshot?) -> InsertionOutcome)?
+    /// Maakt een momentopname van het huidige klembord VÓÓRDAT de transcriptie
+    /// erop wordt gezet. Nil-safe: zonder handler is er geen snapshot en valt de
+    /// insertion-restore terug op leegmaken.
+    var pasteboardSnapshotProvider: (() -> InsertionService.PasteboardSnapshot?)?
     /// Captures the frontmost app at recording start (before the HUD appears).
     var captureInsertionTarget: (() -> InsertionTarget?)?
     /// Called just before a recording actually starts, so live captions can be
@@ -71,7 +78,22 @@ final class DictationController: ObservableObject {
         let language: String
         let model: String
         let source: String
+        /// The full 16 kHz mono Float32 recording, retained for an optional
+        /// speaker-recognition (diarization) pass done AFTER the text already
+        /// reached the clipboard. `nil` when the captured audio wasn't in the
+        /// diarizer's format (e.g. the Apple Speech engine negotiated a different
+        /// rate) — the consumer then simply skips diarization.
+        let samples: [Float]?
     }
+
+    /// Accumulates the recording's 16 kHz mono Float32 samples during a run, so a
+    /// completed dictation can be diarized without re-decoding. Only created when
+    /// the negotiated capture format matches the diarizer's requirement (16 kHz,
+    /// mono, Float32) — i.e. the Parakeet path. Reset at each start.
+    private var sampleCollector: SampleCollector?
+    /// Whether the current session's capture format is the 16 kHz mono Float32 the
+    /// diarizer needs. Set once the audio format is negotiated in `beginSession`.
+    private var samplesAreDiarizable = false
 
     private let latency = LatencyRecorder()
     private var debouncer = TransitionDebouncer(interval: 0.25)
@@ -156,6 +178,8 @@ final class DictationController: ObservableObject {
         hudDismissTask?.cancel()
         phase = .recording
         livePartial = StreamingPartial(finalizedText: "", volatileText: "")
+        sampleCollector = nil
+        samplesAreDiarizable = false
         elapsed = 0
         onStateChange(.recording)
         latency.begin()
@@ -189,6 +213,12 @@ final class DictationController: ObservableObject {
             return
         }
 
+        // Only retain samples for the optional post-dictation diarization pass
+        // when the engine negotiated exactly the diarizer's format (16 kHz mono
+        // Float32 — the Parakeet path). For any other format we skip capture, and
+        // diarization is skipped downstream (no re-decode, no wrong-rate turns).
+        samplesAreDiarizable = Self.isDiarizerFormat(format)
+
         let stream: AsyncStream<AudioBufferBox>
         do {
             if let format {
@@ -215,11 +245,27 @@ final class DictationController: ObservableObject {
         startElapsedTicker()
         observePartials()
 
+        // When diarization is possible for this run, tee each buffer's samples
+        // into a collector alongside feeding the engine. The collector is touched
+        // only from this single serial loop, so its appends are race-free; we read
+        // it back on the main actor after `feedTask` finishes (in `finishSession`).
+        let capture = samplesAreDiarizable ? SampleCollector() : nil
+        sampleCollector = capture
         feedTask = Task { [engine] in
             for await box in stream {
+                capture?.append(from: box.buffer)
                 await engine.feed(box)
             }
         }
+    }
+
+    /// True when `format` is exactly the 16 kHz mono Float32 the diarizer models
+    /// consume — matching ``ParakeetEngine/bestAudioFormat()``.
+    private static func isDiarizerFormat(_ format: AVAudioFormat?) -> Bool {
+        guard let format else { return false }
+        return format.commonFormat == .pcmFormatFloat32
+            && format.channelCount == 1
+            && Int(format.sampleRate) == 16_000
     }
 
     // MARK: - Stop
@@ -246,6 +292,11 @@ final class DictationController: ObservableObject {
         await feedTask?.value
         feedTask = nil
 
+        // The feed loop has finished, so the collector is no longer being written:
+        // safe to read the retained samples for the optional diarization pass.
+        let samples = samplesAreDiarizable ? sampleCollector?.samples : nil
+        sampleCollector = nil
+
         let result: TranscriptionResult
         do {
             result = try await engine.finalize()
@@ -255,18 +306,20 @@ final class DictationController: ObservableObject {
             await completeTranscription(
                 text: salvaged,
                 segments: [],
+                samples: samples,
                 salvagedFromError: true
             )
             return
         }
 
         latency.markFinalized()
-        await completeTranscription(text: result.text, segments: result.segments, salvagedFromError: false)
+        await completeTranscription(text: result.text, segments: result.segments, samples: samples, salvagedFromError: false)
     }
 
     private func completeTranscription(
         text: String,
         segments: [Core.TranscriptSegment],
+        samples: [Float]?,
         salvagedFromError: Bool
     ) async {
         partialsTask?.cancel()
@@ -290,6 +343,12 @@ final class DictationController: ObservableObject {
             language: settings.language.isEmpty ? "nl" : settings.language
         )
 
+        // Neem het klembord van de gebruiker vast VÓÓRDAT we onze transcriptie
+        // erop schrijven. Anders zou de insertion-restore straks onze eigen tekst
+        // als "vorige inhoud" opslaan en het echte klembord van de gebruiker
+        // wissen. Nil-safe: zonder provider blijft alles bij het oude.
+        let pasteboardSnapshot = pasteboardSnapshotProvider?()
+
         Clipboard.copy(processed)
         latency.markClipboard()
         lastMetrics = latency.metrics
@@ -297,7 +356,7 @@ final class DictationController: ObservableObject {
         // Direct insertion (M5): if wired + enabled, attempt to paste the text
         // into the app that was frontmost when recording started. On any skip or
         // failure the text simply remains on the clipboard (already copied above).
-        let outcome = insertionHandler?(processed, capturedInsertionTarget)
+        let outcome = insertionHandler?(processed, capturedInsertionTarget, pasteboardSnapshot)
         lastInsertionOutcome = outcome
         capturedInsertionTarget = nil
         switch outcome {
@@ -318,7 +377,10 @@ final class DictationController: ObservableObject {
                 duration: elapsed,
                 language: settings.language.isEmpty ? "nl" : settings.language,
                 model: "parakeet-tdt-0.6b-v3",
-                source: "mic"
+                source: "mic",
+                // Only carry samples through when the segments are non-empty (a
+                // salvaged/empty-segment run has nothing to attach speakers to).
+                samples: segments.isEmpty ? nil : samples
             )
         )
 
@@ -423,4 +485,22 @@ final class DictationController: ObservableObject {
         }
     }
     #endif
+}
+
+/// Accumulates 16 kHz mono Float32 samples from the dictation capture, for the
+/// optional post-dictation speaker-recognition pass. Written from a single serial
+/// feed loop only (never concurrently), then read once that loop has finished, so
+/// it needs no internal locking. Marked `@unchecked Sendable` to cross into the
+/// (non-actor) feed `Task`; the single-writer/read-after-completion discipline
+/// above makes that safe.
+private final class SampleCollector: @unchecked Sendable {
+    private(set) var samples: [Float] = []
+
+    /// Appends channel 0 of a 16 kHz mono Float32 buffer.
+    func append(from buffer: AVAudioPCMBuffer) {
+        guard let channelData = buffer.floatChannelData else { return }
+        let frameLength = Int(buffer.frameLength)
+        guard frameLength > 0 else { return }
+        samples.append(contentsOf: UnsafeBufferPointer(start: channelData[0], count: frameLength))
+    }
 }

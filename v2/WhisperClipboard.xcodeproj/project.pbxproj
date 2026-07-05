@@ -75,6 +75,7 @@
 		94FE58D8BCBB97E32C4C9F76 /* NotesListiOSView.swift in Sources */ = {isa = PBXBuildFile; fileRef = E2FE82257C662505E70520AE /* NotesListiOSView.swift */; };
 		98534A4853BCC39FCF1CCB79 /* TranscriptRow.swift in Sources */ = {isa = PBXBuildFile; fileRef = 3580AB19559B80A11116BA9D /* TranscriptRow.swift */; };
 		98D57A5B830113A583B18745 /* SettingsSheet.swift in Sources */ = {isa = PBXBuildFile; fileRef = 477AC9545D2B3F3F148D6428 /* SettingsSheet.swift */; };
+		9D4FD9BAA2ED45D9ED8435FE /* PrivacyInfo.xcprivacy in Resources */ = {isa = PBXBuildFile; fileRef = F216FEECA940DDFE95F3B93C /* PrivacyInfo.xcprivacy */; };
 		9E4742F7A992E55BAFFDD7B6 /* CaptionWindowingTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = A7AFDEA768659079E126A5A8 /* CaptionWindowingTests.swift */; };
 		9E8651520A071EFB5910F947 /* E2ECaptionsSmokeTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = D99C5C480B3384990D920B39 /* E2ECaptionsSmokeTests.swift */; };
 		A4487DD6BF12E714782660FB /* PlaudKeychainTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 5304E58CA703C5A0CADE2DAF /* PlaudKeychainTests.swift */; };
@@ -251,6 +252,7 @@
 		ECC243434513F757853F766B /* ClaudeClientTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ClaudeClientTests.swift; sourceTree = "<group>"; };
 		EE4F2660720F65B2FB777D02 /* PrivacyInfo.xcprivacy */ = {isa = PBXFileReference; path = PrivacyInfo.xcprivacy; sourceTree = "<group>"; };
 		F18298A8524EDB5C4AC2B7A5 /* StopRecordingIntent.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = StopRecordingIntent.swift; sourceTree = "<group>"; };
+		F216FEECA940DDFE95F3B93C /* PrivacyInfo.xcprivacy */ = {isa = PBXFileReference; path = PrivacyInfo.xcprivacy; sourceTree = "<group>"; };
 		F30CAC045B5E61407E6D9629 /* Assets.xcassets */ = {isa = PBXFileReference; lastKnownFileType = folder.assetcatalog; path = Assets.xcassets; sourceTree = "<group>"; };
 		F580797D5BC5393CCED9620F /* AppNavigation.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AppNavigation.swift; sourceTree = "<group>"; };
 		F5DC60D0AD01FB9A0C27FC55 /* WhisperClipboardTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = WhisperClipboardTests.swift; sourceTree = "<group>"; };
@@ -472,6 +474,7 @@
 			isa = PBXGroup;
 			children = (
 				F30CAC045B5E61407E6D9629 /* Assets.xcassets */,
+				F216FEECA940DDFE95F3B93C /* PrivacyInfo.xcprivacy */,
 			);
 			path = Resources;
 			sourceTree = "<group>";
@@ -849,6 +852,7 @@
 			buildActionMask = 2147483647;
 			files = (
 				CAA7E1AB8A3E0C53DB90A7EB /* Assets.xcassets in Resources */,
+				9D4FD9BAA2ED45D9ED8435FE /* PrivacyInfo.xcprivacy in Resources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
@@ -1046,7 +1050,7 @@
 				CODE_SIGN_ENTITLEMENTS = WhisperClipboardiOS/WhisperClipboardiOS.entitlements;
 				CODE_SIGN_IDENTITY = "-";
 				CODE_SIGN_STYLE = Manual;
-				CURRENT_PROJECT_VERSION = 3;
+				CURRENT_PROJECT_VERSION = 4;
 				DEVELOPMENT_TEAM = "";
 				GENERATE_INFOPLIST_FILE = NO;
 				INFOPLIST_FILE = WhisperClipboardiOS/Resources/Info.plist;
@@ -1100,7 +1104,7 @@
 				CODE_SIGN_IDENTITY = "-";
 				CODE_SIGN_STYLE = Manual;
 				COPY_PHASE_STRIP = NO;
-				CURRENT_PROJECT_VERSION = 3;
+				CURRENT_PROJECT_VERSION = 4;
 				DEBUG_INFORMATION_FORMAT = "dwarf-with-dsym";
 				DEVELOPMENT_TEAM = "";
 				ENABLE_HARDENED_RUNTIME = YES;
@@ -1137,7 +1141,7 @@
 				CODE_SIGN_ENTITLEMENTS = WhisperClipboardiOS/WhisperClipboardiOS.entitlements;
 				CODE_SIGN_IDENTITY = "-";
 				CODE_SIGN_STYLE = Manual;
-				CURRENT_PROJECT_VERSION = 3;
+				CURRENT_PROJECT_VERSION = 4;
 				DEVELOPMENT_TEAM = "";
 				GENERATE_INFOPLIST_FILE = NO;
 				INFOPLIST_FILE = WhisperClipboardiOS/Resources/Info.plist;
@@ -1162,7 +1166,7 @@
 				CODE_SIGNING_REQUIRED = NO;
 				CODE_SIGN_IDENTITY = "-";
 				CODE_SIGN_STYLE = Manual;
-				CURRENT_PROJECT_VERSION = 3;
+				CURRENT_PROJECT_VERSION = 4;
 				DEVELOPMENT_TEAM = "";
 				GENERATE_INFOPLIST_FILE = NO;
 				INFOPLIST_FILE = WhisperClipboardiOSWidgets/Info.plist;
@@ -1187,7 +1191,7 @@
 				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
 				CODE_SIGN_ENTITLEMENTS = WhisperClipboard/WhisperClipboard.entitlements;
 				COMBINE_HIDPI_IMAGES = YES;
-				CURRENT_PROJECT_VERSION = 3;
+				CURRENT_PROJECT_VERSION = 4;
 				GENERATE_INFOPLIST_FILE = NO;
 				INFOPLIST_FILE = WhisperClipboard/Resources/Info.plist;
 				LD_RUNPATH_SEARCH_PATHS = (
@@ -1210,7 +1214,7 @@
 				CODE_SIGNING_REQUIRED = NO;
 				CODE_SIGN_IDENTITY = "-";
 				CODE_SIGN_STYLE = Manual;
-				CURRENT_PROJECT_VERSION = 3;
+				CURRENT_PROJECT_VERSION = 4;
 				DEVELOPMENT_TEAM = "";
 				GENERATE_INFOPLIST_FILE = NO;
 				INFOPLIST_FILE = WhisperClipboardiOSWidgets/Info.plist;
@@ -1235,7 +1239,7 @@
 				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
 				CODE_SIGN_ENTITLEMENTS = WhisperClipboard/WhisperClipboard.entitlements;
 				COMBINE_HIDPI_IMAGES = YES;
-				CURRENT_PROJECT_VERSION = 3;
+				CURRENT_PROJECT_VERSION = 4;
 				GENERATE_INFOPLIST_FILE = NO;
 				INFOPLIST_FILE = WhisperClipboard/Resources/Info.plist;
 				LD_RUNPATH_SEARCH_PATHS = (
@@ -1306,7 +1310,7 @@
 				CODE_SIGN_IDENTITY = "-";
 				CODE_SIGN_STYLE = Manual;
 				COPY_PHASE_STRIP = NO;
-				CURRENT_PROJECT_VERSION = 3;
+				CURRENT_PROJECT_VERSION = 4;
 				DEBUG_INFORMATION_FORMAT = dwarf;
 				DEVELOPMENT_TEAM = "";
 				ENABLE_HARDENED_RUNTIME = NO;

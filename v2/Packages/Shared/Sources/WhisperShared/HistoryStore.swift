@@ -94,6 +94,12 @@ public final class HistoryStore: ObservableObject {
     }
 
     /// The on-disk location of the v2 history database.
+    ///
+    /// HARDE LES (2026-07-05): DEBUG-builds en test-hosts gebruiken een EIGEN
+    /// bestand (`history-dev.db`). Eerder deelden dev/test-runs het echte
+    /// `history.db` van de geïnstalleerde release-app, en in combinatie met
+    /// `eraseDatabaseOnSchemaChange` (DEBUG-only) is daarbij Niels' echte
+    /// geschiedenis gewist. Dev/test mag NOOIT meer bij productiedata kunnen.
     public static func databaseURL() throws -> URL {
         let base = try FileManager.default.url(
             for: .applicationSupportDirectory,
@@ -101,9 +107,14 @@ public final class HistoryStore: ObservableObject {
             appropriateFor: nil,
             create: true
         )
+        #if DEBUG
+        let filename = "history-dev.db"
+        #else
+        let filename = "history.db"
+        #endif
         return base
             .appendingPathComponent("Whisper Clipboard v2", isDirectory: true)
-            .appendingPathComponent("history.db", isDirectory: false)
+            .appendingPathComponent(filename, isDirectory: false)
     }
 
     // MARK: - Mutations
@@ -207,6 +218,33 @@ public final class HistoryStore: ObservableObject {
                 // opname uit zijn notitie loskomen).
                 updated.noteId = record.noteId
                 // `TranscriptRecord(entry:)` already stamped modifiedAt = now.
+                try updated.update(db)
+                changed = true
+            }
+        }
+        if changed { emit(.upsert(id: id)) }
+        bump()
+    }
+
+    /// Attaches speaker labels to a transcript's segments **without** touching its
+    /// display text. Unlike ``updateSegments(id:segments:)`` (which rebuilds the
+    /// text from the segments, as trimming needs), this preserves the stored text
+    /// verbatim — used by the post-dictation diarization pass, where the text was
+    /// already post-processed (replacements/cleanup/filler removal) and must not be
+    /// re-derived from the raw segment text. No-op if the id is gone (e.g. the user
+    /// deleted the entry before diarization finished).
+    public func updateSegmentsPreservingText(id: String, segments: [TranscriptSegment]) throws {
+        var changed = false
+        try dbQueue.write { db in
+            if let record = try TranscriptRecord.fetchOne(db, key: id) {
+                var entry = record.entry
+                entry.segments = segments
+                // Keep the existing text; only re-derive the record so the segments
+                // JSON is refreshed. Preserve pinned/speakerNames/note fields.
+                var updated = TranscriptRecord(entry: entry)
+                updated.pinned = record.pinned
+                updated.speakerNames = record.speakerNames
+                updated.noteId = record.noteId
                 try updated.update(db)
                 changed = true
             }

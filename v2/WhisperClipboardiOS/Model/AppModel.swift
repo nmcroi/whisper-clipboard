@@ -23,6 +23,12 @@ final class AppModel: ObservableObject {
     /// as an error banner rather than crashing).
     let history: HistoryStore?
 
+    /// Stuurt wijzigingen in de HistoryStore (revision-bump bij hernoemen,
+    /// verplaatsen, opslaan, …) door naar de views. Die observeren alleen
+    /// AppModel; zonder deze doorgifte bleef bv. een hernoemde notitie zijn oude
+    /// titel tonen tot een toevallige andere her-render (bug 2026-07-05).
+    private var historyObservation: AnyCancellable?
+
     /// iCloud history sync (i2). `nil` when the DB couldn't be opened (no store to
     /// sync). Dormant until the toggle is on AND an iCloud account is available.
     let historySync: HistorySyncEngine?
@@ -98,6 +104,13 @@ final class AppModel: ObservableObject {
         // nieuwe opname start (RecordingLiveActivityController.start() zou anders
         // pas bij de volgende opname opruimen).
         Task { await RecordingStopBus.endAllActivities() }
+
+        // Geef store-wijzigingen door aan de views (zie historyObservation-doc).
+        // Bewust als LAATSTE in init: de closure vangt `self` en dat mag pas
+        // wanneer alle stored properties geïnitialiseerd zijn.
+        self.historyObservation = store?.objectWillChange.sink { [weak self] _ in
+            self?.objectWillChange.send()
+        }
     }
 
     // MARK: - Model lifecycle

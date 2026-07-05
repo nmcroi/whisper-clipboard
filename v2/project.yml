@@ -13,7 +13,7 @@ settings:
     SWIFT_VERSION: "6.0"
     SWIFT_STRICT_CONCURRENCY: complete # Swift 6 language mode
     MARKETING_VERSION: "2.0.1"
-    CURRENT_PROJECT_VERSION: "3"
+    CURRENT_PROJECT_VERSION: "4"
     # Signing is deliberately parameterized so the SAME project builds two ways:
     #   • Local dev / CI (this file as-is): ad-hoc identity "-", no team, so a
     #     plain `xcodebuild` runs without a Developer account or provisioning.
@@ -155,7 +155,7 @@ targets:
         GENERATE_INFOPLIST_FILE: false
         SWIFT_VERSION: "6.0"
         MARKETING_VERSION: "2.0.1"
-        CURRENT_PROJECT_VERSION: "3"
+        CURRENT_PROJECT_VERSION: "4"
 
   WhisperClipboardTests:
     type: bundle.unit-test
@@ -247,7 +247,7 @@ targets:
         CODE_SIGN_ENTITLEMENTS: WhisperClipboardiOS/WhisperClipboardiOS.entitlements
         SWIFT_VERSION: "6.0"
         MARKETING_VERSION: "2.0.1"
-        CURRENT_PROJECT_VERSION: "3"
+        CURRENT_PROJECT_VERSION: "4"
         TARGETED_DEVICE_FAMILY: "1"
         ASSETCATALOG_COMPILER_APPICON_NAME: AppIcon
         ASSETCATALOG_COMPILER_GLOBAL_ACCENT_COLOR_NAME: AccentColor
@@ -293,7 +293,7 @@ targets:
         GENERATE_INFOPLIST_FILE: false
         SWIFT_VERSION: "6.0"
         MARKETING_VERSION: "2.0.1"
-        CURRENT_PROJECT_VERSION: "3"
+        CURRENT_PROJECT_VERSION: "4"
         TARGETED_DEVICE_FAMILY: "1"
         # Zelfde ad-hoc/dev-signing als de app zodat CI/dev-builds niet breken.
         CODE_SIGN_STYLE: Manual

@@ -87,6 +87,66 @@ import Foundation
         #expect(decoded.translateCaptionsToDutch == true)
     }
 
+    // MARK: - Speaker recognition (master toggle + migration)
+
+    /// The master speaker-recognition toggle defaults to ON (matching the old
+    /// per-import default).
+    @Test func speakerRecognitionDefaultsOn() {
+        #expect(AppSettings().speakerRecognitionEnabled == true)
+    }
+
+    /// A settings.json written before the master toggle existed, but WITH the
+    /// legacy `diarizeImports:false`, must migrate to `speakerRecognitionEnabled ==
+    /// false` — a user who had turned imports off keeps speaker recognition off and
+    /// is never silently flipped back on.
+    @Test func speakerRecognitionMigratesFromDiarizeImportsFalse() throws {
+        let json = """
+        {"hotkeyMode":"toggle","language":"nl","engine":"parakeet","diarizeImports":false}
+        """.data(using: .utf8)!
+        let decoded = try JSONDecoder().decode(AppSettings.self, from: json)
+        #expect(decoded.speakerRecognitionEnabled == false)
+        #expect(decoded.diarizeImports == false)
+    }
+
+    /// A settings.json with the legacy `diarizeImports:true` and no master key
+    /// migrates to speaker recognition ON.
+    @Test func speakerRecognitionMigratesFromDiarizeImportsTrue() throws {
+        let json = """
+        {"hotkeyMode":"toggle","language":"nl","engine":"parakeet","diarizeImports":true}
+        """.data(using: .utf8)!
+        let decoded = try JSONDecoder().decode(AppSettings.self, from: json)
+        #expect(decoded.speakerRecognitionEnabled == true)
+    }
+
+    /// A settings.json missing BOTH keys (predates diarization entirely) falls
+    /// back to the ON default.
+    @Test func speakerRecognitionFallsBackToOnWhenBothKeysMissing() throws {
+        let json = """
+        {"hotkeyMode":"toggle","language":"nl","engine":"parakeet"}
+        """.data(using: .utf8)!
+        let decoded = try JSONDecoder().decode(AppSettings.self, from: json)
+        #expect(decoded.speakerRecognitionEnabled == true)
+    }
+
+    /// When the master key is present it wins over the legacy field (a newer file
+    /// can carry both; the explicit master value is authoritative).
+    @Test func speakerRecognitionMasterKeyWinsOverLegacy() throws {
+        let json = """
+        {"speakerRecognitionEnabled":false,"diarizeImports":true}
+        """.data(using: .utf8)!
+        let decoded = try JSONDecoder().decode(AppSettings.self, from: json)
+        #expect(decoded.speakerRecognitionEnabled == false)
+    }
+
+    /// An explicit master value round-trips through JSON coding.
+    @Test func speakerRecognitionRoundTripsThroughCoding() throws {
+        var settings = AppSettings()
+        settings.speakerRecognitionEnabled = false
+        let data = try JSONEncoder().encode(settings)
+        let decoded = try JSONDecoder().decode(AppSettings.self, from: data)
+        #expect(decoded.speakerRecognitionEnabled == false)
+    }
+
     // MARK: - Appearance
 
     /// Dark is the app's signature look and stays the default; light/system are

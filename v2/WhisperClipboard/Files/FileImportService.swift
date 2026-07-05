@@ -300,7 +300,7 @@ final class FileImportService {
         samples: [Float],
         duration: Double
     ) async -> [Core.TranscriptSegment] {
-        guard settings().diarizeImports else { return segments }
+        guard settings().speakerRecognitionEnabled else { return segments }
         guard let diarizer else { return segments }
         guard duration >= Self.minDiarizeDuration else { return segments }
         guard !segments.isEmpty else { return segments }

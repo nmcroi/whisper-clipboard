@@ -43,8 +43,18 @@ public struct AppSettings: Codable, Equatable, Sendable {
     /// Translate live-caption FINAL lines to Dutch via Apple's Translation
     /// framework. Volatile (in-progress) lines are never translated.
     public var translateCaptionsToDutch: Bool
-    /// Detect speakers ("Spreker 1/2/…") when importing audio/video files.
-    /// Default on; runs an extra on-device diarization pass after transcription.
+    /// Master toggle for speaker recognition ("Spreker 1/2/…"). Gates the extra
+    /// on-device diarization pass for BOTH live mic dictation and imported
+    /// audio/video files. Default on. When off, transcripts stay plain text (no
+    /// speaker labels) and no diarizer model is loaded — keeping the fast
+    /// dictate-to-clipboard path free of extra latency.
+    public var speakerRecognitionEnabled: Bool
+    /// Legacy field, retained for backward-compatible decoding of older
+    /// settings.json files. Superseded by ``speakerRecognitionEnabled`` — a file
+    /// that predates the master toggle migrates its value into it (see the custom
+    /// decoder), so a user who had turned imports off keeps speaker recognition
+    /// off. New writes still persist this (kept in sync with the master toggle)
+    /// so downgrading to an older build doesn't silently flip the behaviour.
     public var diarizeImports: Bool
     /// `nil` means unlimited history retention.
     public var historyRetention: Int?
@@ -109,6 +119,7 @@ public struct AppSettings: Codable, Equatable, Sendable {
         saveRecordings: Bool = false,
         saveCaptions: Bool = false,
         translateCaptionsToDutch: Bool = false,
+        speakerRecognitionEnabled: Bool = true,
         diarizeImports: Bool = true,
         historyRetention: Int? = nil,
         initialPrompt: String = "",
@@ -135,6 +146,7 @@ public struct AppSettings: Codable, Equatable, Sendable {
         self.saveRecordings = saveRecordings
         self.saveCaptions = saveCaptions
         self.translateCaptionsToDutch = translateCaptionsToDutch
+        self.speakerRecognitionEnabled = speakerRecognitionEnabled
         self.diarizeImports = diarizeImports
         self.historyRetention = historyRetention
         self.initialPrompt = initialPrompt
@@ -158,6 +170,7 @@ public struct AppSettings: Codable, Equatable, Sendable {
         case hotkeyMode, language, engine, appearance, cleanOutput, replacements
         case directInsertion, insertionDeniedBundleIds, saveRecordings, saveCaptions
         case translateCaptionsToDutch
+        case speakerRecognitionEnabled
         case diarizeImports
         case historyRetention, initialPrompt, hudLingerSeconds
         case removeFillers, autoExportEnabled, autoExportDirectory, autoExportFormat, watchedFolders
@@ -179,7 +192,14 @@ public struct AppSettings: Codable, Equatable, Sendable {
         self.saveRecordings = try c.decodeIfPresent(Bool.self, forKey: .saveRecordings) ?? d.saveRecordings
         self.saveCaptions = try c.decodeIfPresent(Bool.self, forKey: .saveCaptions) ?? d.saveCaptions
         self.translateCaptionsToDutch = try c.decodeIfPresent(Bool.self, forKey: .translateCaptionsToDutch) ?? d.translateCaptionsToDutch
+        // `diarizeImports` is the legacy per-import flag; decode it first so it can
+        // seed the migration below.
         self.diarizeImports = try c.decodeIfPresent(Bool.self, forKey: .diarizeImports) ?? d.diarizeImports
+        // Migration to the single master toggle: a settings.json written before
+        // `speakerRecognitionEnabled` existed inherits the legacy `diarizeImports`
+        // value, so a user who had turned imports off keeps speaker recognition off
+        // (and isn't silently flipped back on). New files carry the key explicitly.
+        self.speakerRecognitionEnabled = try c.decodeIfPresent(Bool.self, forKey: .speakerRecognitionEnabled) ?? self.diarizeImports
         self.historyRetention = try c.decodeIfPresent(Int.self, forKey: .historyRetention) ?? d.historyRetention
         self.initialPrompt = try c.decodeIfPresent(String.self, forKey: .initialPrompt) ?? d.initialPrompt
         self.hudLingerSeconds = try c.decodeIfPresent(Double.self, forKey: .hudLingerSeconds) ?? d.hudLingerSeconds

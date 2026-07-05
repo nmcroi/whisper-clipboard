@@ -23,6 +23,10 @@ final class RecordController: ObservableObject, RecordingStopHandling {
     @Published private(set) var statusLine = "Tik om op te nemen"
 
     private var app: AppModel?
+    /// True zolang een start-cyclus in gang is maar `isRecording` nog niet gezet.
+    /// Dicht het async-venster tussen een tik en `isRecording = true`, zodat een
+    /// tweede snelle tik geen tweede sessie op dezelfde engine start.
+    private var starting = false
     /// Wanneer gezet, wordt de opname áán deze notitie toegevoegd (met `note_id`)
     /// i.p.v. als losse Geschiedenis-entry opgeslagen. `nil` = het standaard
     /// "one-off"-gedrag van het Opnemen-tabblad (ongewijzigd). Zie ``save``.
@@ -51,6 +55,11 @@ final class RecordController: ObservableObject, RecordingStopHandling {
         if isRecording {
             Task { await stopAndTranscribe() }
         } else {
+            // Negeer een tweede tik terwijl een start al onderweg is: anders zou
+            // het async start-venster (tot `isRecording = true`) een tweede sessie
+            // op dezelfde engine kunnen openen.
+            guard !starting else { return }
+            starting = true
             Task { await start() }
         }
     }
@@ -58,6 +67,9 @@ final class RecordController: ObservableObject, RecordingStopHandling {
     // MARK: - Start
 
     private func start() async {
+        // Wat er ook gebeurt (succes, vroege return of fout): het start-venster is
+        // voorbij als deze functie terugkeert, dus laat de guard weer los.
+        defer { starting = false }
         guard let app else { return }
         didCopy = false
         lastResult = nil
@@ -150,9 +162,25 @@ final class RecordController: ObservableObject, RecordingStopHandling {
         level = 0
         liveActivity.end()
 
+        // `stop()` beëindigt de AsyncStream-continuation, dus de feed-loop draait
+        // de laatste gebufferde buffers nog leeg en eindigt dan vanzelf. We WACHTEN
+        // daarop (niet cancellen — dat zou juist de laatste woorden droppen). Een
+        // korte timeout-guard voorkomt vastlopen mocht de stream onverhoopt niet
+        // eindigen; daarna cancellen we alsnog als vangnet.
         audio?.stop()
-        // Let the last in-flight buffers drain into the engine.
-        feedTask?.cancel()
+        if let feedTask {
+            let drained = await withTaskGroup(of: Bool.self) { group -> Bool in
+                group.addTask { await feedTask.value; return true }
+                group.addTask {
+                    try? await Task.sleep(nanoseconds: 2_000_000_000) // 2 s vangnet
+                    return false
+                }
+                let first = await group.next() ?? false
+                group.cancelAll()
+                return first
+            }
+            if !drained { feedTask.cancel() }
+        }
         feedTask = nil
         audio = nil
 

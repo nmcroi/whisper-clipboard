@@ -74,6 +74,28 @@ final class InsertionService {
         return InsertionTarget(bundleId: app.bundleIdentifier, processIdentifier: app.processIdentifier)
     }
 
+    /// Momentopname van het klembord zoals het was VÓÓRDAT wij onze transcriptie
+    /// erop schrijven. Moet worden gemaakt door de aanroeper (DictationController)
+    /// vlak vóór `Clipboard.copy`, anders leest de restore-stap onze eigen tekst
+    /// terug als "vorige inhoud" en gaat het echte klembord van de gebruiker
+    /// verloren. Bevat de string plus of het een verhulde/geheime waarde was.
+    struct PasteboardSnapshot {
+        let previousString: String?
+        let previousWasConcealed: Bool
+    }
+
+    /// Leest het huidige klembord uit als snapshot. Roep dit aan VÓÓR de
+    /// transcriptie op het klembord wordt gezet.
+    func snapshotPasteboard() -> PasteboardSnapshot {
+        let previousString = pasteboard.string(forType: .string)
+        let previousTypeNames = (pasteboard.types ?? []).map(\.rawValue)
+        let previousWasConcealed = PasteboardRestore.isConcealed(typeNames: previousTypeNames)
+        return PasteboardSnapshot(
+            previousString: previousString,
+            previousWasConcealed: previousWasConcealed
+        )
+    }
+
     private static func currentFrontmost() -> InsertionTarget? {
         guard let app = NSWorkspace.shared.frontmostApplication else { return nil }
         return InsertionTarget(bundleId: app.bundleIdentifier, processIdentifier: app.processIdentifier)
@@ -87,12 +109,18 @@ final class InsertionService {
     ///   - text: the processed transcript.
     ///   - settings: current settings (toggle + deny list).
     ///   - target: the app captured at recording start.
+    ///   - snapshot: het klembord zoals het was VÓÓR de transcriptie erop kwam.
+    ///     De aanroeper maakt deze met `snapshotPasteboard()` vlak vóór
+    ///     `Clipboard.copy`, zodat de restore-stap het échte vorige klembord van
+    ///     de gebruiker terugzet i.p.v. onze eigen transcriptie. Nil = geen
+    ///     snapshot beschikbaar (dan valt de restore terug op leegmaken).
     /// - Returns: what happened, for HUD/metrics/notification.
     @discardableResult
     func insert(
         _ text: String,
         settings: AppSettings,
-        target: InsertionTarget?
+        target: InsertionTarget?,
+        snapshot: PasteboardSnapshot?
     ) -> InsertionOutcome {
         let decision = InsertionPolicy.decide(
             directInsertionEnabled: settings.directInsertion,
@@ -109,14 +137,17 @@ final class InsertionService {
             return .clipboardOnly(reason: .disabled)
         }
 
-        // (a) Save the current pasteboard string (best-effort) + change count.
-        //     Also note whether it was a concealed/transient secret (e.g. a
-        //     password-manager entry): those must NOT be restored as a plain
-        //     string, which would strip their markers and leak them into
-        //     clipboard-history tools that would otherwise skip the value.
-        let previousString = pasteboard.string(forType: .string)
-        let previousTypeNames = (pasteboard.types ?? []).map(\.rawValue)
-        let previousWasConcealed = PasteboardRestore.isConcealed(typeNames: previousTypeNames)
+        // (a) Neem het klembord van VÓÓR onze transcriptie over uit de snapshot
+        //     die de aanroeper maakte (zie `snapshotPasteboard()`). We lezen het
+        //     hier NIET zelf: op dit punt staat onze eigen transcriptie er al op
+        //     (dictation kopieert eerst), dus zelf lezen zou onze tekst als
+        //     "vorige inhoud" opslaan en het echte klembord van de gebruiker
+        //     wissen. `previousWasConcealed` markeert een verhuld/geheim item
+        //     (bv. een wachtwoordmanager-entry): die mag NIET als platte string
+        //     worden teruggezet, wat de markers zou strippen en het geheim naar
+        //     klembord-historie-tools zou lekken.
+        let previousString = snapshot?.previousString
+        let previousWasConcealed = snapshot?.previousWasConcealed ?? false
 
         // (b) Write our text to the pasteboard.
         pasteboard.clearContents()

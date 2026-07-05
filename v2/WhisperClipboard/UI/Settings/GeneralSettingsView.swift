@@ -191,19 +191,25 @@ struct GeneralSettingsView: View {
 
     private var diarizationSection: some View {
         VStack(alignment: .leading, spacing: 10) {
-            Text("Sprekers")
+            Text("Sprekerherkenning")
                 .font(ThemeFont.ui(15, weight: .semibold))
                 .foregroundStyle(Theme.text)
 
             Toggle(isOn: Binding(
-                get: { environment.settings.diarizeImports },
-                set: { environment.settings.diarizeImports = $0 }
+                get: { environment.settings.speakerRecognitionEnabled },
+                set: {
+                    environment.settings.speakerRecognitionEnabled = $0
+                    // Houd het verouderde import-veld gelijk aan de hoofdschakelaar,
+                    // zodat een oudere build (die nog op `diarizeImports` leest)
+                    // hetzelfde gedrag vertoont.
+                    environment.settings.diarizeImports = $0
+                }
             )) {
                 VStack(alignment: .leading, spacing: 2) {
-                    Text("Sprekers herkennen bij bestandsimport")
+                    Text("Sprekers herkennen")
                         .font(ThemeFont.ui(13, weight: .medium))
                         .foregroundStyle(Theme.text)
-                    Text("Labelt automatisch ‘Spreker 1’, ‘Spreker 2’ enz. bij geïmporteerde gesprekken en interviews. Bij het eerste gebruik wordt eenmalig een klein sprekermodel gedownload (±14 MB).")
+                    Text("Labelt automatisch ‘Spreker 1’, ‘Spreker 2’ enz. — zowel bij live dictaat als bij geïmporteerde gesprekken en interviews. Korte dictaten (< 10 sec.) blijven zonder labels, zodat je klembord snel gevuld wordt. Bij het eerste gebruik wordt eenmalig een klein sprekermodel gedownload (±14 MB).")
                         .font(ThemeFont.ui(11))
                         .foregroundStyle(Theme.textSecondary)
                         .fixedSize(horizontal: false, vertical: true)
