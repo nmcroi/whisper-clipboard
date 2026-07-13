@@ -10,6 +10,7 @@ import WhisperShared
 /// opent hem meteen zodat je 'm kunt hernoemen of direct kunt inspreken.
 struct NotesListiOSView: View {
     @EnvironmentObject private var app: AppModel
+    @Environment(\.scenePhase) private var scenePhase
 
     /// Navigatiepad: een net aangemaakte notitie wordt hierop gepusht zodat hij
     /// meteen opent (hernoemen / direct inspreken).
@@ -18,6 +19,12 @@ struct NotesListiOSView: View {
     /// detailweergave opent (gezet door de +-knop, eenmalig geconsumeerd door
     /// `NoteDetailiOSView`).
     @State private var autoStartNoteId: String?
+    /// Notitie die "verwijderd" is via de veeg-actie maar nog binnen het
+    /// undo-venster zit: hij is al uit de lijst verborgen, maar de echte
+    /// DB-verwijdering gebeurt pas in ``commitPendingDelete()``. Sneuvelt de app
+    /// binnen dat venster, dan bestaat de notitie gewoon nog — veilige uitkomst.
+    @State private var pendingDeleteNoteId: String?
+    @State private var pendingDeleteTask: Task<Void, Never>?
 
     var body: some View {
         NavigationStack(path: $path) {
@@ -29,6 +36,12 @@ struct NotesListiOSView: View {
                 VStack(spacing: 0) {
                     listBody
                         .frame(maxWidth: .infinity, maxHeight: .infinity)
+                        .undoToast(
+                            isPresented: pendingDeleteNoteId != nil,
+                            message: "Notitie verwijderd"
+                        ) {
+                            undoDelete()
+                        }
                     recordBar
                 }
             }
@@ -37,6 +50,12 @@ struct NotesListiOSView: View {
                 if let note = noteByID(id) {
                     NoteDetailiOSView(note: note, autoStartNoteId: $autoStartNoteId)
                 }
+            }
+            // Verlaat de gebruiker dit scherm of de app vóór het undo-venster om
+            // is, voer de verwijdering dan meteen uit — hij mag niet zoekraken.
+            .onDisappear { commitPendingDelete() }
+            .onChange(of: scenePhase) { _, phase in
+                if phase != .active { commitPendingDelete() }
             }
         }
     }
@@ -80,9 +99,11 @@ struct NotesListiOSView: View {
                     .listRowSeparatorTint(Theme.border)
                     .swipeActions(edge: .trailing) {
                         Button(role: .destructive) {
-                            // Snelle veeg-verwijdering: entries blijven als losse
-                            // Geschiedenis-items behouden (veilige standaard).
-                            try? app.history?.deleteNote(id: note.id, deleteEntries: false)
+                            // Veeg-verwijdering met undo-venster: de rij verdwijnt
+                            // direct, de echte verwijdering volgt pas na een paar
+                            // seconden (zie requestDelete). Entries blijven als
+                            // losse Geschiedenis-items behouden (veilige standaard).
+                            requestDelete(note.id)
                         } label: {
                             Label("Verwijder", systemImage: "trash")
                         }
@@ -115,7 +136,44 @@ struct NotesListiOSView: View {
 
     private func fetchNotes() -> [Note] {
         _ = app.history?.revision
-        return (try? app.history?.notes()) ?? []
+        let notes = (try? app.history?.notes()) ?? []
+        // De notitie in het undo-venster is visueel al weg, maar staat nog in de
+        // database tot commitPendingDelete().
+        return notes.filter { $0.id != pendingDeleteNoteId }
+    }
+
+    // MARK: - Verwijderen met undo-venster
+
+    /// Hoe lang de undo-toast zichtbaar blijft voordat de verwijdering echt
+    /// wordt uitgevoerd.
+    private static let undoWindowSeconds: Double = 5
+
+    private func requestDelete(_ id: String) {
+        // Maximaal één pending tegelijk: een nieuwe veeg rondt de vorige eerst af.
+        commitPendingDelete()
+        pendingDeleteNoteId = id
+        pendingDeleteTask = Task {
+            try? await Task.sleep(for: .seconds(Self.undoWindowSeconds))
+            guard !Task.isCancelled else { return }
+            commitPendingDelete()
+        }
+    }
+
+    /// Voert de uitgestelde verwijdering definitief uit (no-op zonder pending).
+    private func commitPendingDelete() {
+        pendingDeleteTask?.cancel()
+        pendingDeleteTask = nil
+        guard let id = pendingDeleteNoteId else { return }
+        pendingDeleteNoteId = nil
+        try? app.history?.deleteNote(id: id, deleteEntries: false)
+    }
+
+    /// Undo binnen het venster: er is nog niets echt verwijderd, dus alleen de
+    /// verborgen rij weer tonen.
+    private func undoDelete() {
+        pendingDeleteTask?.cancel()
+        pendingDeleteTask = nil
+        pendingDeleteNoteId = nil
     }
 
     private func noteByID(_ id: String) -> Note? {
