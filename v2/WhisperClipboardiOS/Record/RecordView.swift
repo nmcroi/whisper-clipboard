@@ -14,6 +14,7 @@ import WhisperShared
 ///   → show result + copy.
 struct RecordView: View {
     @EnvironmentObject private var app: AppModel
+    @Environment(\.scenePhase) private var scenePhase
     @StateObject private var controller = RecordController()
 
     var body: some View {
@@ -31,7 +32,15 @@ struct RecordView: View {
         }
         .task {
             controller.attach(app: app)
+            // Dekt de koude start en terugkeer naar dit tabblad: een resultaat
+            // van meer dan vijf minuten oud hoort dan al gewist te zijn.
+            controller.clearResultIfExpired()
             await app.refreshModelStatus()
+        }
+        // Auto-wis bij elk foreground-moment (app komt terug in beeld). Er loopt
+        // geen achtergrond-timer; dit event is het enige check-moment.
+        .onChange(of: scenePhase) { _, phase in
+            if phase == .active { controller.clearResultIfExpired() }
         }
     }
 

@@ -19,6 +19,9 @@ final class RecordController: ObservableObject, RecordingStopHandling {
     @Published private(set) var elapsed: Double = 0
     @Published private(set) var level: Double = 0
     @Published private(set) var lastResult: String?
+    /// Wanneer `lastResult` op het scherm verscheen; stuurt de auto-wis na vijf
+    /// minuten (zie ``clearResultIfExpired()``).
+    private var lastResultAt: Date?
     @Published private(set) var didCopy = false
     @Published private(set) var statusLine = "Tik om op te nemen"
 
@@ -73,6 +76,7 @@ final class RecordController: ObservableObject, RecordingStopHandling {
         guard let app else { return }
         didCopy = false
         lastResult = nil
+        lastResultAt = nil
         statusLine = "Bezig met opnemen…"
 
         let engine = app.engine
@@ -202,6 +206,7 @@ final class RecordController: ObservableObject, RecordingStopHandling {
                 return
             }
             lastResult = processed
+            lastResultAt = Date()
             statusLine = "Klaar. Tik om opnieuw op te nemen."
             save(processed, segments: result.segments, duration: elapsed)
         } catch {
@@ -247,8 +252,19 @@ final class RecordController: ObservableObject, RecordingStopHandling {
     /// gewoon in het Geschiedenis-tabblad staan; dit leegt alleen het scherm.
     func clearResult() {
         lastResult = nil
+        lastResultAt = nil
         didCopy = false
         statusLine = "Tik om op te nemen"
+    }
+
+    /// Wist het resultaat wanneer het langer dan vijf minuten geleden verscheen.
+    /// Aangeroepen op foreground-events (scenePhase → .active) en bij het
+    /// verschijnen van het tabblad — bewust geen achtergrond-timer, zodat er
+    /// niets tikt terwijl de app niet in beeld is.
+    func clearResultIfExpired(now: Date = Date()) {
+        guard let lastResultAt,
+              TransientResultPolicy.isExpired(shownAt: lastResultAt, now: now) else { return }
+        clearResult()
     }
 
     // MARK: - Failure
