@@ -29,8 +29,9 @@ public final class ReplacementsCloudSync {
     private let store: NSUbiquitousKeyValueStore
     /// `updatedAt` van de laatst gepubliceerde óf toegepaste payload. Remote
     /// payloads die hier niet bovenuit komen (waaronder de echo van een eigen
-    /// publish) worden genegeerd.
-    private(set) var localUpdatedAt: Double
+    /// publish) worden genegeerd. De consument bewaart deze waarde en geeft hem
+    /// bij de volgende start terug als `seedUpdatedAt`.
+    public private(set) var localUpdatedAt: Double
     private var observer: NSObjectProtocol?
 
     public init(store: NSUbiquitousKeyValueStore = .default) {
@@ -73,12 +74,18 @@ public final class ReplacementsCloudSync {
 
     /// Publiceert de lokale lijst na een bewerking. Zet `updatedAt` op nu en
     /// onthoudt die, zodat de eigen didChangeExternally-echo genegeerd wordt.
-    public func publish(_ replacements: [Replacement]) {
+    /// Geeft de gestempelde `updatedAt` terug zodat de consument exact dezelfde
+    /// waarde kan bewaren voor de seed bij de volgende start.
+    @discardableResult
+    public func publish(_ replacements: [Replacement]) -> Double {
         let now = Date()
-        guard let data = ReplacementSyncLogic.encode(replacements, updatedAt: now) else { return }
+        guard let data = ReplacementSyncLogic.encode(replacements, updatedAt: now) else {
+            return localUpdatedAt
+        }
         localUpdatedAt = now.timeIntervalSince1970
         store.set(data, forKey: ReplacementSyncLogic.kvKey)
         store.synchronize()
+        return localUpdatedAt
     }
 
     // MARK: - Inkomend

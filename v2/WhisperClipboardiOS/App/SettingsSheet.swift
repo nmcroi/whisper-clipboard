@@ -40,6 +40,20 @@ struct SettingsSheet: View {
                     .listRowBackground(Theme.surface)
 
                     Section {
+                        NavigationLink {
+                            DictionaryiOSView()
+                        } label: {
+                            Label("Woordenlijst", systemImage: "character.book.closed")
+                                .foregroundStyle(Theme.text)
+                        }
+                    } header: {
+                        Text("Transcriptie")
+                    } footer: {
+                        Text("Eigen woorden die de spraakherkenning moet corrigeren. Synchroniseert automatisch met je Mac via iCloud.")
+                    }
+                    .listRowBackground(Theme.surface)
+
+                    Section {
                         Toggle("Synchroniseren via iCloud", isOn: $app.icloudSyncEnabled)
                             .tint(Theme.accent)
                             // Voorlopig uitgeschakeld: het CloudKit-Production-schema

@@ -53,6 +53,29 @@ final class AppModel: ObservableObject {
         didSet { Self.persistAppearance(appearance) }
     }
 
+    /// De woordenlijst (find → replace-regels), toegepast op elke transcriptie —
+    /// zelfde regels als op de Mac. Lokaal bewaard als JSON in `UserDefaults`
+    /// (`ios.replacements`) en gesynct met de Mac via ``ReplacementsCloudSync``
+    /// (iCloud key-value store, last-writer-wins).
+    @Published var replacements: [Replacement] {
+        didSet {
+            guard replacements != oldValue else { return }
+            Self.persistReplacements(replacements)
+            // Publiceer alleen eigen bewerkingen; een binnengekomen remote lijst
+            // (applyingRemoteReplacements) mag niet terug de cloud in echoën.
+            guard !applyingRemoteReplacements else { return }
+            let stampedAt = replacementsSync.publish(replacements)
+            UserDefaults.standard.set(stampedAt, forKey: Self.replacementsUpdatedAtKey)
+        }
+    }
+
+    /// iCloud KV-sync voor de woordenlijst. Los van `historySync` (CKSyncEngine):
+    /// werkt ook nu die nog uit staat, en degradeert stil zonder entitlement.
+    private let replacementsSync = ReplacementsCloudSync()
+    /// Vlag rond het toepassen van een remote lijst, zodat de didSet hierboven
+    /// niet opnieuw publiceert (sync-lus-preventie, laag 2).
+    private var applyingRemoteReplacements = false
+
     /// Current model-download / readiness state, driving the onboarding card.
     @Published var modelStatus: ModelAssetStatus = .unknown
 
@@ -66,9 +89,12 @@ final class AppModel: ObservableObject {
 
     private static let appearanceKey = "ios.appearance"
     private static let icloudSyncKey = "ios.icloudSyncEnabled"
+    private static let replacementsKey = "ios.replacements"
+    private static let replacementsUpdatedAtKey = "ios.replacementsUpdatedAt"
 
     init() {
         self.appearance = Self.loadAppearance()
+        self.replacements = Self.loadReplacements()
         // iCloud-sync staat voorlopig UIT: de CloudKit-container bestaat wel, maar
         // het Production-schema is nog niet uitgerold, en de account-check kan
         // tegen Production hard traps veroorzaken. Tot dat na de vakantie netjes is
@@ -111,6 +137,23 @@ final class AppModel: ObservableObject {
         self.historyObservation = store?.objectWillChange.sink { [weak self] _ in
             self?.objectWillChange.send()
         }
+
+        // Woordenlijst-sync: pas een remote lijst toe onder de vlag (didSet
+        // publiceert dan niet terug) en bewaar de bijbehorende timestamp als
+        // seed voor de volgende start.
+        replacementsSync.onRemoteChange = { [weak self] list in
+            guard let self, self.replacements != list else { return }
+            self.applyingRemoteReplacements = true
+            self.replacements = list
+            self.applyingRemoteReplacements = false
+            UserDefaults.standard.set(
+                self.replacementsSync.localUpdatedAt,
+                forKey: Self.replacementsUpdatedAtKey
+            )
+        }
+        replacementsSync.start(
+            seedUpdatedAt: UserDefaults.standard.double(forKey: Self.replacementsUpdatedAtKey)
+        )
     }
 
     // MARK: - Model lifecycle
@@ -171,5 +214,17 @@ final class AppModel: ObservableObject {
 
     private static func persistAppearance(_ mode: AppSettings.AppearanceMode) {
         UserDefaults.standard.set(mode.rawValue, forKey: appearanceKey)
+    }
+
+    // MARK: - Woordenlijst-persistentie
+
+    private static func loadReplacements() -> [Replacement] {
+        guard let data = UserDefaults.standard.data(forKey: replacementsKey) else { return [] }
+        return (try? JSONDecoder().decode([Replacement].self, from: data)) ?? []
+    }
+
+    private static func persistReplacements(_ replacements: [Replacement]) {
+        guard let data = try? JSONEncoder().encode(replacements) else { return }
+        UserDefaults.standard.set(data, forKey: replacementsKey)
     }
 }

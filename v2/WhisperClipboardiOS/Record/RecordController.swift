@@ -196,7 +196,7 @@ final class RecordController: ObservableObject, RecordingStopHandling {
             isTranscribing = false
             let processed = TextProcessor.process(
                 result.text,
-                replacements: [],
+                replacements: app.replacements,
                 clean: true,
                 language: "nl"
             )
