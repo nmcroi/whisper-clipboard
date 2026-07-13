@@ -31,3 +31,6 @@ sparkle_private_key*
 
 # Release-artefacten (DMGs)
 Releases/
+
+# Apple provisioning profile — niet in publieke repo
+*.provisionprofile
