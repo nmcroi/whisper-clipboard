@@ -1,5 +1,6 @@
 import AVFoundation
 import Combine
+import Core
 import Foundation
 import WhisperShared
 
@@ -78,16 +79,25 @@ final class IOSAudioEngine {
     /// Called (on the main actor) when a paused capture is successfully RESUMED.
     var onResume: (() -> Void)?
 
-    /// True while capture is paused by an interruption (engine stopped, maar de
-    /// sessie en de stream leven nog).
-    private(set) var isPaused = false
+    /// Waarom de capture gepauzeerd is. Een gebruikerspauze (de pauzeknop) en
+    /// een OS-onderbreking (telefoontje, Siri) delen hetzelfde mechanisme —
+    /// tap eraf, engine gepauzeerd, sessie en stream blijven leven — maar
+    /// verschillen in wie mag hervatten: een gebruikerspauze wordt NOOIT
+    /// automatisch hervat door het einde van een onderbreking.
+    enum PauseReason { case user, interruption }
 
-    private var startUptime: Double?
+    private(set) var pauseReason: PauseReason?
 
-    /// Elapsed capture time in seconds, or 0 when not recording.
+    /// True zolang de capture gepauzeerd is (om welke reden dan ook).
+    var isPaused: Bool { pauseReason != nil }
+
+    /// Pauze-bewuste opnameklok: telt alleen echte opnametijd (fixt en passant
+    /// dat de teller vroeger doorliep tijdens een onderbreking).
+    private var stopwatch = RecordingStopwatch()
+
+    /// Elapsed capture time in seconds (exclusief pauzes), or 0 when not recording.
     var elapsed: Double {
-        guard let startUptime else { return 0 }
-        return Self.nowUptime() - startUptime
+        stopwatch.elapsed(at: Self.nowUptime())
     }
 
     // MARK: - Permission
@@ -186,30 +196,59 @@ final class IOSAudioEngine {
         }
     }
 
-    // MARK: - Interruption pause / resume
+    // MARK: - Pause / resume (gebruiker + onderbreking)
 
-    /// Onderbreking begonnen: PAUZEER de capture. Stop de `AVAudioEngine` maar
-    /// houd de audiosessie én de streaming-transcriptiesessie levend (niet
-    /// deactiveren, niet finaliseren) zodat we naadloos kunnen hervatten.
-    private func handleInterruptionBegan() {
+    /// Gebruikerspauze (de pauzeknop): capture stopt ONMIDDELLIJK — de tap gaat
+    /// eraf, dus niets van ná de druk kan de opname in. Sessie en stream blijven
+    /// leven; hervatten gaat naadloos verder in dezelfde opname.
+    func pauseByUser() {
+        performPause(reason: .user)
+    }
+
+    /// Hervatten na een gebruikerspauze. Geeft `false` bij falen — de aanroeper
+    /// rondt de opname dan af met alles tot het pauzemoment.
+    func resumeByUser() -> Bool {
+        guard isRunning, pauseReason == .user else { return false }
+        guard resumeCapture() else { return false }
+        pauseReason = nil
+        stopwatch.resume(at: Self.nowUptime())
+        return true
+    }
+
+    /// Gedeeld pauzepad: stop de `AVAudioEngine` maar houd de audiosessie én de
+    /// streaming-transcriptiesessie levend (niet deactiveren, niet finaliseren).
+    private func performPause(reason: PauseReason) {
         guard isRunning, !isPaused else { return }
-        isPaused = true
+        pauseReason = reason
         engine.inputNode.removeTap(onBus: 0)
         engine.pause()
+        stopwatch.pause(at: Self.nowUptime())
         levelMeter.reset()
-        onPause?()
+        if reason == .interruption {
+            onPause?()
+        }
+    }
+
+    /// Onderbreking begonnen: pauzeer via het gedeelde pad. Was de gebruiker al
+    /// zelf aan het pauzeren, dan blijft dat zo (de tap is toch al weg) en houdt
+    /// de gebruikerspauze voorrang — het einde van de onderbreking mag hem niet
+    /// zelf hervatten.
+    private func handleInterruptionBegan() {
+        performPause(reason: .interruption)
     }
 
     /// Onderbreking klaar: hervat de capture als dat mag én lukt; anders val terug
-    /// op stop-and-transcribe.
+    /// op stop-and-transcribe. Een GEBRUIKERSpauze wordt hier bewust nooit
+    /// hervat — alleen de gebruiker heft die op.
     private func handleInterruptionEnded(shouldResume: Bool) {
-        guard isRunning, isPaused else { return }
+        guard isRunning, pauseReason == .interruption else { return }
         guard shouldResume, resumeCapture() else {
             // Kan niet hervatten → finaliseer wat we hebben.
             onInterruption?()
             return
         }
-        isPaused = false
+        pauseReason = nil
+        stopwatch.resume(at: Self.nowUptime())
         onResume?()
     }
 
@@ -272,7 +311,8 @@ final class IOSAudioEngine {
         }
 
         isRunning = true
-        startUptime = Self.nowUptime()
+        pauseReason = nil
+        stopwatch.start(at: Self.nowUptime())
         levelMeter.reset()
         return stream
     }
@@ -283,10 +323,11 @@ final class IOSAudioEngine {
     private func teardown() {
         guard isRunning else { return }
         isRunning = false
-        isPaused = false
+        pauseReason = nil
+        // removeTap is onschadelijk wanneer de tap er al af is (stop-tijdens-pauze).
         engine.inputNode.removeTap(onBus: 0)
         engine.stop()
-        startUptime = nil
+        stopwatch.stopAndReset()
         tapHandler = nil
         nativeFormat = nil
         levelMeter.reset()

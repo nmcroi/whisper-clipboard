@@ -16,6 +16,10 @@ final class RecordController: ObservableObject, RecordingStopHandling {
     @Published private(set) var isRecording = false
     @Published private(set) var isTranscribing = false
     @Published private(set) var isPaused = false
+    /// True wanneer de huidige pauze door een OS-onderbreking komt (telefoontje,
+    /// Siri) in plaats van de pauzeknop — de UI benoemt dat onderscheid en de
+    /// hervat-knop werkt dan niet (het systeem hervat zelf zodra het kan).
+    @Published private(set) var pausedByInterruption = false
     @Published private(set) var elapsed: Double = 0
     @Published private(set) var level: Double = 0
     @Published private(set) var lastResult: String?
@@ -92,12 +96,14 @@ final class RecordController: ObservableObject, RecordingStopHandling {
         audio.onPause = { [weak self] in
             guard let self else { return }
             self.isPaused = true
+            self.pausedByInterruption = true
             self.statusLine = "Gepauzeerd (onderbreking)"
             self.liveActivity.setPaused(true)
         }
         audio.onResume = { [weak self] in
             guard let self else { return }
             self.isPaused = false
+            self.pausedByInterruption = false
             self.statusLine = "Bezig met opnemen…"
             self.liveActivity.setPaused(false)
         }
@@ -145,6 +151,35 @@ final class RecordController: ObservableObject, RecordingStopHandling {
         }
     }
 
+    // MARK: - Pauze (pauzeknop)
+
+    /// Pauzeert of hervat de lopende opname. Pauze stopt de capture onmiddellijk
+    /// (niets van ná de druk komt de opname in); hervatten gaat naadloos verder
+    /// in dezelfde opname — de stukken plakken automatisch aan elkaar. Tijdens
+    /// een ONDERBREKINGS-pauze doet deze knop niets: het systeem hervat zelf.
+    func togglePause() {
+        guard isRecording, let audio else { return }
+        if audio.isPaused {
+            guard audio.pauseReason == .user else { return }
+            if audio.resumeByUser() {
+                isPaused = false
+                statusLine = "Bezig met opnemen…"
+                liveActivity.setPaused(false)
+            } else {
+                // Hervatten mislukt (input/sessie weg): rond netjes af met alles
+                // tot het pauzemoment.
+                statusLine = "Hervatten lukte niet — opname wordt afgerond…"
+                Task { await stopAndTranscribe() }
+            }
+        } else {
+            audio.pauseByUser()
+            isPaused = true
+            pausedByInterruption = false
+            statusLine = "Gepauzeerd"
+            liveActivity.setPaused(true)
+        }
+    }
+
     // MARK: - Stop
 
     /// Stop-pad vanaf de Live Activity (lock-screen / Dynamic Island). Gedraagt
@@ -160,6 +195,7 @@ final class RecordController: ObservableObject, RecordingStopHandling {
         guard isRecording, let app else { return }
         isRecording = false
         isPaused = false
+        pausedByInterruption = false
         RecordingStopBus.shared.deregister(self)
         tickTask?.cancel()
         tickTask = nil
@@ -272,6 +308,7 @@ final class RecordController: ObservableObject, RecordingStopHandling {
     private func fail(_ message: String) {
         isRecording = false
         isPaused = false
+        pausedByInterruption = false
         isTranscribing = false
         RecordingStopBus.shared.deregister(self)
         tickTask?.cancel()

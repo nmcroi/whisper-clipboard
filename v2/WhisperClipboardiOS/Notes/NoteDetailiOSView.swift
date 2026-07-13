@@ -289,19 +289,33 @@ struct NoteDetailiOSView: View {
                     .foregroundStyle(Theme.textSecondary)
                     .multilineTextAlignment(.center)
             } else {
-                Text(controller.isRecording
-                     ? Self.formatElapsed(controller.elapsed)
-                     : (controller.isTranscribing ? "Bezig met transcriberen…" : "Tik om toe te voegen"))
+                Text(recordBarStatus)
                     .font(ThemeFont.ui(13))
                     .foregroundStyle(Theme.textSecondary)
                     .monospacedDigit()
 
-                NoteRecordButton(
-                    isRecording: controller.isRecording,
-                    isBusy: controller.isTranscribing,
-                    level: controller.level
-                ) {
-                    controller.toggle()
+                HStack(spacing: 24) {
+                    if controller.isRecording {
+                        // Onzichtbare tegenhanger houdt de opnameknop gecentreerd.
+                        PauseToggleButton(isPaused: false, enabled: false) {}
+                            .opacity(0)
+                            .accessibilityHidden(true)
+                    }
+                    NoteRecordButton(
+                        isRecording: controller.isRecording,
+                        isBusy: controller.isTranscribing,
+                        level: controller.level
+                    ) {
+                        controller.toggle()
+                    }
+                    if controller.isRecording {
+                        PauseToggleButton(
+                            isPaused: controller.isPaused,
+                            enabled: !controller.pausedByInterruption
+                        ) {
+                            controller.togglePause()
+                        }
+                    }
                 }
             }
         }
@@ -314,6 +328,19 @@ struct NoteDetailiOSView: View {
                 .frame(height: Theme.Metrics.hairline)
         }
         .animation(.easeInOut(duration: 0.2), value: controller.isRecording)
+    }
+
+    private var recordBarStatus: String {
+        if controller.isRecording {
+            let time = Self.formatElapsed(controller.elapsed)
+            if controller.isPaused {
+                return controller.pausedByInterruption
+                    ? "\(time) — gepauzeerd (onderbreking)"
+                    : "\(time) — gepauzeerd"
+            }
+            return time
+        }
+        return controller.isTranscribing ? "Bezig met transcriberen…" : "Tik om toe te voegen"
     }
 
     // MARK: - Toolbar

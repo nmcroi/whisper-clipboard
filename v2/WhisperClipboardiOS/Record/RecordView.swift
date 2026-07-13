@@ -52,12 +52,31 @@ struct RecordView: View {
             VStack(spacing: 32) {
                 Spacer()
                 statusText
-                RecordButton(
-                    isRecording: controller.isRecording,
-                    isBusy: controller.isTranscribing,
-                    level: controller.level
-                ) {
-                    controller.toggle()
+                HStack(spacing: 28) {
+                    if controller.isRecording {
+                        // Onzichtbare tegenhanger zodat de opnameknop gecentreerd
+                        // blijft terwijl de pauzeknop rechts verschijnt.
+                        PauseToggleButton(isPaused: false, enabled: false) {}
+                            .opacity(0)
+                            .accessibilityHidden(true)
+                    }
+                    RecordButton(
+                        isRecording: controller.isRecording,
+                        isBusy: controller.isTranscribing,
+                        level: controller.level
+                    ) {
+                        controller.toggle()
+                    }
+                    if controller.isRecording {
+                        PauseToggleButton(
+                            isPaused: controller.isPaused,
+                            // Tijdens een onderbrekings-pauze hervat het systeem
+                            // zelf; de knop staat dan uit.
+                            enabled: !controller.pausedByInterruption
+                        ) {
+                            controller.togglePause()
+                        }
+                    }
                 }
                 if controller.isRecording {
                     VStack(spacing: 12) {
@@ -66,9 +85,12 @@ struct RecordView: View {
                             .font(ThemeFont.ui(28, weight: .semibold).monospacedDigit())
                             .foregroundStyle(Theme.text)
                         if controller.isPaused {
-                            Label("Gepauzeerd (onderbreking)", systemImage: "pause.circle")
-                                .font(ThemeFont.ui(13, weight: .medium))
-                                .foregroundStyle(Theme.danger)
+                            Label(
+                                controller.pausedByInterruption ? "Gepauzeerd (onderbreking)" : "Gepauzeerd",
+                                systemImage: "pause.circle"
+                            )
+                            .font(ThemeFont.ui(13, weight: .medium))
+                            .foregroundStyle(Theme.danger)
                         }
                     }
                 }
