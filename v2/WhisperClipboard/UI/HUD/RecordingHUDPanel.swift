@@ -43,7 +43,7 @@ final class RecordingHUDController {
 
     private func handle(phase: DictationController.Phase) {
         switch phase {
-        case .recording, .transcribing, .finished:
+        case .recording, .paused, .transcribing, .finished:
             showPanel()
         case .idle:
             hidePanel()

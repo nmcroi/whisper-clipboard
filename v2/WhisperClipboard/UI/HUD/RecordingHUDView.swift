@@ -72,6 +72,23 @@ struct RecordingHUDView: View {
                     .foregroundStyle(Theme.text)
                 Spacer()
                 LevelBars(level: levelMeter.level)
+                PauseResumeButton(isPaused: false) { controller.pauseRecording() }
+                StopButton { controller.stop() }
+            }
+        case .paused:
+            HStack(spacing: 10) {
+                // Statisch, gedimd puntje: opname staat stil, niets wordt gevangen.
+                Circle()
+                    .fill(Theme.textTertiary)
+                    .frame(width: 10, height: 10)
+                Text(Self.timeString(controller.elapsed))
+                    .font(.system(size: 13, weight: .semibold, design: .monospaced))
+                    .foregroundStyle(Theme.textSecondary)
+                Text("Gepauzeerd")
+                    .font(ThemeFont.ui(13, weight: .medium))
+                    .foregroundStyle(Theme.textSecondary)
+                Spacer()
+                PauseResumeButton(isPaused: true) { controller.resumeRecording() }
                 StopButton { controller.stop() }
             }
         case .transcribing:
@@ -148,6 +165,41 @@ private struct PulsingDot: View {
             .opacity(pulsing ? 1.0 : 0.6)
             .animation(.easeInOut(duration: 0.7).repeatForever(autoreverses: true), value: pulsing)
             .onAppear { pulsing = true }
+    }
+}
+
+/// Pauze/hervat-knop naast de stopknop: zelfde ronde ringstijl, met twee
+/// pauzebalkjes (opname loopt) of een driehoekje (gepauzeerd — hervatten).
+private struct PauseResumeButton: View {
+    let isPaused: Bool
+    let action: () -> Void
+
+    @State private var hovering = false
+
+    var body: some View {
+        Button(action: action) {
+            ZStack {
+                Circle()
+                    .strokeBorder(Theme.accent, lineWidth: 1.6)
+                    .background(Circle().fill(hovering ? Theme.accent.opacity(0.12) : .clear))
+                Image(systemName: isPaused ? "play.fill" : "pause.fill")
+                    .font(.system(size: 8, weight: .bold))
+                    .foregroundStyle(Theme.accent)
+            }
+            .frame(width: 22, height: 22)
+        }
+        .buttonStyle(.plain)
+        .scaleEffect(hovering ? 1.08 : 1.0)
+        .animation(.easeOut(duration: 0.12), value: hovering)
+        .onHover { isHovering in
+            hovering = isHovering
+            if isHovering {
+                NSCursor.pointingHand.push()
+            } else {
+                NSCursor.pop()
+            }
+        }
+        .help(isPaused ? "Hervat opname" : "Pauzeer opname")
     }
 }
 

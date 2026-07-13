@@ -19,6 +19,9 @@ final class DictationController: ObservableObject {
     enum Phase: Equatable {
         case idle
         case recording
+        /// Gebruikerspauze: de mic-tap is eraf (er wordt niets vastgelegd), maar
+        /// de sessie leeft door — hervatten gaat verder in dezelfde opname.
+        case paused
         case transcribing
         case finished
     }
@@ -130,7 +133,9 @@ final class DictationController: ObservableObject {
         switch phase {
         case .idle, .finished:
             start()
-        case .recording:
+        case .recording, .paused:
+            // De hotkey tijdens een pauze rondt gewoon af: de opname bevat dan
+            // alles tot het pauzemoment.
             stop()
         case .transcribing:
             // Busy: mirror Python "Still transcribing. Please wait."
@@ -146,8 +151,33 @@ final class DictationController: ObservableObject {
 
     /// Push-to-talk release.
     func pushToTalkUp() {
-        guard phase == .recording else { return }
+        guard phase == .recording || phase == .paused else { return }
         stop()
+    }
+
+    // MARK: - Pauze (HUD-knop)
+
+    /// Pauzeert de lopende opname: capture stopt onmiddellijk, de sessie blijft
+    /// staan. Genegeerd zolang de mic nog niet echt live is (start-venster).
+    func pauseRecording() {
+        guard debouncer.shouldAccept(now: nowSeconds()) else { return }
+        guard phase == .recording, audioEngine.isRunning else { return }
+        audioEngine.pause()
+        phase = .paused
+    }
+
+    /// Hervat een gepauzeerde opname in dezelfde sessie. Lukt het hervatten van
+    /// de audio-engine niet (input verdwenen), dan wordt de opname netjes
+    /// afgerond met alles tot het pauzemoment.
+    func resumeRecording() {
+        guard debouncer.shouldAccept(now: nowSeconds()) else { return }
+        guard phase == .paused else { return }
+        if audioEngine.resume() {
+            phase = .recording
+        } else {
+            Notifications.post("Hervatten mislukt — opname wordt afgerond")
+            performStop()
+        }
     }
 
     // MARK: - Start
@@ -272,7 +302,14 @@ final class DictationController: ObservableObject {
 
     func stop() {
         guard debouncer.shouldAccept(now: nowSeconds()) else { return }
-        guard phase == .recording else { return }
+        performStop()
+    }
+
+    /// Het eigenlijke stop-pad, zonder debounce-guard — ook gebruikt door het
+    /// mislukt-hervatten-pad (dat mag nooit door de debouncer gedropt worden,
+    /// anders blijft de sessie in een kapotte pauze hangen).
+    private func performStop() {
+        guard phase == .recording || phase == .paused else { return }
 
         // Invalidate the current session so a beginSession() still in its async
         // startup window aborts instead of committing (and orphaning) a mic tap.

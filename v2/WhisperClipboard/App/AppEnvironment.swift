@@ -187,7 +187,7 @@ final class AppEnvironment: ObservableObject {
             locale: { Locale(identifier: settingsRef().language.isEmpty ? "nl-NL" : settingsRef().language) },
             busyReason: { [weak dictation] in
                 switch dictation?.phase {
-                case .recording, .transcribing:
+                case .recording, .paused, .transcribing:
                     return "Wacht tot de huidige opname of transcriptie klaar is"
                 default:
                     return nil
@@ -207,7 +207,7 @@ final class AppEnvironment: ObservableObject {
             saveToHistory: { settingsRef().saveCaptions },
             busyReason: { [weak dictation, weak fileImport] in
                 switch dictation?.phase {
-                case .recording, .transcribing:
+                case .recording, .paused, .transcribing:
                     return "Stop eerst de dictaat-opname voordat je ondertitels start"
                 default:
                     break
@@ -242,7 +242,7 @@ final class AppEnvironment: ObservableObject {
                 // them eligible for a later tick once the model installs.
                 if modelManager?.status.isReady != true { return true }
                 switch dictation?.phase {
-                case .recording, .transcribing: return true
+                case .recording, .paused, .transcribing: return true
                 default: break
                 }
                 return fileImport?.isBusy ?? false
@@ -266,7 +266,7 @@ final class AppEnvironment: ObservableObject {
             isBusy: { [weak dictation, weak fileImport, weak modelManager] in
                 if modelManager?.status.isReady != true { return true }
                 switch dictation?.phase {
-                case .recording, .transcribing: return true
+                case .recording, .paused, .transcribing: return true
                 default: break
                 }
                 return fileImport?.isBusy ?? false

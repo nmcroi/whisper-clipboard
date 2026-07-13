@@ -1,5 +1,6 @@
 import AVFoundation
 import Combine
+import Core
 import Foundation
 import WhisperShared
 
@@ -57,15 +58,23 @@ final class AudioEngine {
     private var converter: AVAudioConverter?
     private var outputFormat: AVAudioFormat?
     private var continuation: AsyncStream<AudioBufferBox>.Continuation?
-    private var isRunning = false
+    private(set) var isRunning = false
+    /// True tijdens een gebruikerspauze: de tap is eraf (er wordt niets meer
+    /// gevangen), maar stream/continuation leven door zodat hervatten naadloos
+    /// in dezelfde opname verdergaat.
+    private(set) var isPaused = false
 
-    /// Monotonic seconds since the current capture started (nil when stopped).
-    private var startUptime: Double?
+    /// De actieve tap-handler + het native formaat, bewaard zodat ``resume()``
+    /// exact dezelfde tap opnieuw kan installeren.
+    private var tapHandler: (@Sendable (AVAudioPCMBuffer, AVAudioTime) -> Void)?
+    private var nativeFormat: AVAudioFormat?
 
-    /// Elapsed capture time in seconds, or 0 when not recording.
+    /// Pauze-bewuste opnameklok: telt alleen echte opnametijd.
+    private var stopwatch = RecordingStopwatch()
+
+    /// Elapsed capture time in seconds (exclusief pauzes), or 0 when not recording.
     var elapsed: Double {
-        guard let startUptime else { return 0 }
-        return Self.nowUptime() - startUptime
+        stopwatch.elapsed(at: Self.nowUptime())
     }
 
     // MARK: - Permission
@@ -147,9 +156,47 @@ final class AudioEngine {
         }
 
         isRunning = true
-        startUptime = Self.nowUptime()
+        isPaused = false
+        self.tapHandler = tapHandler
+        self.nativeFormat = nativeFormat
+        stopwatch.start(at: Self.nowUptime())
         levelMeter.reset()
         return stream
+    }
+
+    // MARK: - Pauze
+
+    /// Pauzeert de opname: de tap gaat er ONMIDDELLIJK af, dus niets van ná dit
+    /// moment kan de opname in. Buffers die vóór de druk al gevangen waren mogen
+    /// nog gewoon doorstromen (dat is pre-pauze-audio — die hoort erbij). Stream
+    /// en continuation blijven leven zodat ``resume()`` naadloos verdergaat in
+    /// dezelfde opname; de engine-samples blijven staan en het vervolg plakt er
+    /// automatisch achteraan (één opname, één transcript).
+    func pause() {
+        guard isRunning, !isPaused else { return }
+        isPaused = true
+        engine.inputNode.removeTap(onBus: 0)
+        engine.pause()
+        stopwatch.pause(at: Self.nowUptime())
+        levelMeter.reset()
+    }
+
+    /// Hervat na ``pause()`` met exact dezelfde tap op dezelfde stream. Geeft
+    /// `false` terug wanneer de audio-engine niet opnieuw wil starten (bijv. de
+    /// input is intussen verdwenen) — de aanroeper rondt de opname dan af.
+    func resume() -> Bool {
+        guard isRunning, isPaused, let tapHandler, let nativeFormat else { return false }
+        engine.inputNode.installTap(onBus: 0, bufferSize: 4096, format: nativeFormat, block: tapHandler)
+        engine.prepare()
+        do {
+            try engine.start()
+        } catch {
+            engine.inputNode.removeTap(onBus: 0)
+            return false
+        }
+        isPaused = false
+        stopwatch.resume(at: Self.nowUptime())
+        return true
     }
 
     /// Stops capture and finishes the stream (consumer sees the end).
@@ -165,9 +212,13 @@ final class AudioEngine {
     private func teardown(finishStream: Bool) {
         guard isRunning else { return }
         isRunning = false
+        isPaused = false
+        // removeTap is onschadelijk wanneer de tap er al af is (stop-tijdens-pauze).
         engine.inputNode.removeTap(onBus: 0)
         engine.stop()
-        startUptime = nil
+        tapHandler = nil
+        nativeFormat = nil
+        stopwatch.stopAndReset()
         levelMeter.reset()
         if finishStream {
             continuation?.finish()

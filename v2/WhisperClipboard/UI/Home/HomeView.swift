@@ -339,11 +339,11 @@ private struct HomeContent: View {
     private var actionGrid: some View {
         LazyVGrid(columns: columns, spacing: 12) {
             ActionCard(
-                symbol: dictation.phase == .recording ? "stop.circle" : "mic",
+                symbol: dictationActive ? "stop.circle" : "mic",
                 title: "Dicteren",
-                subtitle: dictation.phase == .recording ? "Opname loopt — klik om te stoppen" : "Spreek in en plak de tekst",
+                subtitle: dictationSubtitle,
                 enabled: canDictate,
-                hint: dictation.phase == .recording ? nil : environment.hotkeys.shortcutDescription,
+                hint: dictationActive ? nil : environment.hotkeys.shortcutDescription,
                 action: { dictation.toggle() }
             )
             ActionCard(
@@ -372,6 +372,20 @@ private struct HomeContent: View {
 
     private var canDictate: Bool {
         modelManager.status.isReady && dictation.phase != .transcribing
+    }
+
+    /// True zolang er een opname-sessie leeft (ook gepauzeerd): de kaart toont
+    /// dan de stop-variant.
+    private var dictationActive: Bool {
+        dictation.phase == .recording || dictation.phase == .paused
+    }
+
+    private var dictationSubtitle: String {
+        switch dictation.phase {
+        case .recording: return "Opname loopt — klik om te stoppen"
+        case .paused: return "Opname gepauzeerd — klik om te stoppen"
+        default: return "Spreek in en plak de tekst"
+        }
     }
 
     // MARK: Recent

@@ -223,6 +223,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         case .recording:
             recordMenuItem?.title = "Stop opname"
             recordMenuItem?.isEnabled = true
+        case .paused:
+            recordMenuItem?.title = "Stop opname (gepauzeerd)"
+            recordMenuItem?.isEnabled = true
         case .transcribing:
             recordMenuItem?.title = "Transcriberen…"
             recordMenuItem?.isEnabled = false
