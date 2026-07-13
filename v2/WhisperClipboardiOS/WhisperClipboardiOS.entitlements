@@ -13,5 +13,12 @@
 	<array>
 		<string>iCloud.nl.nielscroiset.whisperclipboard</string>
 	</array>
+	<!-- iCloud key-value store voor de woordenlijst-sync (ReplacementsCloudSync).
+	     BEWUST dezelfde identifier als de Mac-app (dus NIET het eigen bundle-id
+	     met .ios-suffix): apps delen alleen één KV-store wanneer de identifier
+	     exact gelijk is. Portal: zet "iCloud key-value storage" aan op beide
+	     App IDs. Zonder entitlement/account degradeert de sync stil (geen crash). -->
+	<key>com.apple.developer.ubiquity-kvstore-identifier</key>
+	<string>$(TeamIdentifierPrefix)nl.nielscroiset.whisperclipboard</string>
 </dict>
 </plist>
