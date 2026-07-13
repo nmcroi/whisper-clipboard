@@ -32,17 +32,14 @@ public final class ReplacementsCloudSync {
     /// publish) worden genegeerd. De consument bewaart deze waarde en geeft hem
     /// bij de volgende start terug als `seedUpdatedAt`.
     public private(set) var localUpdatedAt: Double
+    /// De didChangeExternally-observer. Bewust nooit verwijderd: beide
+    /// consumenten (AppEnvironment op de Mac, AppModel op iOS) leven zo lang
+    /// als het app-proces, dus dit object ook.
     private var observer: NSObjectProtocol?
 
     public init(store: NSUbiquitousKeyValueStore = .default) {
         self.store = store
         self.localUpdatedAt = 0
-    }
-
-    deinit {
-        if let observer {
-            NotificationCenter.default.removeObserver(observer)
-        }
     }
 
     /// Start de sync: leest de huidige cloud-waarde (en levert die via
@@ -59,10 +56,14 @@ public final class ReplacementsCloudSync {
             object: store,
             queue: .main
         ) { [weak self] note in
+            // Pak de (Sendable) waarden uit de notificatie VÓÓR de actor-hop —
+            // de Notification zelf is niet Sendable en mag de MainActor niet in.
+            let reason = note.userInfo?[NSUbiquitousKeyValueStoreChangeReasonKey] as? Int
+            let keys = note.userInfo?[NSUbiquitousKeyValueStoreChangedKeysKey] as? [String]
             // De notificatie komt op de main queue binnen; dit object is
             // @MainActor, dus assumeIsolated is hier terecht.
             MainActor.assumeIsolated {
-                self?.handleExternalChange(note)
+                self?.handleExternalChange(reason: reason, keys: keys)
             }
         }
 
@@ -90,17 +91,15 @@ public final class ReplacementsCloudSync {
 
     // MARK: - Inkomend
 
-    private func handleExternalChange(_ note: Notification) {
+    private func handleExternalChange(reason: Int?, keys: [String]?) {
         // Alleen server-wijzigingen en initiële syncs zijn interessant;
         // quota/account-meldingen wijzigen de payload niet.
-        let reason = note.userInfo?[NSUbiquitousKeyValueStoreChangeReasonKey] as? Int
         if let reason,
            reason != NSUbiquitousKeyValueStoreServerChange,
            reason != NSUbiquitousKeyValueStoreInitialSyncChange {
             return
         }
-        if let keys = note.userInfo?[NSUbiquitousKeyValueStoreChangedKeysKey] as? [String],
-           !keys.contains(ReplacementSyncLogic.kvKey) {
+        if let keys, !keys.contains(ReplacementSyncLogic.kvKey) {
             return
         }
         applyRemoteIfNewer()
