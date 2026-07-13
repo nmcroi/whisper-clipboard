@@ -151,8 +151,8 @@ struct NotesListiOSView: View {
 // MARK: - Grote spreek-knop (rustlook van de Opnemen-knop)
 
 /// De centrale actieknop onder de Notities-lijst: gele ring met afgeronde gele
-/// kern én een klein microfoon-glyph, zodat hij leest als "spreek een nieuwe
-/// notitie in". Spiegelt de rustlook van `RecordButton` uit RecordView.
+/// kern, exact de rustlook van `RecordButton` uit RecordView en van het
+/// app-icoon — overal hetzelfde beeld, zonder extra glyph.
 private struct NewNoteRecordButton: View {
     let action: () -> Void
 
@@ -163,15 +163,10 @@ private struct NewNoteRecordButton: View {
                     .strokeBorder(Theme.accent, lineWidth: 6)
                     .frame(width: 112, height: 112)
 
-                // Afgeronde gele kern (~42% van de ring, als de app-icoon) met een
-                // microfoon-glyph erin.
+                // Afgeronde gele kern (~42% van de ring, als de app-icoon).
                 RoundedRectangle(cornerRadius: 12, style: .continuous)
                     .fill(Theme.accent)
                     .frame(width: 48, height: 48)
-
-                Image(systemName: "mic.fill")
-                    .font(.system(size: 22, weight: .semibold))
-                    .foregroundStyle(Theme.onAccent)
             }
         }
         .buttonStyle(.plain)
