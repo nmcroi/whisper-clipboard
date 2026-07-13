@@ -38,6 +38,13 @@ final class RecordController: ObservableObject, RecordingStopHandling {
     /// i.p.v. als losse Geschiedenis-entry opgeslagen. `nil` = het standaard
     /// "one-off"-gedrag van het Opnemen-tabblad (ongewijzigd). Zie ``save``.
     private var targetNoteId: String?
+    /// De `source` waarmee opnames worden opgeslagen. Standaard "mic"; de
+    /// notulist-flow zet hem op "meeting" (label "Notulen" in de Geschiedenis).
+    var transcriptSource = "mic"
+    /// Wanneer gezet, krijgt deze closure de verwerkte transcript-tekst zodra
+    /// een opname klaar is (naast de normale opslag in de Geschiedenis). De
+    /// notulist-flow gebruikt dit om de mail-composer te openen.
+    var onTranscriptReady: ((String) -> Void)?
     private var audio: IOSAudioEngine?
     private var feedTask: Task<Void, Never>?
     private var tickTask: Task<Void, Never>?
@@ -245,6 +252,7 @@ final class RecordController: ObservableObject, RecordingStopHandling {
             lastResultAt = Date()
             statusLine = "Klaar. Tik om opnieuw op te nemen."
             save(processed, segments: result.segments, duration: elapsed)
+            onTranscriptReady?(processed)
         } catch {
             isTranscribing = false
             fail(error.localizedDescription)
@@ -263,7 +271,7 @@ final class RecordController: ObservableObject, RecordingStopHandling {
             pinned: false,
             language: "nl",
             model: "parakeet-tdt-0.6b-v3",
-            source: "mic",
+            source: transcriptSource,
             duration: duration,
             segments: segments
         )

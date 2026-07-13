@@ -28,6 +28,19 @@ struct RecordView: View {
                 ToolbarItem(placement: .principal) {
                     Wordmark(size: 20)
                 }
+                // Ingang van de private notulist: deelnemers invoeren → opnemen
+                // → verslag mailen. Verborgen tijdens een lopende opname.
+                if !controller.isRecording && !controller.isTranscribing {
+                    ToolbarItem(placement: .topBarTrailing) {
+                        NavigationLink {
+                            MeetingSetupView()
+                        } label: {
+                            Label("Notulen", systemImage: "person.2.wave.2")
+                                .font(ThemeFont.ui(14, weight: .medium))
+                                .foregroundStyle(Theme.accentText)
+                        }
+                    }
+                }
             }
         }
         .task {

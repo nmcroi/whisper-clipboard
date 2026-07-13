@@ -8,6 +8,7 @@ public enum TranscriptSourceStyle {
         case "file": return "doc.text"
         case "captions": return "captions.bubble"
         case "plaud": return "recordingtape"
+        case "meeting": return "person.2.wave.2"
         default: return "mic"
         }
     }
@@ -17,6 +18,7 @@ public enum TranscriptSourceStyle {
         case "file": return "Bestand"
         case "captions": return "Ondertitels"
         case "plaud": return "PLAUD"
+        case "meeting": return "Notulen"
         default: return "Microfoon"
         }
     }
