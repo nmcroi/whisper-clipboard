@@ -1,0 +1,87 @@
+# CI voor Whisper Clipboard v2.
+#
+# Twee lagen:
+# - core-linux: alle CoreTests op een goedkope Linux-runner (1× minuten).
+#   Nieuwe logica hoort zoveel mogelijk in Packages/Core zodat hij hier
+#   getest wordt.
+# - apps-macos: XcodeGen + xcodebuild voor de Mac-app (build + tests) en de
+#   iOS-app (Simulator-build, geen signing). macOS-runners tellen 10× —
+#   daarom concurrency-cancel en een SPM-cache.
+#
+# De E2E-smoketests (WC_E2E=1) en alles wat een echte mic/iCloud/mailaccount
+# nodig heeft draaien hier bewust niet.
+name: CI
+
+on:
+  push:
+    branches: ["**"]
+  workflow_dispatch:
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  core-linux:
+    name: Core-tests (Linux)
+    runs-on: ubuntu-latest
+    container: swift:6.1
+    steps:
+      - uses: actions/checkout@v4
+      - name: Swift-versie
+        run: swift --version
+      - name: CoreTests
+        run: swift test --package-path v2/Packages/Core
+
+  apps-macos:
+    name: Mac + iOS (Xcode)
+    runs-on: macos-26
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Selecteer Xcode 26
+        run: |
+          XCODE=$(ls -d /Applications/Xcode_26*.app 2>/dev/null | sort -V | tail -1)
+          if [ -n "$XCODE" ]; then
+            sudo xcode-select -s "$XCODE/Contents/Developer"
+          fi
+          xcodebuild -version
+
+      - name: Installeer XcodeGen
+        run: brew install xcodegen
+
+      - name: Genereer Xcode-project
+        run: xcodegen generate
+        working-directory: v2
+
+      - name: SPM-cache
+        uses: actions/cache@v4
+        with:
+          path: v2/SourcePackages
+          key: spm-${{ runner.os }}-${{ hashFiles('v2/project.yml', 'v2/Packages/**/Package.swift') }}
+          restore-keys: spm-${{ runner.os }}-
+
+      - name: Mac-app — build + tests
+        working-directory: v2
+        run: |
+          set -o pipefail
+          xcodebuild test \
+            -project WhisperClipboard.xcodeproj \
+            -scheme WhisperClipboard \
+            -destination 'platform=macOS' \
+            -clonedSourcePackagesDirPath SourcePackages \
+            CODE_SIGNING_ALLOWED=NO \
+            | tail -200
+
+      - name: iOS-app — build (Simulator)
+        working-directory: v2
+        run: |
+          set -o pipefail
+          xcodebuild build \
+            -project WhisperClipboard.xcodeproj \
+            -scheme WhisperClipboardiOS \
+            -destination 'generic/platform=iOS Simulator' \
+            -clonedSourcePackagesDirPath SourcePackages \
+            CODE_SIGNING_ALLOWED=NO \
+            | tail -200

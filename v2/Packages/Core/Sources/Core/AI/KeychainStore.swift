@@ -1,3 +1,6 @@
+// Security (keychain) bestaat alleen op Apple-platforms. De guard laat de rest
+// van Core op Linux compileren zodat CI de CoreTests daar goedkoop kan draaien.
+#if canImport(Security)
 import Foundation
 import Security
 
@@ -191,3 +194,5 @@ public struct PlaudCredentials: Codable, Equatable, Sendable {
         try store.save(String(decoding: data, as: UTF8.self))
     }
 }
+
+#endif

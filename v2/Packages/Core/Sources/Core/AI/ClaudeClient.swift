@@ -1,3 +1,6 @@
+// URLSession.AsyncBytes ontbreekt in swift-corelibs-foundation. De guard laat
+// de rest van Core op Linux compileren zodat CI de CoreTests daar kan draaien.
+#if canImport(Darwin)
 import Foundation
 
 /// Typed errors from the Claude client, each with a Dutch, user-facing message.
@@ -218,3 +221,5 @@ public struct ClaudeClient: Sendable {
         }
     }
 }
+
+#endif
