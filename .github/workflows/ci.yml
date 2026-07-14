@@ -62,26 +62,26 @@ jobs:
           key: spm-${{ runner.os }}-${{ hashFiles('v2/project.yml', 'v2/Packages/**/Package.swift') }}
           restore-keys: spm-${{ runner.os }}-
 
+      # -quiet in plaats van "| tail": zo kan een compileerfout nooit buiten
+      # het zichtbare log vallen, terwijl de succes-output kort blijft.
       - name: Mac-app — build + tests
         working-directory: v2
         run: |
-          set -o pipefail
           xcodebuild test \
             -project WhisperClipboard.xcodeproj \
             -scheme WhisperClipboard \
             -destination 'platform=macOS' \
             -clonedSourcePackagesDirPath SourcePackages \
             CODE_SIGNING_ALLOWED=NO \
-            | tail -200
+            -quiet
 
       - name: iOS-app — build (Simulator)
         working-directory: v2
         run: |
-          set -o pipefail
           xcodebuild build \
             -project WhisperClipboard.xcodeproj \
             -scheme WhisperClipboardiOS \
             -destination 'generic/platform=iOS Simulator' \
             -clonedSourcePackagesDirPath SourcePackages \
             CODE_SIGNING_ALLOWED=NO \
-            | tail -200
+            -quiet

@@ -12,6 +12,12 @@ import Foundation
 /// `CKContainer` trapt `NSUbiquitousKeyValueStore` nooit; hij werkt dan als
 /// lokale opslag zonder propagatie.
 ///
+/// Publiceren is gedebounced: de woordenlijst-editors vuren per toetsaanslag,
+/// maar pas na een korte rustperiode gaat de lijst echt de cloud in (met de
+/// LWW-timestamp van dát moment). Sluit de app binnen dat venster, dan is er
+/// niets kwijt — de lijst staat lokaal al bewaard en de eerstvolgende
+/// bewerking publiceert opnieuw.
+///
 /// Lus-preventie in drie lagen:
 /// 1. Alleen payloads die strikt nieuwer zijn dan wat dit apparaat zelf het
 ///    laatst publiceerde/toepaste gaan naar ``onRemoteChange``
@@ -27,29 +33,41 @@ public final class ReplacementsCloudSync {
     public var onRemoteChange: (([Replacement]) -> Void)?
 
     private let store: NSUbiquitousKeyValueStore
+    private let defaults: UserDefaults
+    /// UserDefaults-key waaronder dit component zelf `localUpdatedAt` bewaart,
+    /// als seed voor de volgende start (per platform een eigen key).
+    private let updatedAtKey: String
+
     /// `updatedAt` van de laatst gepubliceerde óf toegepaste payload. Remote
     /// payloads die hier niet bovenuit komen (waaronder de echo van een eigen
-    /// publish) worden genegeerd. De consument bewaart deze waarde en geeft hem
-    /// bij de volgende start terug als `seedUpdatedAt`.
-    public private(set) var localUpdatedAt: Double
+    /// publish) worden genegeerd.
+    public private(set) var localUpdatedAt: Double = 0
+
     /// De didChangeExternally-observer. Bewust nooit verwijderd: beide
     /// consumenten (AppEnvironment op de Mac, AppModel op iOS) leven zo lang
     /// als het app-proces, dus dit object ook.
     private var observer: NSObjectProtocol?
 
-    public init(store: NSUbiquitousKeyValueStore = .default) {
+    /// Rustperiode voordat een bewerking echt gepubliceerd wordt.
+    private static let debounceSeconds: Double = 1.0
+    private var pendingReplacements: [Replacement]?
+    private var pendingPublish: Task<Void, Never>?
+
+    public init(
+        updatedAtKey: String,
+        store: NSUbiquitousKeyValueStore = .default,
+        defaults: UserDefaults = .standard
+    ) {
+        self.updatedAtKey = updatedAtKey
         self.store = store
-        self.localUpdatedAt = 0
+        self.defaults = defaults
     }
 
-    /// Start de sync: leest de huidige cloud-waarde (en levert die via
-    /// ``onRemoteChange`` af als hij nieuwer is dan `seedUpdatedAt`), registreert
-    /// de externe-wijziging-observer en vraagt een synchronize aan.
-    ///
-    /// - Parameter seedUpdatedAt: de `updatedAt` van de lokaal bewaarde lijst
-    ///   (0 wanneer er nog nooit iets bewaard is).
-    public func start(seedUpdatedAt: Double) {
-        localUpdatedAt = seedUpdatedAt
+    /// Start de sync: leest de eigen seed uit UserDefaults, registreert de
+    /// externe-wijziging-observer, vraagt een synchronize aan en levert een
+    /// nieuwere cloud-lijst direct af via ``onRemoteChange``.
+    public func start() {
+        localUpdatedAt = defaults.double(forKey: updatedAtKey)
 
         observer = NotificationCenter.default.addObserver(
             forName: NSUbiquitousKeyValueStore.didChangeExternallyNotification,
@@ -73,20 +91,30 @@ public final class ReplacementsCloudSync {
         applyRemoteIfNewer()
     }
 
-    /// Publiceert de lokale lijst na een bewerking. Zet `updatedAt` op nu en
-    /// onthoudt die, zodat de eigen didChangeExternally-echo genegeerd wordt.
-    /// Geeft de gestempelde `updatedAt` terug zodat de consument exact dezelfde
-    /// waarde kan bewaren voor de seed bij de volgende start.
-    @discardableResult
-    public func publish(_ replacements: [Replacement]) -> Double {
-        let now = Date()
-        guard let data = ReplacementSyncLogic.encode(replacements, updatedAt: now) else {
-            return localUpdatedAt
+    /// Meldt een lokale bewerking aan voor publicatie. Gedebounced: de laatste
+    /// aangemelde lijst gaat pas na ``debounceSeconds`` rust echt de store in,
+    /// met de LWW-timestamp van dat flush-moment.
+    public func publish(_ replacements: [Replacement]) {
+        pendingReplacements = replacements
+        pendingPublish?.cancel()
+        pendingPublish = Task { [weak self] in
+            try? await Task.sleep(for: .seconds(Self.debounceSeconds))
+            guard !Task.isCancelled else { return }
+            self?.flushPendingPublish()
         }
+    }
+
+    private func flushPendingPublish() {
+        pendingPublish = nil
+        guard let replacements = pendingReplacements else { return }
+        pendingReplacements = nil
+
+        let now = Date()
+        guard let data = ReplacementSyncLogic.encode(replacements, updatedAt: now) else { return }
         localUpdatedAt = now.timeIntervalSince1970
+        defaults.set(localUpdatedAt, forKey: updatedAtKey)
         store.set(data, forKey: ReplacementSyncLogic.kvKey)
         store.synchronize()
-        return localUpdatedAt
     }
 
     // MARK: - Inkomend
@@ -106,11 +134,16 @@ public final class ReplacementsCloudSync {
     }
 
     private func applyRemoteIfNewer() {
+        // Een lokale bewerking die op de debounce wacht is per definitie de
+        // nieuwste stand op dit apparaat: laat de remote dan links liggen —
+        // de flush stempelt zo een nieuwere timestamp en wint via LWW.
+        guard pendingPublish == nil else { return }
         guard let data = store.data(forKey: ReplacementSyncLogic.kvKey),
               let payload = ReplacementSyncLogic.decode(data),
               ReplacementSyncLogic.shouldApplyRemote(remote: payload, localUpdatedAt: localUpdatedAt)
         else { return }
         localUpdatedAt = payload.updatedAt
+        defaults.set(localUpdatedAt, forKey: updatedAtKey)
         onRemoteChange?(payload.replacements)
     }
 }

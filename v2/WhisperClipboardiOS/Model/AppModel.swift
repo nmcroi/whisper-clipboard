@@ -63,15 +63,15 @@ final class AppModel: ObservableObject {
             Self.persistReplacements(replacements)
             // Publiceer alleen eigen bewerkingen; een binnengekomen remote lijst
             // (applyingRemoteReplacements) mag niet terug de cloud in echoën.
+            // publish() is gedebounced — tikken in de editor spamt de store niet.
             guard !applyingRemoteReplacements else { return }
-            let stampedAt = replacementsSync.publish(replacements)
-            UserDefaults.standard.set(stampedAt, forKey: Self.replacementsUpdatedAtKey)
+            replacementsSync.publish(replacements)
         }
     }
 
     /// iCloud KV-sync voor de woordenlijst. Los van `historySync` (CKSyncEngine):
     /// werkt ook nu die nog uit staat, en degradeert stil zonder entitlement.
-    private let replacementsSync = ReplacementsCloudSync()
+    private let replacementsSync = ReplacementsCloudSync(updatedAtKey: "ios.replacementsUpdatedAt")
     /// Vlag rond het toepassen van een remote lijst, zodat de didSet hierboven
     /// niet opnieuw publiceert (sync-lus-preventie, laag 2).
     private var applyingRemoteReplacements = false
@@ -90,7 +90,6 @@ final class AppModel: ObservableObject {
     private static let appearanceKey = "ios.appearance"
     private static let icloudSyncKey = "ios.icloudSyncEnabled"
     private static let replacementsKey = "ios.replacements"
-    private static let replacementsUpdatedAtKey = "ios.replacementsUpdatedAt"
 
     init() {
         self.appearance = Self.loadAppearance()
@@ -139,21 +138,15 @@ final class AppModel: ObservableObject {
         }
 
         // Woordenlijst-sync: pas een remote lijst toe onder de vlag (didSet
-        // publiceert dan niet terug) en bewaar de bijbehorende timestamp als
-        // seed voor de volgende start.
+        // publiceert dan niet terug). De timestamp-administratie doet het
+        // sync-component zelf.
         replacementsSync.onRemoteChange = { [weak self] list in
             guard let self, self.replacements != list else { return }
             self.applyingRemoteReplacements = true
             self.replacements = list
             self.applyingRemoteReplacements = false
-            UserDefaults.standard.set(
-                self.replacementsSync.localUpdatedAt,
-                forKey: Self.replacementsUpdatedAtKey
-            )
         }
-        replacementsSync.start(
-            seedUpdatedAt: UserDefaults.standard.double(forKey: Self.replacementsUpdatedAtKey)
-        )
+        replacementsSync.start()
     }
 
     // MARK: - Model lifecycle

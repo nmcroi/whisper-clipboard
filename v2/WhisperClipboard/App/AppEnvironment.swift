@@ -51,19 +51,18 @@ final class AppEnvironment: ObservableObject {
             }
             // Publiceer woordenlijst-bewerkingen naar de iCloud KV-store, behalve
             // wanneer de wijziging juist een binnengekomen remote lijst is
-            // (applyingRemoteReplacements — sync-lus-preventie).
+            // (applyingRemoteReplacements — sync-lus-preventie). publish() is
+            // gedebounced — tikken in de Woordenlijst-tab spamt de store niet.
             if settings.replacements != oldValue.replacements, !applyingRemoteReplacements {
-                let stampedAt = replacementsSync.publish(settings.replacements)
-                UserDefaults.standard.set(stampedAt, forKey: Self.replacementsUpdatedAtKey)
+                replacementsSync.publish(settings.replacements)
             }
         }
     }
 
     /// iCloud KV-sync voor de woordenlijst (los van `historySync`; werkt ook
     /// zonder CloudKit-schema en degradeert stil zonder entitlement/account).
-    private let replacementsSync = ReplacementsCloudSync()
+    private let replacementsSync = ReplacementsCloudSync(updatedAtKey: "replacementsUpdatedAt")
     private var applyingRemoteReplacements = false
-    private static let replacementsUpdatedAtKey = "replacementsUpdatedAt"
 
     /// Re-applies the current appearance to the AppKit surfaces that don't
     /// inherit SwiftUI's `.preferredColorScheme` (the floating HUD/overlay panels
@@ -318,19 +317,14 @@ final class AppEnvironment: ObservableObject {
         // Woordenlijst-sync (iCloud KV-store): een remote lijst van de iPhone
         // gaat onder de vlag in `settings.replacements` — SettingsStore bewaart
         // hem dan automatisch via de gewone didSet, zonder terug te publiceren.
+        // De timestamp-administratie doet het sync-component zelf.
         replacementsSync.onRemoteChange = { [weak self] list in
             guard let self, self.settings.replacements != list else { return }
             self.applyingRemoteReplacements = true
             self.settings.replacements = list
             self.applyingRemoteReplacements = false
-            UserDefaults.standard.set(
-                self.replacementsSync.localUpdatedAt,
-                forKey: Self.replacementsUpdatedAtKey
-            )
         }
-        replacementsSync.start(
-            seedUpdatedAt: UserDefaults.standard.double(forKey: Self.replacementsUpdatedAtKey)
-        )
+        replacementsSync.start()
     }
 
     /// Opens the on-disk history store, degrading through an in-memory queue if
