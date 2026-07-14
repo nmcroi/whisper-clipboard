@@ -117,6 +117,10 @@ final class AppEnvironment: ObservableObject {
     /// PLAUD cloud sync: pulls NotePin recordings from PLAUD's cloud into the
     /// import pipeline.
     let plaudSync: PlaudSyncService
+    /// De private notulist (Mac): opnemen → lokaal transcriberen → verslag
+    /// mailen. Eigen mic-capture, deelt de ParakeetEngine; telt mee in alle
+    /// one-job-at-a-time-guards.
+    let meeting: MeetingController
 
     private var locale: Locale {
         Locale(identifier: settings.language.isEmpty ? "nl-NL" : settings.language)
@@ -143,6 +147,9 @@ final class AppEnvironment: ObservableObject {
         var settingsRef: (() -> AppSettings)!
         var stateSink: ((AppState) -> Void)!
         var translateToggleSink: ((Bool) -> Void)!
+        // Of er een notulen-sessie loopt — gebonden nádat `meeting` bestaat;
+        // de busy-closures hieronder draaien pas ver na init.
+        var meetingBusyRef: (() -> Bool)!
 
         let dictation = DictationController(
             engine: engine,
@@ -189,8 +196,12 @@ final class AppEnvironment: ObservableObject {
                 case .recording, .paused, .transcribing:
                     return "Wacht tot de huidige opname of transcriptie klaar is"
                 default:
-                    return nil
+                    break
                 }
+                if meetingBusyRef() {
+                    return "Wacht tot de notulen-opname klaar is"
+                }
+                return nil
             },
             diarizer: diarizationService,
             settings: { settingsRef() }
@@ -210,6 +221,9 @@ final class AppEnvironment: ObservableObject {
                     return "Stop eerst de dictaat-opname voordat je ondertitels start"
                 default:
                     break
+                }
+                if meetingBusyRef() {
+                    return "Stop eerst de notulen-opname voordat je ondertitels start"
                 }
                 if fileImport?.isBusy == true {
                     return "Wacht tot het importeren klaar is voordat je ondertitels start"
@@ -244,6 +258,7 @@ final class AppEnvironment: ObservableObject {
                 case .recording, .paused, .transcribing: return true
                 default: break
                 }
+                if meetingBusyRef() { return true }
                 return fileImport?.isBusy ?? false
             }
         )
@@ -268,9 +283,35 @@ final class AppEnvironment: ObservableObject {
                 case .recording, .paused, .transcribing: return true
                 default: break
                 }
+                if meetingBusyRef() { return true }
                 return fileImport?.isBusy ?? false
             }
         )
+
+        // De notulist: eigen mic-capture, gedeelde ParakeetEngine (net als de
+        // import-pijplijn), en dezelfde one-job-at-a-time-afspraken als de rest.
+        let meeting = MeetingController(
+            engine: parakeetEngine,
+            history: history,
+            settingsProvider: { settingsRef() }
+        )
+        self.meeting = meeting
+        meetingBusyRef = { [weak meeting] in meeting?.isBusy ?? false }
+        meeting.busyReason = { [weak dictation, weak self] in
+            switch dictation?.phase {
+            case .recording, .paused, .transcribing:
+                return "Stop eerst de dictaat-opname voordat je notulen opneemt"
+            default:
+                break
+            }
+            if self?.fileImport.isBusy == true {
+                return "Wacht tot het importeren klaar is voordat je notulen opneemt"
+            }
+            if self?.captions.isRunning == true {
+                return "Stop eerst de live ondertitels voordat je notulen opneemt"
+            }
+            return nil
+        }
 
         // Now that stored properties exist, bind the closures to `self`.
         settingsRef = { [weak self] in self?.settings ?? AppSettings() }
@@ -296,8 +337,10 @@ final class AppEnvironment: ObservableObject {
         fileImport.onTranscriptStored = { [weak self] entry in
             self?.autoExport.exportIfEnabled(entry)
         }
-        // Refuse dictation while a file import is running.
-        dictation.importBusyProvider = { [weak self] in self?.fileImport.isBusy ?? false }
+        // Refuse dictation while a file import or a meeting recording is running.
+        dictation.importBusyProvider = { [weak self] in
+            (self?.fileImport.isBusy ?? false) || (self?.meeting.isBusy ?? false)
+        }
         // Starting dictation pauses live captions (they do not auto-resume).
         dictation.onWillStartRecording = { [weak self] in self?.captions.stop() }
 

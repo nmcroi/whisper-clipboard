@@ -363,8 +363,21 @@ private struct HomeContent: View {
                 active: captionsRunning,
                 action: { environment.toggleCaptions() }
             )
+            ActionCard(
+                symbol: "person.2.wave.2",
+                title: "Notulen",
+                subtitle: "Neem een gesprek op en mail het verslag",
+                enabled: modelManager.status.isReady,
+                active: environment.meeting.isBusy,
+                action: { showMeeting = true }
+            )
+        }
+        .sheet(isPresented: $showMeeting) {
+            MeetingSheet(controller: environment.meeting)
         }
     }
+
+    @State private var showMeeting = false
 
     private var captionsRunning: Bool {
         captions.isRunning
