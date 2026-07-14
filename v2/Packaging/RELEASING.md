@@ -33,6 +33,23 @@ Developer-account actief is.
    > een back-up met `generate_keys -x sparkle_private_key.pem` en bewaar dat
    > bestand veilig buiten de repo (bijv. in je wachtwoordmanager).
 
+## iCloud key-value storage (woordenlijst-sync) — eenmalig in de Developer-portal
+
+De woordenlijst synct tussen Mac en iPhone via de **iCloud key-value store**
+(`ReplacementsCloudSync`, entitlement `com.apple.developer.ubiquity-kvstore-identifier`
+met op beide platforms dezelfde identifier `$(TeamIdentifierPrefix)nl.nielscroiset.whisperclipboard`).
+Dit staat volledig los van de CKSyncEngine-geschiedenis-sync hieronder: geen
+CloudKit-schema of container nodig. Wél eenmalig in de portal (kan ik niet
+automatiseren — doe je zelf):
+
+1. Developer-portal ▸ Identifiers ▸ App ID `nl.nielscroiset.whisperclipboard`
+   (Mac): **iCloud** aan met **"iCloud key-value storage"** aangevinkt.
+2. Hetzelfde voor de iOS App ID `nl.nielscroiset.whisperclipboard.ios`.
+3. Provisioning profiles die deze App IDs gebruiken opnieuw genereren.
+
+Zonder deze stap (of zonder iCloud-account) degradeert de sync stil: de
+woordenlijst blijft gewoon lokaal werken, hij propageert alleen niet.
+
 ## iCloud-synchronisatie (i2) — eenmalig in de Developer-portal
 
 iCloud-sync van de geschiedenis werkt via **CKSyncEngine** op de privé-CloudKit-

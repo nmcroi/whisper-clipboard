@@ -1,6 +1,6 @@
 # Privacy & gegevensstromen — Whisper Clipboard
 
-*Laatst bijgewerkt: 3 juli 2026 · versie 2.0.0*
+*Laatst bijgewerkt: 14 juli 2026 · versie 2.0.0 + werkbatch juli 2026 (pauzeknop, woordenlijst-sync, notulist)*
 
 Dit document beschrijft eerlijk en volledig wat Whisper Clipboard met gegevens
 doet. Het is bedoeld zodat een IT-/security-beoordelaar de app kan goedkeuren
@@ -30,6 +30,17 @@ Whisper Clipboard is een menubalk-app voor dicteren en transcriberen:
   optioneel **naar het Nederlands vertaald**.
 - **Opschonen** — optioneel stopwoordjes ("eh", "ehm") weghalen en woorden
   vervangen via je eigen woordenlijst.
+- **Pauzeren** — elke opname kan gepauzeerd worden. De microfoon-tap gaat er op
+  het pauzemoment onmiddellijk af: audio uit de gepauzeerde periode wordt
+  nergens vastgelegd en kan dus ook nergens in een transcript belanden.
+- **Notulen (private notulist)** — een gesprek lokaal opnemen en transcriberen
+  en het verslag per e-mail naar de deelnemers sturen. De audio wordt nooit als
+  bestand opgeslagen (samples bestaan alleen in het geheugen en worden na de
+  transcriptie gewist); de deelnemerslijst wordt nergens bewaard; de mail gaat
+  via het **eigen mailaccount van de gebruiker** (de Mail-app opent vooringevuld
+  en de gebruiker drukt zelf op versturen — er is geen verzenddienst van de
+  maker). Elk verslag bevat een vaste transparantie-uitleg met precies deze
+  punten.
 - **AI-modus (optioneel)** — een transcript laten samenvatten/herschrijven door
   Claude. **Dit is de enige functie die tekst naar een externe dienst stuurt en
   gebeurt alleen als jij er expliciet op klikt** (zie §3a).
@@ -59,7 +70,12 @@ Alles blijft op de Mac, in de map van de app onder je gebruikersaccount:
 - **Gedownloade modellen** — de CoreML-modelbestanden (zie §3b).
 
 Er worden **geen** gegevens naar een server van de maker of van derden
-gekopieerd. Er is geen cloud-sync.
+gekopieerd. Transcripties en geschiedenis synchroniseren niet naar de cloud
+(de voorbereide iCloud-geschiedenis-sync staat uit). De enige uitzondering is
+klein en expliciet: de **woordenlijst** (alleen de eigen find → replace-regels,
+géén transcripties of audio) kan via **Apple's iCloud key-value store** tussen
+je eigen Mac en iPhone synchroniseren — binnen je eigen iCloud-account, zonder
+server van de maker (zie §3d).
 
 ---
 
@@ -111,6 +127,25 @@ andere.
   geweigerd. Er wordt geen identificerende informatie meegestuurd.
 - **Uit te zetten:** automatische controle kan in de instellingen uit; de app
   blijft dan volledig werken.
+
+### 3d. iCloud key-value store — alleen de woordenlijst (opt-out door iCloud uit te laten)
+
+- **Wanneer:** wanneer je de woordenlijst bewerkt op een toestel dat met een
+  iCloud-account is aangemeld én de app met het iCloud-entitlement is
+  ondertekend. Zonder account of entitlement gebeurt er niets (de app werkt
+  gewoon door, lokaal).
+- **Waarheen:** Apple's **iCloud key-value store**, binnen het eigen
+  iCloud-account van de gebruiker. Er is geen server van de maker bij betrokken.
+- **Wat wordt gesynchroniseerd:** uitsluitend de find → replace-regels van de
+  woordenlijst (bijv. "klot" → "Claude") als één klein JSON-object. **Geen**
+  transcripties, geen audio, geen geschiedenis, geen instellingen.
+- **Waarom:** zodat dezelfde correctielijst op Mac en iPhone werkt zonder hem
+  twee keer bij te houden.
+
+**Over de notulen-mail:** het versturen van een notulen-verslag is géén
+netwerkverbinding van de app zelf. De app opent de Mail-app (of een
+mailto-koppeling) vooringevuld; verzending gebeurt door het eigen mailprogramma
+en mailaccount van de gebruiker, pas nadat die zelf op versturen drukt.
 
 **Wat er níet gebeurt:** geen analytics, geen crash-/telemetrieverzending naar
 de maker, geen advertenties, geen tracking-SDK's, geen fingerprinting, geen
