@@ -154,6 +154,9 @@ targets:
         # CFBundleName/DisplayName aanpassen was niet genoeg. Target- en
         # schemanaam blijven "WhisperClipboard" (geen spatie in paden/CI).
         PRODUCT_NAME: "Whisper Clip"
+        # De Swift-module blijft "WhisperClipboard": anders wordt hij
+        # "Whisper_Clip" en breekt elke `@testable import WhisperClipboard`.
+        PRODUCT_MODULE_NAME: WhisperClipboard
         GENERATE_INFOPLIST_FILE: false
         SWIFT_VERSION: "6.0"
         MARKETING_VERSION: "2.0.1"
