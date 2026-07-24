@@ -54,16 +54,25 @@ struct SettingsSheet: View {
                     .listRowBackground(Theme.surface)
 
                     Section {
-                        Toggle("Synchroniseren via iCloud", isOn: $app.icloudSyncEnabled)
+                        Toggle("Geschiedenis synchroniseren via iCloud", isOn: $app.icloudSyncEnabled)
                             .tint(Theme.accent)
-                            // Voorlopig uitgeschakeld: het CloudKit-Production-schema
-                            // is nog niet uitgerold, dus sync aanzetten kan de app
-                            // laten crashen. Wordt na de vakantie ingericht.
-                            .disabled(true)
+
+                        HStack(spacing: 12) {
+                            Text("Status: \(app.historySync?.status.dutchLabel ?? "niet beschikbaar")")
+                                .font(ThemeFont.ui(12))
+                                .foregroundStyle(Theme.textSecondary)
+                                .fixedSize(horizontal: false, vertical: true)
+                            Spacer()
+                            Button("Synchroniseer nu") {
+                                Task { await app.historySync?.syncNow() }
+                            }
+                            .font(ThemeFont.ui(12, weight: .medium))
+                            .disabled(!app.icloudSyncEnabled)
+                        }
                     } header: {
                         Text("iCloud")
                     } footer: {
-                        Text("iCloud-synchronisatie komt binnenkort. De geschiedenis en notities blijven voorlopig lokaal op dit toestel.")
+                        Text("Deelt je transcript-geschiedenis met je andere apparaten (bijv. je Mac) via je eigen iCloud. Er komt geen externe server aan te pas.")
                     }
                     .listRowBackground(Theme.surface)
 

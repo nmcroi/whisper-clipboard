@@ -55,9 +55,17 @@ woordenlijst blijft gewoon lokaal werken, hij propageert alleen niet.
 iCloud-sync van de geschiedenis werkt via **CKSyncEngine** op de privé-CloudKit-
 database in je eigen iCloud (container `iCloud.nl.nielscroiset.whisperclipboard`).
 De code degradeert netjes: zonder entitlement/account blijft sync slapend
-("iCloud niet beschikbaar"), dus ad-hoc dev-builds en CI crashen nooit. Om sync
-in de **échte** release aan te zetten, moet dit eenmalig in de portal klaarstaan
-(dit kan ik niet automatiseren — doe je zelf):
+("iCloud niet beschikbaar"), dus ad-hoc dev-builds en CI crashen nooit.
+
+**Update 24 juli 2026:** de iOS-crash die de sync eerder liet uitschakelen kwam
+door een onbetrouwbare entitlement-check (las het provisioning-profiel i.p.v.
+de echte, ondertekende binary). Dat is gerepareerd — beide platforms lezen nu
+dezelfde, betrouwbare check, en de sync-toggle staat weer standaard aan.
+De portal-stappen hieronder (1–6) zijn de enige nog openstaande, eenmalige
+stappen die alleen jij kunt doen — daarna werkt echte cross-device-sync.
+
+Om sync in de **échte** release aan te zetten, moet dit eenmalig in de portal
+klaarstaan (dit kan ik niet automatiseren — doe je zelf):
 
 1. **CloudKit-container aanmaken.** Developer-portal ▸ Certificates, IDs &
    Profiles ▸ Identifiers ▸ (filter op iCloud Containers) ▸ "+" ▸

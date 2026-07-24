@@ -200,24 +200,17 @@ public final class HistorySyncEngine: NSObject {
     /// constructing a `CKContainer` for a container the app isn't entitled to
     /// ABORTS the process (uncatchable), so we must confirm the entitlement first.
     ///
-    /// On **macOS** we read the entitlement off the current task via the Security
-    /// framework (`SecTask*`), which is precise and non-trapping — this correctly
-    /// returns false for ad-hoc dev builds, CI, and the test host.
-    ///
-    /// On **iOS** the `SecTask*` entitlement SPIs are not in the public SDK, so we
-    /// read `com.apple.developer.icloud-container-identifiers` from the embedded
-    /// provisioning profile instead. Dev and TestFlight builds always embed
-    /// `embedded.mobileprovision`; a build signed WITHOUT the iCloud container (the
-    /// wifi test builds, whose App ID has no iCloud capability yet) carries a
-    /// profile that doesn't list the container, so this returns false and the
-    /// engine stays dormant instead of trapping in `CKContainer(identifier:)`.
-    /// An App Store build has no embedded profile → we assume entitled, since
-    /// Apple guarantees the signed entitlements match the App ID. This matches
-    /// every signing path this project uses: we either sign with the real iCloud
-    /// entitlements against an iCloud-enabled App ID (→ profile lists it → true),
-    /// or without them against a plain App ID (→ absent → false).
+    /// Reads the entitlement straight off the RUNNING PROCESS's code signature via
+    /// the Security framework (`SecTaskCreateFromSelf` / `SecTaskCopyValueForEntitlement`).
+    /// This is the actual signed truth — not a proxy like the embedded provisioning
+    /// profile (which lists what the App ID *may* have, not what THIS build was
+    /// actually signed with, and caused a real launch crash on iOS: a build signed
+    /// WITHOUT the iCloud entitlement, whose App ID nonetheless had iCloud enabled
+    /// in the portal, read as "entitled" and trapped in `CKContainer(identifier:)`).
+    /// Same call on both platforms; correctly returns false for ad-hoc dev builds,
+    /// CI, and the test host — and reliably true only when this exact binary was
+    /// signed with the container.
     static func hasCloudKitEntitlement(for containerIdentifier: String) -> Bool {
-        #if os(macOS)
         guard let task = SecTaskCreateFromSelf(nil) else { return false }
         let key = "com.apple.developer.icloud-container-identifiers" as CFString
         guard let value = SecTaskCopyValueForEntitlement(task, key, nil) else { return false }
@@ -225,33 +218,7 @@ public final class HistorySyncEngine: NSObject {
             return ids.contains(containerIdentifier)
         }
         return false
-        #else
-        guard let url = Bundle.main.url(forResource: "embedded", withExtension: "mobileprovision"),
-              let data = try? Data(contentsOf: url) else {
-            // No embedded profile (App Store build) → trust the signed entitlements.
-            return true
-        }
-        guard let ids = Self.icloudContainerIDs(fromProfile: data) else { return false }
-        return ids.contains(containerIdentifier)
-        #endif
     }
-
-    #if !os(macOS)
-    /// Extracts `icloud-container-identifiers` from a `.mobileprovision`. The file
-    /// is CMS-signed, but the profile plist sits as plain XML between the `<plist>`
-    /// tags — we slice that out and parse it (no CMS decoding needed).
-    private static func icloudContainerIDs(fromProfile data: Data) -> [String]? {
-        guard let start = data.range(of: Data("<plist".utf8)),
-              let end = data.range(of: Data("</plist>".utf8)) else { return nil }
-        let plistData = data[start.lowerBound..<end.upperBound]
-        guard
-            let plist = try? PropertyListSerialization.propertyList(
-                from: plistData, options: [], format: nil) as? [String: Any],
-            let entitlements = plist["Entitlements"] as? [String: Any]
-        else { return nil }
-        return entitlements["com.apple.developer.icloud-container-identifiers"] as? [String]
-    }
-    #endif
 
     // MARK: - Outbound
 

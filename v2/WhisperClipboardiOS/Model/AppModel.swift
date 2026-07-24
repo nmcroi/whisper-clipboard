@@ -94,14 +94,13 @@ final class AppModel: ObservableObject {
     init() {
         self.appearance = Self.loadAppearance()
         self.replacements = Self.loadReplacements()
-        // iCloud-sync staat voorlopig UIT: de CloudKit-container bestaat wel, maar
-        // het Production-schema is nog niet uitgerold, en de account-check kan
-        // tegen Production hard traps veroorzaken. Tot dat na de vakantie netjes is
-        // ingericht (schema → Production + een betrouwbare binary-entitlement-check;
-        // `HistorySyncEngine.hasCloudKitEntitlement` leest nu het profiel i.p.v. de
-        // binary en klopt niet als App ID iCloud heeft maar de build zonder iCloud
-        // is gesigneerd) blijft de toggle uit én uitgeschakeld (zie SettingsSheet).
-        UserDefaults.standard.register(defaults: [Self.icloudSyncKey: false])
+        // iCloud-sync staat standaard AAN, net als op de Mac. De eerdere
+        // launch-crash kwam door een onbetrouwbare entitlement-check
+        // (`HistorySyncEngine.hasCloudKitEntitlement` las het provisioning-
+        // profiel i.p.v. de echte, ondertekende binary) — dat leest nu de
+        // binary zelf, net als op de Mac, en degradeert stil (nooit een crash)
+        // zonder het juiste entitlement of iCloud-account.
+        UserDefaults.standard.register(defaults: [Self.icloudSyncKey: true])
         let syncEnabled = UserDefaults.standard.bool(forKey: Self.icloudSyncKey)
         self.icloudSyncEnabled = syncEnabled
         // Retention is unlimited for now (settings round adds a control). The DB

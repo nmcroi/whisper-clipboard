@@ -9,7 +9,13 @@
       "Bash(git check-ignore *)",
       "WebFetch(domain:cocoadev.github.io)",
       "Bash(ls tests/conftest.py)",
-      "Bash(grep -rn \"pytest\\\\|tool.pytest\\\\|testpaths\\\\|addopts\" pyproject.toml)"
+      "Bash(grep -rn \"pytest\\\\|tool.pytest\\\\|testpaths\\\\|addopts\" pyproject.toml)",
+      "Bash(git fetch *)",
+      "Bash(git checkout *)",
+      "Bash(git merge *)",
+      "Bash(git push *)",
+      "Bash(git add *)",
+      "Bash(git commit -m 'Mac: product heet nu ook '\\\\''Whisper Clip'\\\\'' — juiste naam in appmenu en Dock *)"
     ]
   }
 }
