@@ -178,6 +178,11 @@ targets:
         PRODUCT_BUNDLE_IDENTIFIER: nl.nielscroiset.whisperclipboardTests
         GENERATE_INFOPLIST_FILE: true
         SWIFT_VERSION: "6.0"
+        # XcodeGen leidt TEST_HOST af van de TARGETnaam, maar het product heet
+        # sinds de hernoeming "Whisper Clip.app" — expliciet zetten dus, anders
+        # vindt xcodebuild de host-app niet ("Could not find test host").
+        TEST_HOST: "$(BUILT_PRODUCTS_DIR)/Whisper Clip.app/Contents/MacOS/Whisper Clip"
+        BUNDLE_LOADER: "$(TEST_HOST)"
 
   # iOS companion app. Record → transcribe locally with Parakeet (Dutch) →
   # history. Shares the data + engine layer with the mac app via WhisperShared;
