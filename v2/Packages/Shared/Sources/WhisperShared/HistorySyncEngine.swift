@@ -200,17 +200,22 @@ public final class HistorySyncEngine: NSObject {
     /// constructing a `CKContainer` for a container the app isn't entitled to
     /// ABORTS the process (uncatchable), so we must confirm the entitlement first.
     ///
-    /// Reads the entitlement straight off the RUNNING PROCESS's code signature via
-    /// the Security framework (`SecTaskCreateFromSelf` / `SecTaskCopyValueForEntitlement`).
-    /// This is the actual signed truth — not a proxy like the embedded provisioning
-    /// profile (which lists what the App ID *may* have, not what THIS build was
-    /// actually signed with, and caused a real launch crash on iOS: a build signed
-    /// WITHOUT the iCloud entitlement, whose App ID nonetheless had iCloud enabled
-    /// in the portal, read as "entitled" and trapped in `CKContainer(identifier:)`).
-    /// Same call on both platforms; correctly returns false for ad-hoc dev builds,
-    /// CI, and the test host — and reliably true only when this exact binary was
-    /// signed with the container.
+    /// On **macOS** we read the entitlement straight off the running process's
+    /// code signature via the Security framework (`SecTaskCreateFromSelf` /
+    /// `SecTaskCopyValueForEntitlement`) — precise and non-trapping.
+    ///
+    /// On **iOS** those SecTask entitlement SPIs are not exposed in the public SDK
+    /// (they don't compile there — confirmed by CI). Instead we probe the exact
+    /// same entitlement via `FileManager.url(forUbiquityContainerIdentifier:)`: the
+    /// `com.apple.developer.icloud-container-identifiers` key covers BOTH CloudKit
+    /// containers and iCloud-Documents ubiquity containers, so this is testing the
+    /// real, signed grant, not a proxy. It is an official, documented, always-safe
+    /// Foundation API — returns nil whenever the app lacks the entitlement or
+    /// iCloud is unavailable, and never traps. This directly fixes the original
+    /// SIGTRAP: the previous iOS check read the embedded provisioning profile
+    /// (what the App ID *may* have), not the real, signed grant.
     static func hasCloudKitEntitlement(for containerIdentifier: String) -> Bool {
+        #if os(macOS)
         guard let task = SecTaskCreateFromSelf(nil) else { return false }
         let key = "com.apple.developer.icloud-container-identifiers" as CFString
         guard let value = SecTaskCopyValueForEntitlement(task, key, nil) else { return false }
@@ -218,6 +223,9 @@ public final class HistorySyncEngine: NSObject {
             return ids.contains(containerIdentifier)
         }
         return false
+        #else
+        FileManager.default.url(forUbiquityContainerIdentifier: containerIdentifier) != nil
+        #endif
     }
 
     // MARK: - Outbound
