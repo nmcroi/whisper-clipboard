@@ -62,7 +62,11 @@ V2_DIR="$(cd "${SCRIPT_DIR}/.." && pwd)"
 PROJECT="${V2_DIR}/WhisperClipboard.xcodeproj"
 SCHEME="WhisperClipboard"
 CONFIGURATION="Release"
-APP_NAME="WhisperClipboard"
+# PRODUCT_NAME in project.yml — de gebouwde bundel heet "Whisper Clip.app"
+# (mét spatie, zodat menu/Dock de juiste naam tonen). Het DMG-bestand houdt
+# bewust een naam zonder spatie (nettere download-URL's op GitHub Releases).
+APP_NAME="Whisper Clip"
+DMG_BASE="WhisperClipboard"
 BUNDLE_ID="nl.nielscroiset.whisperclipboard"
 PROD_ENTITLEMENTS="${V2_DIR}/WhisperClipboard/WhisperClipboard.entitlements"
 ADHOC_ENTITLEMENTS="${SCRIPT_DIR}/adhoc.entitlements"
@@ -284,7 +288,7 @@ fi
 # --------------------------------------------------------------------------
 say "Creating DMG"
 VERSION="$(/usr/libexec/PlistBuddy -c 'Print :CFBundleShortVersionString' "${APP}/Contents/Info.plist")"
-DMG_NAME="${APP_NAME}-${VERSION}.dmg"
+DMG_NAME="${DMG_BASE}-${VERSION}.dmg"
 DMG_PATH="${DIST_DIR}/${DMG_NAME}"
 STAGE="${BUILD_DIR}/dmg-stage"
 rm -rf "${STAGE}" "${DMG_PATH}"

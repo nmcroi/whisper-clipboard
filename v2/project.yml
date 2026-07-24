@@ -110,8 +110,6 @@ targets:
       properties:
         CFBundleDevelopmentRegion: nl
         CFBundleDisplayName: Whisper Clip
-        # Also the menu-bar app-name when active (defaults to PRODUCT_NAME
-        # "WhisperClipboard" without a space otherwise).
         CFBundleName: Whisper Clip
         CFBundleIconFile: AppIcon
         CFBundleShortVersionString: $(MARKETING_VERSION)
@@ -151,7 +149,11 @@ targets:
     settings:
       base:
         PRODUCT_BUNDLE_IDENTIFIER: nl.nielscroiset.whisperclipboard
-        PRODUCT_NAME: WhisperClipboard
+        # De app heet ook als PRODUCT "Whisper Clip": macOS toont in het
+        # appmenu en de Dock de naam van de executable/.app-bundel, dus alleen
+        # CFBundleName/DisplayName aanpassen was niet genoeg. Target- en
+        # schemanaam blijven "WhisperClipboard" (geen spatie in paden/CI).
+        PRODUCT_NAME: "Whisper Clip"
         GENERATE_INFOPLIST_FILE: false
         SWIFT_VERSION: "6.0"
         MARKETING_VERSION: "2.0.1"
