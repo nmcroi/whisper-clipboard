@@ -184,6 +184,9 @@ final class AppModel: ObservableObject {
         })
         self.replacements = Self.loadReplacements()
         self.meetingContacts = Self.loadMeetingContacts()
+        // De entitlement-check in `HistorySyncEngine.hasCloudKitEntitlement` is
+        // gerepareerd (leest niet meer het provisioning-profiel maar de echte,
+        // ondertekende grant), dus aanzetten laat de app niet meer crashen.
         // Debug mag expliciet tegen het Development-schema testen, maar begint
         // altijd met de eerder gekozen (standaard uitgeschakelde) stand. Release
         // blijft hard uit totdat het schema bewust naar Production is uitgerold.

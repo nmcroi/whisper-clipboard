@@ -12,7 +12,12 @@
       "Bash(grep -rn \"pytest\\\\|tool.pytest\\\\|testpaths\\\\|addopts\" pyproject.toml)",
       "Bash(xcrun devicectl *)",
       "Bash(xcode-select -p)",
-      "Bash(xcodebuild -version)"
+      "Bash(xcodebuild -version)",
+      "Bash(git fetch *)",
+      "Bash(git checkout *)",
+      "Bash(git merge *)",
+      "Bash(git push *)",
+      "Bash(git add *)"
     ]
   }
 }

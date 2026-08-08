@@ -272,22 +272,20 @@ public final class HistorySyncEngine: NSObject {
     /// constructing a `CKContainer` for a container the app isn't entitled to
     /// ABORTS the process (uncatchable), so we must confirm the entitlement first.
     ///
-    /// On **macOS** we read the entitlement off the current task via the Security
-    /// framework (`SecTask*`), which is precise and non-trapping — this correctly
-    /// returns false for ad-hoc dev builds, CI, and the test host.
+    /// On **macOS** we read the entitlement straight off the running process's
+    /// code signature via the Security framework (`SecTaskCreateFromSelf` /
+    /// `SecTaskCopyValueForEntitlement`) — precise and non-trapping.
     ///
-    /// On **iOS** the `SecTask*` entitlement SPIs are not in the public SDK, so we
-    /// read `com.apple.developer.icloud-container-identifiers` from the embedded
-    /// provisioning profile instead. Dev and TestFlight builds always embed
-    /// `embedded.mobileprovision`; a build signed WITHOUT the iCloud container (the
-    /// wifi test builds, whose App ID has no iCloud capability yet) carries a
-    /// profile that doesn't list the container, so this returns false and the
-    /// engine stays dormant instead of trapping in `CKContainer(identifier:)`.
-    /// An App Store build has no embedded profile → we assume entitled, since
-    /// Apple guarantees the signed entitlements match the App ID. This matches
-    /// every signing path this project uses: we either sign with the real iCloud
-    /// entitlements against an iCloud-enabled App ID (→ profile lists it → true),
-    /// or without them against a plain App ID (→ absent → false).
+    /// On **iOS** those SecTask entitlement SPIs are not exposed in the public SDK
+    /// (they don't compile there — confirmed by CI). Instead we probe the exact
+    /// same entitlement via `FileManager.url(forUbiquityContainerIdentifier:)`: the
+    /// `com.apple.developer.icloud-container-identifiers` key covers BOTH CloudKit
+    /// containers and iCloud-Documents ubiquity containers, so this is testing the
+    /// real, signed grant, not a proxy. It is an official, documented, always-safe
+    /// Foundation API — returns nil whenever the app lacks the entitlement or
+    /// iCloud is unavailable, and never traps. This directly fixes the original
+    /// SIGTRAP: the previous iOS check read the embedded provisioning profile
+    /// (what the App ID *may* have), not the real, signed grant.
     static func hasCloudKitEntitlement(for containerIdentifier: String) -> Bool {
         #if os(macOS)
         guard let task = SecTaskCreateFromSelf(nil) else { return false }
@@ -298,32 +296,9 @@ public final class HistorySyncEngine: NSObject {
         }
         return false
         #else
-        guard let url = Bundle.main.url(forResource: "embedded", withExtension: "mobileprovision"),
-              let data = try? Data(contentsOf: url) else {
-            // No embedded profile (App Store build) → trust the signed entitlements.
-            return true
-        }
-        guard let ids = Self.icloudContainerIDs(fromProfile: data) else { return false }
-        return ids.contains(containerIdentifier)
+        FileManager.default.url(forUbiquityContainerIdentifier: containerIdentifier) != nil
         #endif
     }
-
-    #if !os(macOS)
-    /// Extracts `icloud-container-identifiers` from a `.mobileprovision`. The file
-    /// is CMS-signed, but the profile plist sits as plain XML between the `<plist>`
-    /// tags — we slice that out and parse it (no CMS decoding needed).
-    private static func icloudContainerIDs(fromProfile data: Data) -> [String]? {
-        guard let start = data.range(of: Data("<plist".utf8)),
-              let end = data.range(of: Data("</plist>".utf8)) else { return nil }
-        let plistData = data[start.lowerBound..<end.upperBound]
-        guard
-            let plist = try? PropertyListSerialization.propertyList(
-                from: plistData, options: [], format: nil) as? [String: Any],
-            let entitlements = plist["Entitlements"] as? [String: Any]
-        else { return nil }
-        return entitlements["com.apple.developer.icloud-container-identifiers"] as? [String]
-    }
-    #endif
 
     // MARK: - Outbound
 
