@@ -31,6 +31,22 @@ final class AppEnvironment: ObservableObject {
     }
 
     @Published var appState: AppState = .starting
+
+    /// Niet-nil wanneer de geschiedenis op schijf niet geopend kon worden. De app
+    /// draait dan op een wegwerp-database in het geheugen; opnemen wordt
+    /// geweigerd en iCloud blijft uit, zodat er niets verloren kan gaan zonder
+    /// dat iemand het merkt (bevinding 2026-08-03).
+    let historyFailure: String?
+
+    /// Nederlandse uitleg bij ``historyFailure``, klaar om te tonen.
+    var historyFailureMessage: String? {
+        guard let historyFailure else { return nil }
+        return """
+            De geschiedenis kon niet worden geopend: \(historyFailure)
+            WhisperClip neemt daarom niets op — anders zou je opname bij het \
+            afsluiten verdwijnen. Synchroniseren met iCloud staat ook uit.
+            """
+    }
     /// Shared sidebar/detail navigation state. Owned here (rather than as a
     /// per-view `@StateObject`) so the menu bar and the SwiftUI window operate on
     /// one single source of truth and a view recreation can never spawn a second
@@ -63,6 +79,16 @@ final class AppEnvironment: ObservableObject {
     /// zonder CloudKit-schema en degradeert stil zonder entitlement/account).
     private let replacementsSync = ReplacementsCloudSync(updatedAtKey: "replacementsUpdatedAt")
     private var applyingRemoteReplacements = false
+    @Published var meetingContacts: [SavedMeetingContact] = AppEnvironment.loadMeetingContacts() {
+        didSet {
+            guard meetingContacts != oldValue else { return }
+            Self.persistMeetingContacts(meetingContacts)
+            guard !applyingRemoteMeetingContacts else { return }
+            meetingContactsSync.publish(meetingContacts)
+        }
+    }
+    private let meetingContactsSync = MeetingContactsCloudSync(updatedAtKey: "meetingContactsUpdatedAt")
+    private var applyingRemoteMeetingContacts = false
 
     /// Re-applies the current appearance to the AppKit surfaces that don't
     /// inherit SwiftUI's `.preferredColorScheme` (the floating HUD/overlay panels
@@ -171,8 +197,10 @@ final class AppEnvironment: ObservableObject {
         // throwaway in-memory queue so the rest of the app keeps working
         // (non-persistent, but dictation + clipboard are unaffected).
         var retentionRef: (() -> Int?)!
-        let history = Self.makeHistoryStore(retentionProvider: { retentionRef() })
+        let opened = Self.makeHistoryStore(retentionProvider: { retentionRef() })
+        let history = opened.store
         self.history = history
+        self.historyFailure = opened.failure
 
         // AI prompt modes (M4). The API key is read from the Keychain on demand.
         self.modes = ModesService(history: history)
@@ -275,8 +303,9 @@ final class AppEnvironment: ObservableObject {
             // sync only marks those recordings processed — a refused batch stays
             // eligible for the next run instead of being silently dropped.
             importer: { [weak fileImport] urls in
-                (fileImport?.importFiles(urls, source: "plaud") ?? []).map(\.url)
+                await fileImport?.importFilesAndWait(urls, source: "plaud") ?? []
             },
+            cancelImporter: { [weak fileImport] in fileImport?.cancelPlaudImports() },
             isBusy: { [weak dictation, weak fileImport, weak modelManager] in
                 if modelManager?.status.isReady != true { return true }
                 switch dictation?.phase {
@@ -323,6 +352,7 @@ final class AppEnvironment: ObservableObject {
         hud.appearanceProvider = { [weak self] in
             self?.settings.appearance.nsAppearance
         }
+        hud.prepare()
         captionOverlay.appearanceProvider = { [weak self] in
             self?.settings.appearance.nsAppearance
         }
@@ -368,18 +398,52 @@ final class AppEnvironment: ObservableObject {
             self.applyingRemoteReplacements = false
         }
         replacementsSync.start()
+        meetingContactsSync.onRemoteChange = { [weak self] contacts in
+            guard let self, self.meetingContacts != contacts else { return }
+            self.applyingRemoteMeetingContacts = true
+            self.meetingContacts = contacts
+            self.applyingRemoteMeetingContacts = false
+        }
+        meetingContactsSync.start()
     }
 
-    /// Opens the on-disk history store, degrading through an in-memory queue if
-    /// the disk DB can't be opened. Only an impossible double-failure (even an
-    /// in-memory SQLite DB can't be created) is fatal, and then with a clear
-    /// message rather than an opaque force-unwrap crash.
-    private static func makeHistoryStore(retentionProvider: @escaping () -> Int?) -> HistoryStore {
+    private static let meetingContactsDefaultsKey = "meetingContacts"
+
+    private static func loadMeetingContacts() -> [SavedMeetingContact] {
+        guard let data = UserDefaults.standard.data(forKey: meetingContactsDefaultsKey) else { return [] }
+        return (try? JSONDecoder().decode([SavedMeetingContact].self, from: data)) ?? []
+    }
+
+    private static func persistMeetingContacts(_ contacts: [SavedMeetingContact]) {
+        guard let data = try? JSONEncoder().encode(contacts) else { return }
+        UserDefaults.standard.set(data, forKey: meetingContactsDefaultsKey)
+    }
+
+    /// Opent de geschiedenis op schijf. Lukt dat niet, dan komt er nog steeds een
+    /// werkbaar object terug — anders valt er niets te tonen — maar de fout wordt
+    /// teruggegeven zodat de app hem meldt en niet doet alsof er niets aan de
+    /// hand is.
+    ///
+    /// Vroeger schoof deze functie stilzwijgend een database in het geheugen
+    /// onder de app en meldde `bootstrap()` daarna gewoon `.ready`. Alles wat je
+    /// die sessie opnam verdween bij het afsluiten, en — erger — de iCloud-sync
+    /// draaide óók op die wegwerp-database terwijl de CloudKit-cursor wél naar
+    /// schijf werd geschreven. Records van de iPhone kwamen binnen in RAM,
+    /// verdwenen, en de cursor schoof eroverheen: permanent verlies dat nooit
+    /// meer werd opgehaald (bevinding 2026-08-03).
+    private static func makeHistoryStore(
+        retentionProvider: @escaping () -> Int?
+    ) -> (store: HistoryStore, failure: String?) {
         do {
-            return try HistoryStore(retentionProvider: retentionProvider)
+            return (try HistoryStore(retentionProvider: retentionProvider), nil)
         } catch {
             NSLog("AppEnvironment: history DB open failed (%@); trying in-memory store.", String(describing: error))
+            return (Self.makeThrowawayStore(retentionProvider: retentionProvider),
+                    error.localizedDescription)
         }
+    }
+
+    private static func makeThrowawayStore(retentionProvider: @escaping () -> Int?) -> HistoryStore {
         do {
             // In-memory fallback: mark it non-persistent so a v3 migration into
             // this throwaway store never persists the "migration done" flag (which
@@ -418,17 +482,45 @@ final class AppEnvironment: ObservableObject {
             pinned: false,
             language: completion.language,
             model: completion.model,
-            source: completion.source,
+            source: completion.source + ".mac",
             duration: completion.duration,
             segments: completion.segments
         )
+        // Dit blok zit tussen "transcript klaar" en "HUD meldt klaar", dus alles
+        // wat hier traag is voelt de gebruiker als een hangende transcriptie.
+        // Meten in plaats van gissen: duurt het merkbaar lang, dan staat het in
+        // het log met de schuldige stap (bevinding 2026-08-04).
+        let started = DispatchTime.now().uptimeNanoseconds
+        defer {
+            let ms = Double(DispatchTime.now().uptimeNanoseconds - started) / 1_000_000
+            if ms > 250 {
+                NSLog("AppEnvironment: opslaan duurde %.0f ms — dit vertraagt de HUD", ms)
+            }
+        }
+
         do {
             try history.add(entry)
-            // Auto-export the completed dictation (M7). Best-effort; never blocks
-            // or fails the dictation flow.
-            autoExport.exportIfEnabled(entry)
+            // Het transcript staat er nu echt: pas hier mag de bewaarde audio
+            // zijn definitieve plek krijgen (bevinding 2026-08-03).
+            preserveAudio(completion.preservedAudioURL, forEntryId: entry.id)
+            // Auto-export the completed dictation (M7). Best-effort en mogelijk
+            // traag (netwerkschijf, security-scoped bookmark), dus buiten het
+            // hete pad: de HUD hoort niet op een export te wachten
+            // (bevinding 2026-08-04).
+            let exported = entry
+            Task { [autoExport] in autoExport.exportIfEnabled(exported) }
         } catch {
+            // Opslaan mislukt: er is geen item om de audio aan te koppelen, maar
+            // weggooien zou de laatste kopie vernietigen. Laat het bestand staan
+            // zodat de herstelronde bij de volgende start het oppakt.
             NSLog("AppEnvironment: failed to save transcript: %@", String(describing: error))
+            // Niet alleen naar het log: een mislukte opslag betekent dat deze
+            // dictatie nergens meer staat behalve op het klembord. Dat hoort de
+            // gebruiker te weten zolang hij er nog iets mee kan
+            // (bevinding 2026-08-03).
+            Notifications.postCritical(
+                "Opslaan in Geschiedenis is mislukt. De tekst staat nog op je klembord — plak hem ergens voordat je iets anders kopieert."
+            )
         }
 
         // Optional speaker recognition (diarization) for the just-finished
@@ -464,19 +556,68 @@ final class AppEnvironment: ObservableObject {
 
     /// Kicks off engine-selection resolution, model status refresh + pre-warm at launch.
     func bootstrap() {
+        // Geschiedenis onbruikbaar: niets meer opstarten dat gegevens aanmaakt of
+        // synchroniseert. Geen migratie, geen opschoning, geen iCloud, geen
+        // modelvoorbereiding — alleen de melding (bevinding 2026-08-03).
+        if let historyFailureMessage {
+            appState = .error("Geschiedenis kon niet worden geopend")
+            Notifications.postCritical(historyFailureMessage)
+            return
+        }
+
         // One-time import of the old Python history.json (reads only; the JSON
         // is left untouched as a backup). No-op after the first successful run.
         history.migrateFromV3IfNeeded()
+
+        // Early PLAUD builds used the temporary download filename as the visible
+        // title and the import time as the recording date. Remove only those
+        // unmistakably malformed rows; they are rebuilt from the PLAUD cloud
+        // with correct metadata by the sync immediately below. Using the store
+        // API journals CloudKit deletions, so malformed copies also disappear
+        // from the iPhone instead of becoming duplicates.
+        if let malformedPlaudEntries = try? history.entries(filter: .plaud).filter({ entry in
+            entry.name.range(
+                of: #"^\d{4}-\d{2}-\d{2}_\d{4}_"#,
+                options: .regularExpression
+            ) != nil
+        }) {
+            for entry in malformedPlaudEntries {
+                try? history.delete(id: entry.id)
+            }
+        }
+
+        // Microfoon alvast klaarzetten. De eerste aanraking van de audiohardware
+        // kostte anders een groot deel van de wachttijd bij de eerste opname
+        // (bevinding 2026-08-04). Er wordt niets opgenomen en geen andere audio
+        // onderbroken.
+        audioEngine.warmUp()
+        meeting.audioEngine.warmUp()
+
+        // Audiovangnet: bewaar de opname wanneer de gebruiker dat wil, zodat een
+        // mislukte transcriptie of een crash niet meteen het gesprek kost.
+        Task { [parakeetEngine, saveRecordings = settings.saveRecordings] in
+            await parakeetEngine.setPreserveFinishedRecording(saveRecordings)
+        }
+
+        // Na een crash of geforceerd afsluiten kan er tijdelijke opname-audio zijn
+        // achtergebleven. Die alsnog omzetten in gewone geschiedenis-items. Dit
+        // pad bestond al en werd getest, maar had tot nu toe alleen op de iPhone
+        // een aanroeper — op de Mac ging elke onderbroken opname verloren
+        // (bevinding 2026-08-03).
+        Task { await recoverInterruptedRecordings() }
 
         // Start watching configured folders for new media (M7). Safe to start
         // unconditionally: with no folders configured each scan is a no-op, and
         // the service picks up folders added later via `watchedFolders.refresh()`.
         watchedFolders.start()
 
-        // Start PLAUD cloud sync if enabled. Safe to start unconditionally: when
-        // disabled it schedules nothing; enabling it later re-schedules via
-        // `plaudSync.refresh()`.
-        plaudSync.start()
+        // PLAUD wordt voortaan alleen door de iPhone geïmporteerd. Zet een oude
+        // Mac-instelling eenmalig uit en stop eventuele polling, zodat twee
+        // apparaten nooit dezelfde cloudopname tegelijk transcriberen.
+        if settings.plaudSyncEnabled {
+            settings.plaudSyncEnabled = false
+        }
+        plaudSync.stop()
 
         // Bring up iCloud history sync if enabled + available (dormant otherwise).
         Task { await historySync.start() }
@@ -494,6 +635,94 @@ final class AppEnvironment: ObservableObject {
                 // Model missing but installable: the UI offers a download.
                 appState = .ready
             }
+        }
+    }
+
+    /// Verplaatst het bewaarde opnamebestand naar `Recordings/<id>.caf`, de plek
+    /// waar ``TranscriptAudioStore`` hem verwacht. Alleen aanroepen nadat het
+    /// transcript werkelijk is opgeslagen.
+    private func preserveAudio(_ url: URL?, forEntryId id: String) {
+        guard let url else { return }
+        do {
+            let directory = try TranscriptAudioStore.recordingsDirectory()
+            try FileManager.default.createDirectory(
+                at: directory,
+                withIntermediateDirectories: true
+            )
+            let destination = directory
+                .appendingPathComponent(id)
+                .appendingPathExtension(url.pathExtension.isEmpty ? "caf" : url.pathExtension)
+            try FileManager.default.moveItem(at: url, to: destination)
+        } catch {
+            NSLog("AppEnvironment: kon opname niet bewaren: %@", String(describing: error))
+            // Het bestand blijft in de tijdelijke map staan; de herstelronde bij
+            // de volgende start ruimt het op of biedt het opnieuw aan.
+        }
+    }
+
+    /// Zet achtergebleven tijdelijke opname-audio alsnog om in geschiedenis-items.
+    /// Het audiobestand wordt pas gewist nadat de database-write is geslaagd; bij
+    /// een mislukking blijft het staan voor een volgende poging.
+    private func recoverInterruptedRecordings() async {
+        let settings = self.settings
+        let locale = Locale(identifier: settings.language.isEmpty ? "nl-NL" : settings.language)
+
+        let batch: RecordingRecoveryBatch
+        do {
+            batch = try await parakeetEngine.recoverOrphanedRecordings(defaultLocale: locale)
+        } catch {
+            NSLog("AppEnvironment: recovery of interrupted recordings failed: %@", String(describing: error))
+            return
+        }
+
+        guard !batch.recordings.isEmpty || batch.failedCount > 0 else { return }
+
+        var savedCount = 0
+        var failedCount = batch.failedCount
+        for recovered in batch.recordings {
+            let processed = TextProcessor.process(
+                recovered.result.text,
+                replacements: settings.replacements,
+                clean: settings.cleanOutput,
+                removeFillers: settings.removeFillers,
+                language: recovered.language == .automatic ? "nl" : recovered.language.rawValue
+            )
+            guard !processed.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
+                await parakeetEngine.discardRecoveredRecording(id: recovered.recoveryID)
+                continue
+            }
+            let entry = TranscriptEntry(
+                id: UUID().uuidString,
+                text: processed,
+                createdAt: historyTimestampString(from: recovered.createdAt),
+                name: "",
+                pinned: false,
+                language: recovered.language.rawValue,
+                model: "parakeet-tdt-0.6b-v3",
+                source: "mic.mac",
+                duration: recovered.duration,
+                segments: recovered.result.segments
+            )
+            do {
+                try history.add(entry)
+                await parakeetEngine.discardRecoveredRecording(id: recovered.recoveryID)
+                savedCount += 1
+            } catch {
+                failedCount += 1
+            }
+        }
+
+        if failedCount > 0 {
+            Notifications.postCritical(
+                "Een onderbroken opname kon niet automatisch worden hersteld. "
+                    + "De tijdelijke audio blijft bewaard voor een volgende poging."
+            )
+        } else if savedCount > 0 {
+            Notifications.post(
+                savedCount == 1
+                    ? "Een onderbroken opname is alsnog in de Geschiedenis gezet."
+                    : "\(savedCount) onderbroken opnamen zijn alsnog in de Geschiedenis gezet."
+            )
         }
     }
 

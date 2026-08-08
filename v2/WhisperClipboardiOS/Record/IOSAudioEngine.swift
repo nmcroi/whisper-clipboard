@@ -254,17 +254,53 @@ final class IOSAudioEngine {
 
     /// Herinstalleert de tap en herstart de engine op dezelfde stream. Geeft
     /// `false` bij falen (dan valt de aanroeper terug op stoppen).
+    ///
+    /// bevinding 2026-08-03: hier werd het formaat hergebruikt dat bij
+    /// ``startCapture(convertingTo:)`` was vastgelegd. Wisselt de route tijdens
+    /// de onderbreking (AirPods erbij, dock eraf, andere samplerate), dan past
+    /// dat oude formaat niet meer bij het huidige formaat van de node en gooit
+    /// `installTap` een `NSInternalInconsistencyException`. Dat is een
+    /// ObjC-exceptie, geen Swift-fout: de `do/catch` hieronder ving hem niet en
+    /// kón hem ook niet vangen — het proces ging er hard op onderuit. We lezen
+    /// het formaat nu opnieuw uit de node en bouwen zo nodig de converter
+    /// opnieuw, zodat een gewijzigd formaat via het bestaande foutpad (`false`)
+    /// wordt afgehandeld.
     private func resumeCapture() -> Bool {
-        guard let tapHandler, let nativeFormat else { return false }
+        guard let tapHandler, let previousFormat = nativeFormat, let outputFormat else { return false }
+
         do {
             try AVAudioSession.sharedInstance().setActive(true, options: [])
-            engine.inputNode.installTap(onBus: 0, bufferSize: 4096, format: nativeFormat, block: tapHandler)
-            engine.prepare()
-            try engine.start()
-            return true
         } catch {
             return false
         }
+
+        let inputNode = engine.inputNode
+        let currentFormat = inputNode.outputFormat(forBus: 0)
+        // Een niet-actieve of verdwenen route levert een leeg formaat op; daar
+        // kan geen tap op en installTap zou er alsnog op exploderen.
+        guard currentFormat.channelCount > 0, currentFormat.sampleRate > 0 else { return false }
+
+        if currentFormat != previousFormat {
+            if currentFormat == outputFormat {
+                converter = nil
+            } else {
+                guard let rebuilt = AVAudioConverter(from: currentFormat, to: outputFormat) else {
+                    return false
+                }
+                converter = rebuilt
+            }
+        }
+
+        inputNode.installTap(onBus: 0, bufferSize: 4096, format: currentFormat, block: tapHandler)
+        engine.prepare()
+        do {
+            try engine.start()
+        } catch {
+            inputNode.removeTap(onBus: 0)
+            return false
+        }
+        nativeFormat = currentFormat
+        return true
     }
 
     private func startCapture(convertingTo format: AVAudioFormat) throws -> AsyncStream<AudioBufferBox> {
@@ -370,16 +406,10 @@ final class IOSAudioEngine {
             return nil
         }
 
-        var consumed = false
+        let inputState = ConverterInputState(buffer: input)
         var conversionError: NSError?
         let status = converter.convert(to: output, error: &conversionError) { _, statusPointer in
-            if consumed {
-                statusPointer.pointee = .noDataNow
-                return nil
-            }
-            consumed = true
-            statusPointer.pointee = .haveData
-            return input
+            inputState.next(status: statusPointer)
         }
 
         guard status != .error, conversionError == nil, output.frameLength > 0 else {
@@ -407,26 +437,84 @@ final class IOSAudioEngine {
     }
 }
 
+/// AVAudioConverter declares its input callback `@Sendable`, even though the
+/// callback is consumed synchronously. Keep the one-shot state behind a lock
+/// and explicitly carry the non-Sendable AVFoundation buffer in this isolated
+/// wrapper so Swift 6 cannot observe or mutate a captured local concurrently.
+private final class ConverterInputState: @unchecked Sendable {
+    private let lock = NSLock()
+    private let buffer: AVAudioPCMBuffer
+    private var consumed = false
+
+    init(buffer: AVAudioPCMBuffer) {
+        self.buffer = buffer
+    }
+
+    func next(status: UnsafeMutablePointer<AVAudioConverterInputStatus>) -> AVAudioBuffer? {
+        lock.lock()
+        defer { lock.unlock() }
+        guard !consumed else {
+            status.pointee = .noDataNow
+            return nil
+        }
+        consumed = true
+        status.pointee = .haveData
+        return buffer
+    }
+}
+
 private extension AVAudioPCMBuffer {
     /// Deep-copies the buffer so it survives past the tap callback's reuse.
+    ///
+    /// bevinding 2026-08-03: deze functie liep over `0..<format.channelCount` en
+    /// kopieerde per kanaal `frameLength` aaneengesloten elementen. Dat klopt
+    /// alleen voor een DEINTERLEAVED formaat. `floatChannelData` levert één
+    /// pointer per buffer in de `AudioBufferList`; bij een interleaved formaat is
+    /// dat er precies één, met alle kanalen door elkaar (`stride ==
+    /// channelCount`). De lus indexeerde dan meer pointers dan er buffers zijn en
+    /// kopieerde bovendien het verkeerde aantal elementen — kanaal 1 schreef over
+    /// kanaal 0 heen en de laatste kanalen lazen langs het einde van het blok.
+    /// Draait op de CoreAudio-realtimethread voor élke buffer van élke opname.
+    /// Identiek aan de macOS-versie in `AudioEngine.swift`.
+    ///
+    /// Nu leiden we het aantal buffers af uit de werkelijke `AudioBufferList` van
+    /// bron én kopie, en het aantal elementen per buffer uit
+    /// `format.isInterleaved`. Blijft allocatievrij en realtime-veilig: geen
+    /// logging, geen locks, geen Foundation-aanroepen.
     func deepCopy() -> AVAudioPCMBuffer? {
         guard let copy = AVAudioPCMBuffer(pcmFormat: format, frameCapacity: frameCapacity) else {
             return nil
         }
         copy.frameLength = frameLength
 
+        let frames = Int(frameLength)
         let channels = Int(format.channelCount)
+        guard channels > 0 else { return nil }
+
+        // Interleaved: één buffer met alle kanalen erin. Deinterleaved: één
+        // buffer per kanaal. Nooit verder indexeren dan bron én kopie allebei
+        // werkelijk hebben.
+        let sourceBuffers = Int(audioBufferList.pointee.mNumberBuffers)
+        let copyBuffers = Int(copy.audioBufferList.pointee.mNumberBuffers)
+        let bufferCount = min(sourceBuffers, copyBuffers, format.isInterleaved ? 1 : channels)
+        guard bufferCount > 0 else { return nil }
+
+        // Elementen per buffer: interleaved staan er frames * channels in dat ene
+        // blok, deinterleaved precies frames per kanaalbuffer.
+        let elements = format.isInterleaved ? frames * channels : frames
+        guard elements > 0 else { return copy }   // lege buffer: niets te kopiëren
+
         if let src = floatChannelData, let dst = copy.floatChannelData {
-            for channel in 0..<channels {
-                dst[channel].update(from: src[channel], count: Int(frameLength))
+            for buffer in 0..<bufferCount {
+                dst[buffer].update(from: src[buffer], count: elements)
             }
         } else if let src = int16ChannelData, let dst = copy.int16ChannelData {
-            for channel in 0..<channels {
-                dst[channel].update(from: src[channel], count: Int(frameLength))
+            for buffer in 0..<bufferCount {
+                dst[buffer].update(from: src[buffer], count: elements)
             }
         } else if let src = int32ChannelData, let dst = copy.int32ChannelData {
-            for channel in 0..<channels {
-                dst[channel].update(from: src[channel], count: Int(frameLength))
+            for buffer in 0..<bufferCount {
+                dst[buffer].update(from: src[buffer], count: elements)
             }
         } else {
             return nil

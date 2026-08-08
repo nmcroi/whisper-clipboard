@@ -466,7 +466,7 @@ final class CaptionsService: ObservableObject {
             pinned: false,
             language: locale().language.languageCode?.identifier ?? "nl",
             model: "parakeet-tdt-0.6b-v3",
-            source: "captions",
+            source: "captions.mac",
             duration: 0,
             segments: []
         )

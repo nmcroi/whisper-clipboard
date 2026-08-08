@@ -51,6 +51,41 @@ public struct ModelDownloadByteProgress: Sendable, Equatable {
     public var totalMB: Int { Int((Double(totalBytes) / 1_000_000).rounded()) }
 }
 
+/// Een na een procesonderbreking teruggevonden microfoonopname. Alleen de
+/// transcriptie en minimale metadata verlaten de herstelroutine; de aanroeper
+/// verwijdert de tijdelijke audio pas na duurzame opslag van het transcript.
+public struct RecoveredRecording: Sendable, Equatable {
+    public let recoveryID: String
+    public let result: TranscriptionResult
+    public let createdAt: Date
+    public let duration: Double
+    public let language: TranscriptionLanguage
+
+    public init(
+        recoveryID: String,
+        result: TranscriptionResult,
+        createdAt: Date,
+        duration: Double,
+        language: TranscriptionLanguage
+    ) {
+        self.recoveryID = recoveryID
+        self.result = result
+        self.createdAt = createdAt
+        self.duration = duration
+        self.language = language
+    }
+}
+
+public struct RecordingRecoveryBatch: Sendable, Equatable {
+    public let recordings: [RecoveredRecording]
+    public let failedCount: Int
+
+    public init(recordings: [RecoveredRecording], failedCount: Int) {
+        self.recordings = recordings
+        self.failedCount = failedCount
+    }
+}
+
 /// NVIDIA Parakeet TDT 0.6b v3 (multilingual, incl. Dutch) via the FluidAudio
 /// Swift package, running Apple-Silicon CoreML on-device.
 ///
@@ -58,10 +93,13 @@ public struct ModelDownloadByteProgress: Sendable, Equatable {
 /// FluidAudio only exposes true low-latency streaming (`StreamingAsrManager` /
 /// Parakeet EOU, Nemotron, Unified) for **English** models. The multilingual v3
 /// model this app needs for Dutch is an *offline* encoder; it has no cache-aware
-/// streaming path. So we accumulate 16 kHz mono Float32 during recording and run
-/// **one** `AsrManager.transcribe(_:decoderState:)` in ``finalize()``. At the
-/// model's ~100x realtime factor a 30 s clip transcribes in well under the
-/// 1.5 s stop→clipboard budget. In this mode we emit **no** partials — the HUD
+/// streaming path. We therefore spool 16 kHz mono audio to one protected
+/// temporary file during capture and run one
+/// `AsrManager.transcribe(_:decoderState:)` call in ``finalize()``. FluidAudio
+/// handles long files through its disk-backed path, so memory does not grow with
+/// the recording duration. At the model's ~100x realtime factor a 30 s clip
+/// transcribes in well under the 1.5 s stop→clipboard budget. In this mode we
+/// emit **no** partials — the HUD
 /// already shows the live level meter and elapsed time.
 ///
 /// An actor so the sample buffer, the loaded models and the asset status live on
@@ -100,9 +138,17 @@ public actor ParakeetEngine: TranscriptionEngine {
 
     // MARK: - Recording session state
 
-    /// Accumulated 16 kHz mono Float32 samples for the current recording.
-    private var samples: [Float] = []
+    /// Lopende microfoonopnamen worden naar één tijdelijk, beschermd CAF-bestand
+    /// geschreven. Zo groeit het werkgeheugen niet met de opnameduur; FluidAudio
+    /// gebruikt bij lange bestanden daarna zijn disk-backed transcriptiepad.
+    private var recordingFile: AVAudioFile?
+    private var recordingFileURL: URL?
+    private var recordedSampleCount = 0
+    private var recordingWriteError: String?
     private var isRecording = false
+    /// Taalhint van de lopende opname. `nil` betekent echte automatische
+    /// meertalige detectie; NL/EN/DE sturen FluidAudio's v3-tokenfilter.
+    private var recordingLanguage: Language?
 
     // MARK: - Constants
 
@@ -472,14 +518,65 @@ public actor ParakeetEngine: TranscriptionEngine {
         try await loadModelsIfNeeded()
         guard isLoaded else { throw ParakeetEngineError.modelNotLoaded }
 
-        samples.removeAll(keepingCapacity: true)
+        removeRecordingFile()
+        guard let format = await bestAudioFormat() else {
+            throw ParakeetEngineError.transcriptionFailed("Audioformaat niet beschikbaar")
+        }
+        let language = TranscriptionLanguage(locale: locale)
+        let fileURL = Self.makeRecordingFileURL(language: language)
+        do {
+            recordingFile = try AVAudioFile(
+                forWriting: fileURL,
+                settings: format.settings,
+                commonFormat: .pcmFormatFloat32,
+                interleaved: false
+            )
+            try FileManager.default.setAttributes(
+                [.protectionKey: FileProtectionType.completeUntilFirstUserAuthentication],
+                ofItemAtPath: fileURL.path
+            )
+        } catch {
+            try? FileManager.default.removeItem(at: fileURL)
+            throw ParakeetEngineError.transcriptionFailed(error.localizedDescription)
+        }
+        recordingFileURL = fileURL
+        recordedSampleCount = 0
+        recordingWriteError = nil
+        recordingLanguage = Self.languageHint(for: language.locale)
         isRecording = true
     }
 
+    /// Schrijffout van de lopende opname, of `nil` zolang alles goed gaat. De
+    /// app-laag pollt dit tijdens het opnemen (bestaande ticker) zodat de
+    /// gebruiker gewaarschuwd wordt in plaats van tien minuten in een dode
+    /// recorder te praten (bevinding 2026-08-03).
+    public var recordingWriteFailure: String? { recordingWriteError }
+
+    /// Wanneer `true` laat ``finalize()`` het tijdelijke opnamebestand ná een
+    /// geslaagde transcriptie staan en geeft het pad terug, zodat de aanroeper er
+    /// een blijvende kopie van kan maken. Standaard `false`: dan blijft het
+    /// gedrag ongewijzigd en wordt de audio opgeruimd.
+    private var preserveFinishedRecording = false
+
+    public func setPreserveFinishedRecording(_ preserve: Bool) {
+        preserveFinishedRecording = preserve
+    }
+
     public func feed(_ buffer: AudioBufferBox) async {
-        guard isRecording else { return }
-        guard let chunk = Self.floatSamples(from: buffer.buffer) else { return }
-        samples.append(contentsOf: chunk)
+        // Bewust géén guard op `recordingWriteError`: één mislukte write mag de
+        // rest van de sessie niet stilleggen, want dan blijft de opname wel
+        // lopen terwijl er niets meer op schijf komt. We blijven schrijven zodat
+        // een tijdelijke fout vanzelf herstelt en bewaren alleen de eerste fout
+        // als melding (bevinding 2026-08-03).
+        guard isRecording, let recordingFile else { return }
+        do {
+            try recordingFile.write(from: buffer.buffer)
+            recordedSampleCount += Int(buffer.buffer.frameLength)
+        } catch {
+            if recordingWriteError == nil {
+                recordingWriteError = error.localizedDescription
+            }
+        }
     }
 
     public func finalize() async throws -> TranscriptionResult {
@@ -488,29 +585,147 @@ public actor ParakeetEngine: TranscriptionEngine {
 
         guard let manager else { throw ParakeetEngineError.modelNotLoaded }
 
-        let captured = samples
-        samples.removeAll(keepingCapacity: true)
+        let fileURL = recordingFileURL
+        let capturedSampleCount = recordedSampleCount
+        let writeError = recordingWriteError
+        let language = recordingLanguage
+        // AVAudioFile sluit en flushes zodra de laatste sterke referentie weg is.
+        recordingFile = nil
+        recordingFileURL = nil
+        recordedSampleCount = 0
+        recordingWriteError = nil
+        recordingLanguage = nil
 
-        // Too little audio to transcribe: return empty (the controller then
-        // reports "Geen spraak herkend").
-        guard captured.count >= Int(Self.sampleRate * 0.3) else {
-            return .empty
+        guard let fileURL else {
+            throw ParakeetEngineError.transcriptionFailed("Tijdelijke audio ontbreekt")
+        }
+        // Geen blanket `defer` meer op het verwijderen: die gooide de enige kopie
+        // van de opname óók weg bij een mislukte transcriptie, waardoor
+        // `recoverOrphanedRecordings` bij de volgende start niets meer kon
+        // aanbieden (bevinding 2026-08-03). Elk pad verwijdert nu expliciet.
+
+        // Te weinig audio om te transcriberen: leeg resultaat (de controller
+        // meldt dan "Geen spraak herkend"). Hier valt niets te herstellen, dus
+        // het bestand mag weg.
+        //
+        // Eén uitzondering: ging het schrijven al bij de eerste buffers mis, dan
+        // is er geen spraak omdát de opname stukliep. Dat moet als storing
+        // terugkomen en niet als "je hebt niets gezegd" (bevinding 2026-08-03).
+        guard capturedSampleCount >= Int(Self.sampleRate * 0.3) else {
+            try? FileManager.default.removeItem(at: fileURL)
+            guard let writeError else { return .empty }
+            return TranscriptionResult(text: "", segments: [], partialFailure: writeError)
         }
 
         do {
-            // `language: nil` → v3 multilingual auto-detection.
             var state = TdtDecoderState.make(decoderLayers: 2)
-            let result = try await manager.transcribe(captured, decoderState: &state, language: nil)
+            let result = try await manager.transcribe(
+                fileURL,
+                decoderState: &state,
+                language: language
+            )
             let segments = Self.segments(from: result)
-            return TranscriptionResult(text: result.text, segments: segments)
+            // Pas ná een geslaagde transcriptie verwijderen — tenzij de aanroeper
+            // een kopie wil bewaren. Dan blijft het bestand staan en wordt hij er
+            // eigenaar van (bevinding 2026-08-03).
+            guard !preserveFinishedRecording else {
+                return TranscriptionResult(
+                    text: result.text,
+                    segments: segments,
+                    audioDuration: Double(capturedSampleCount) / Self.sampleRate,
+                    partialFailure: writeError,
+                    preservedAudioURL: fileURL
+                )
+            }
+            try? FileManager.default.removeItem(at: fileURL)
+            // Een schrijffout onderweg maakt de opname niet waardeloos: wat wél
+            // is weggeschreven is nu getranscribeerd, en de storing gaat als
+            // melding mee in plaats van als throw (bevinding 2026-08-03).
+            return TranscriptionResult(
+                text: result.text,
+                segments: segments,
+                audioDuration: Double(capturedSampleCount) / Self.sampleRate,
+                partialFailure: writeError
+            )
         } catch {
+            // Bestand bewust laten staan zodat `recoverOrphanedRecordings` de
+            // opname bij een volgende start opnieuw kan aanbieden
+            // (bevinding 2026-08-03).
             throw ParakeetEngineError.transcriptionFailed(error.localizedDescription)
         }
     }
 
     public func cancel() async {
         isRecording = false
-        samples.removeAll(keepingCapacity: false)
+        recordingLanguage = nil
+        removeRecordingFile()
+    }
+
+    /// Herstelt tijdelijke microfoonaudio die alleen kan zijn achtergebleven
+    /// doordat het proces tijdens een opname is beëindigd. Geslaagde en te korte
+    /// bestanden worden verwijderd; een technisch mislukt bestand blijft staan
+    /// zodat een volgende appstart opnieuw kan proberen.
+    public func recoverOrphanedRecordings(
+        defaultLocale: Locale
+    ) async throws -> RecordingRecoveryBatch {
+        let urls = Self.orphanedRecordingURLs()
+        guard !urls.isEmpty else {
+            return RecordingRecoveryBatch(recordings: [], failedCount: 0)
+        }
+
+        try await loadModelsIfNeeded()
+        guard let manager else { throw ParakeetEngineError.modelNotLoaded }
+
+        var recovered: [RecoveredRecording] = []
+        var failedCount = 0
+        for url in urls {
+            do {
+                let audioFile = try AVAudioFile(forReading: url)
+                let sampleRate = audioFile.processingFormat.sampleRate
+                let duration = sampleRate > 0 ? Double(audioFile.length) / sampleRate : 0
+                guard duration >= 0.3 else {
+                    try? FileManager.default.removeItem(at: url)
+                    continue
+                }
+
+                let language = Self.recordingLanguage(
+                    from: url,
+                    fallback: TranscriptionLanguage(locale: defaultLocale)
+                )
+                var state = TdtDecoderState.make(decoderLayers: 2)
+                let raw = try await manager.transcribe(
+                    url,
+                    decoderState: &state,
+                    language: Self.languageHint(for: language.locale)
+                )
+                let result = TranscriptionResult(
+                    text: raw.text,
+                    segments: Self.segments(from: raw)
+                )
+                let attributes = try? FileManager.default.attributesOfItem(atPath: url.path)
+                let createdAt = attributes?[.creationDate] as? Date ?? Date()
+                recovered.append(RecoveredRecording(
+                    recoveryID: url.lastPathComponent,
+                    result: result,
+                    createdAt: createdAt,
+                    duration: duration,
+                    language: language
+                ))
+            } catch {
+                failedCount += 1
+            }
+        }
+        return RecordingRecoveryBatch(recordings: recovered, failedCount: failedCount)
+    }
+
+    /// Verwijdert één eerder getranscribeerd herstelbestand pas nadat de
+    /// aanroeper het transcript duurzaam heeft opgeslagen. De vaste prefix en
+    /// bestandsnaamcontrole voorkomen dat een ander tijdelijk bestand geraakt.
+    public func discardRecoveredRecording(id: String) {
+        guard id.hasPrefix(Self.recordingFilePrefix),
+              URL(fileURLWithPath: id).lastPathComponent == id else { return }
+        let url = FileManager.default.temporaryDirectory.appendingPathComponent(id)
+        try? FileManager.default.removeItem(at: url)
     }
 
     /// Transcribes pre-decoded 16 kHz mono Float32 samples (M3 file import).
@@ -525,7 +740,11 @@ public actor ParakeetEngine: TranscriptionEngine {
 
         do {
             var state = TdtDecoderState.make(decoderLayers: 2)
-            let result = try await manager.transcribe(samples, decoderState: &state, language: nil)
+            let result = try await manager.transcribe(
+                samples,
+                decoderState: &state,
+                language: Self.languageHint(for: locale)
+            )
             return TranscriptionResult(text: result.text, segments: Self.segments(from: result))
         } catch {
             throw ParakeetEngineError.transcriptionFailed(error.localizedDescription)
@@ -538,10 +757,25 @@ public actor ParakeetEngine: TranscriptionEngine {
         guard let manager else { throw ParakeetEngineError.modelNotLoaded }
         do {
             var state = TdtDecoderState.make(decoderLayers: 2)
-            let result = try await manager.transcribe(url, decoderState: &state, language: nil)
+            let result = try await manager.transcribe(
+                url,
+                decoderState: &state,
+                language: Self.languageHint(for: locale)
+            )
             return TranscriptionResult(text: result.text, segments: Self.segments(from: result))
         } catch {
             throw ParakeetEngineError.transcriptionFailed(error.localizedDescription)
+        }
+    }
+
+    /// FluidAudio v3 ondersteunt een script-/taalhint. Voor `und` en onbekende
+    /// talen blijft die bewust `nil`, zodat automatische detectie actief blijft.
+    public static func languageHint(for locale: Locale) -> Language? {
+        switch TranscriptionLanguage(locale: locale) {
+        case .automatic: nil
+        case .dutch: .dutch
+        case .english: .english
+        case .german: .german
         }
     }
 
@@ -598,16 +832,56 @@ public actor ParakeetEngine: TranscriptionEngine {
         return segments
     }
 
-    // MARK: - Sample extraction
+    // MARK: - Tijdelijke microfoonaudio
 
-    /// Extracts mono Float32 samples from a 16 kHz buffer. The buffer arrives
-    /// already converted by ``AudioEngine`` to the format `bestAudioFormat()`
-    /// requested, so this is a straight copy of channel 0.
-    private static func floatSamples(from buffer: AVAudioPCMBuffer) -> [Float]? {
-        guard let channelData = buffer.floatChannelData else { return nil }
-        let frameLength = Int(buffer.frameLength)
-        guard frameLength > 0 else { return nil }
-        return Array(UnsafeBufferPointer(start: channelData[0], count: frameLength))
+    static let recordingFilePrefix = "whisperclip-live-recording-"
+
+    static func makeRecordingFileURL(language: TranscriptionLanguage) -> URL {
+        FileManager.default.temporaryDirectory
+            .appendingPathComponent(
+                "\(recordingFilePrefix)\(language.rawValue)-\(UUID().uuidString).caf"
+            )
+    }
+
+    private func removeRecordingFile() {
+        recordingFile = nil
+        if let recordingFileURL {
+            try? FileManager.default.removeItem(at: recordingFileURL)
+        }
+        recordingFileURL = nil
+        recordedSampleCount = 0
+        recordingWriteError = nil
+    }
+
+    private static func orphanedRecordingURLs() -> [URL] {
+        let directory = FileManager.default.temporaryDirectory
+        guard let urls = try? FileManager.default.contentsOfDirectory(
+            at: directory,
+            includingPropertiesForKeys: [.creationDateKey]
+        ) else { return [] }
+        return urls.filter { $0.lastPathComponent.hasPrefix(recordingFilePrefix) }
+            .sorted { lhs, rhs in
+                let left = try? lhs.resourceValues(forKeys: [.creationDateKey]).creationDate
+                let right = try? rhs.resourceValues(forKeys: [.creationDateKey]).creationDate
+                return (left ?? .distantPast) < (right ?? .distantPast)
+            }
+    }
+
+    static func recordingLanguage(
+        from url: URL,
+        fallback: TranscriptionLanguage
+    ) -> TranscriptionLanguage {
+        let filename = url.deletingPathExtension().lastPathComponent
+        guard filename.hasPrefix(recordingFilePrefix) else { return fallback }
+        let suffix = filename.dropFirst(recordingFilePrefix.count)
+        guard let code = suffix.split(separator: "-").first, !code.isEmpty else {
+            return fallback
+        }
+        let value = String(code)
+        guard TranscriptionLanguage.allCases.contains(where: { $0.rawValue == value }) else {
+            return fallback
+        }
+        return TranscriptionLanguage(metadataCode: value)
     }
 
     // MARK: - Hardware / cache helpers

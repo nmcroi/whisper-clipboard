@@ -5,7 +5,7 @@ struct WhisperClipboardApp: App {
     @NSApplicationDelegateAdaptor(AppDelegate.self) private var appDelegate
 
     var body: some Scene {
-        Window("Whisper Clip", id: "main") {
+        Window("", id: "main") {
             HomeView()
                 .environmentObject(appDelegate.environment)
                 // Min width fits the Geschiedenis three-pane layout without
@@ -72,20 +72,30 @@ private struct WindowConfigurator: NSViewRepresentable {
                     window.center()
                 }
             }
+            // The centered SwiftUI toolbar title is the single app title. Hide
+            // AppKit's duplicate title next to the traffic-light controls.
+            window.title = ""
+            window.titleVisibility = .hidden
             NSApp.setActivationPolicy(.regular)
             NSApp.activate(ignoringOtherApps: true)
             window.makeKeyAndOrderFront(nil)
         }
     }
 
-    func updateNSView(_ nsView: NSView, context: Context) {}
+    func updateNSView(_ nsView: NSView, context: Context) {
+        // SwiftUI can restore the scene title after the window was first
+        // configured. Keep the native title empty on every update so only the
+        // centered principal toolbar item remains visible.
+        nsView.window?.title = ""
+        nsView.window?.titleVisibility = .hidden
+    }
 }
 
 /// Tabbed settings window: "Algemeen" (hotkey, taal, opstarten), "Woordenlijst"
 /// (personal find→replace dictionary), "Invoegen" (direct text insertion),
-/// "Automatisering" (filler removal, auto-export, watched folders), "PLAUD"
-/// (PLAUD cloud sync of NotePin recordings) and "AI" (Claude API key + custom
-/// mode editor).
+/// "Automatisering" (filler removal, auto-export, watched folders) and "AI"
+/// (Claude API key + custom mode editor). PLAUD wordt vanaf nu uitsluitend op
+/// de iPhone opgehaald en bereikt de Mac via iCloud.
 struct SettingsView: View {
     @EnvironmentObject private var environment: AppEnvironment
 
@@ -102,9 +112,6 @@ struct SettingsView: View {
 
             AutomationSettingsView()
                 .tabItem { Label("Automatisering", systemImage: "gearshape.2") }
-
-            PlaudSettingsView()
-                .tabItem { Label("PLAUD", systemImage: "waveform.badge.mic") }
 
             AISettingsView(modes: environment.modes)
                 .tabItem { Label("AI", systemImage: "sparkles") }

@@ -22,17 +22,16 @@ struct HomeView: View {
 private struct HomeRootView: View {
     @ObservedObject var environment: AppEnvironment
     @ObservedObject var navigation: AppNavigation
-    @State private var columnVisibility: NavigationSplitViewVisibility = .all
 
     var body: some View {
-        // A SINGLE navigation container. The detail pane swaps its content per
-        // tab. History renders its own list|detail split (a plain HSplitView, NOT
-        // a nested NavigationSplitView), so there is never a split-inside-a-
-        // navigation-column fighting the outer split for width.
-        NavigationSplitView(columnVisibility: $columnVisibility) {
+        // A fixed app sidebar: NavigationSplitView allowed macOS to collapse the
+        // column until labels disappeared when the window became narrower.
+        // This sidebar stays readable at every supported window size.
+        HStack(spacing: 0) {
             Sidebar(selection: $navigation.tab)
-                .navigationSplitViewColumnWidth(180)
-        } detail: {
+                .frame(width: 165)
+            Divider().overlay(Theme.border)
+
             Group {
                 switch navigation.tab {
                 case .home:
@@ -44,6 +43,8 @@ private struct HomeRootView: View {
                         captions: environment.captions,
                         onOpenHistory: { navigation.openHistory(selecting: $0) }
                     )
+                case .notes:
+                    NotesListView(store: environment.history)
                 case .history:
                     HistoryListView(store: environment.history, navigation: navigation, modes: environment.modes)
                 }
@@ -53,6 +54,14 @@ private struct HomeRootView: View {
         }
         .environmentObject(navigation)
         .background(Theme.window)
+        .toolbar {
+            ToolbarItem(placement: .principal) {
+                Text.accentDotted("Whisper Clip")
+                    .font(ThemeFont.ui(18, weight: .semibold))
+                    .padding(.horizontal, 15)
+                    .padding(.vertical, 4)
+            }
+        }
         .toolbarBackground(Theme.window, for: .windowToolbar)
         .modifier(AppAppearanceModifier(environment: environment))
         .onReceive(environment.$menuNavigationRequest.compactMap { $0 }) { request in
@@ -90,11 +99,6 @@ private struct Sidebar: View {
         // button-per-row layout lets us own the selection background (yellow-tinted
         // surface) and keep it strictly on-brand.
         VStack(alignment: .leading, spacing: 4) {
-            Wordmark(size: 17)
-                .padding(.horizontal, 12)
-                .padding(.top, 14)
-                .padding(.bottom, 10)
-
             ForEach(SidebarTab.allCases, id: \.self) { tab in
                 sidebarRow(tab)
             }
@@ -102,6 +106,7 @@ private struct Sidebar: View {
             Spacer(minLength: 0)
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
+        .padding(.top, 10)
         .background(Theme.window)
     }
 
@@ -135,9 +140,7 @@ private struct HomeContent: View {
     let onOpenHistory: (String?) -> Void
 
     private let columns = [
-        GridItem(.flexible(), spacing: 12),
-        GridItem(.flexible(), spacing: 12),
-        GridItem(.flexible(), spacing: 12),
+        GridItem(.adaptive(minimum: 230, maximum: 320), spacing: 10),
     ]
 
     var body: some View {
@@ -157,8 +160,8 @@ private struct HomeContent: View {
                 ImportQueueView(service: environment.fileImport)
                 recentSection
             }
-            .padding(28)
-            .frame(maxWidth: 820, alignment: .leading)
+            .padding(24)
+            .frame(maxWidth: 1120, alignment: .leading)
             .frame(maxWidth: .infinity, alignment: .leading)
         }
         .background(Theme.window)
@@ -170,9 +173,25 @@ private struct HomeContent: View {
                     .allowsHitTesting(false)
             }
         }
+        .onAppear { refreshRecents() }
+        // `revision` bumpt na élke mutatie van de store, dus ook wanneer een
+        // import of een dictaat klaar is of iCloud iets binnenhaalt.
+        .onChange(of: history.revision) { _, _ in refreshRecents() }
     }
 
     @State private var isDropTargeted = false
+
+    /// De 10 recentste opnames, één keer opgehaald per wijziging.
+    ///
+    /// Bevinding 2026-08-04: dit was een computed property, en deze view
+    /// observeert `dictation` — die publiceert tijdens een opname 10× per
+    /// seconde (`elapsed`). De database werd daardoor tijdens het dicteren
+    /// tientallen keren per seconde synchroon bevraagd op de main thread.
+    @State private var recentEntries: [TranscriptEntry] = []
+
+    /// Of de eerste query al gedraaid heeft; voorkomt dat de lege staat één
+    /// frame flitst. Bevinding 2026-08-04.
+    @State private var hasLoadedRecents = false
 
     private func openFiles() {
         MediaOpenPanel.present { urls in
@@ -208,8 +227,8 @@ private struct HomeContent: View {
         // The wordmark lives in the sidebar; the content header shows a plain page
         // title so the brand mark isn't rendered twice.
         VStack(alignment: .leading, spacing: 10) {
-            Text.accentDotted("Home")
-            .font(ThemeFont.ui(28, weight: .bold))
+            Text("Home")
+            .font(ThemeFont.ui(24, weight: .bold))
             statusPill
         }
     }
@@ -417,7 +436,9 @@ private struct HomeContent: View {
             }
 
             let recents = recentEntries
-            if recents.isEmpty {
+            if !hasLoadedRecents {
+                EmptyView()
+            } else if recents.isEmpty {
                 emptyRecent
             } else {
                 VStack(spacing: 0) {
@@ -450,10 +471,11 @@ private struct HomeContent: View {
         .themeCard()
     }
 
-    /// The 10 most recent entries. Recomputed whenever the store bumps `revision`.
-    private var recentEntries: [TranscriptEntry] {
-        _ = history.revision
-        return (try? history.recent(10)) ?? []
+    /// Haalt de 10 recentste opnames op. Zelfde query als voorheen, alleen niet
+    /// meer bij elke body-pass (bevinding 2026-08-04).
+    private func refreshRecents() {
+        recentEntries = (try? history.recent(10)) ?? []
+        hasLoadedRecents = true
     }
 }
 

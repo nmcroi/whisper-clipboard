@@ -1,5 +1,6 @@
 import XCTest
-import WhisperShared
+import Core
+@testable import WhisperShared
 
 /// Pure-logic tests for the Parakeet download progress + watchdog + validation
 /// support added for the iOS on-device test fixes (Issues 2 & 3). These exercise
@@ -175,5 +176,47 @@ final class ParakeetDownloadLogicTests: XCTestCase {
         )
         XCTAssertEqual(progress.downloadedMB, 2)
         XCTAssertEqual(progress.totalMB, 3)
+    }
+
+    // MARK: - Interrupted-recording recovery policy
+
+    func testRecoveryFilenameRoundTripsEveryLanguage() {
+        for language in TranscriptionLanguage.allCases {
+            let url = ParakeetEngine.makeRecordingFileURL(language: language)
+            XCTAssertTrue(url.lastPathComponent.hasPrefix(ParakeetEngine.recordingFilePrefix))
+            XCTAssertEqual(
+                ParakeetEngine.recordingLanguage(from: url, fallback: .dutch),
+                language
+            )
+        }
+    }
+
+    func testRecoveryFilenameWithoutLanguageUsesFallback() {
+        let url = FileManager.default.temporaryDirectory
+            .appendingPathComponent("\(ParakeetEngine.recordingFilePrefix)legacy.caf")
+        XCTAssertEqual(
+            ParakeetEngine.recordingLanguage(from: url, fallback: .german),
+            .german
+        )
+    }
+
+    func testDiscardRecoveredRecordingOnlyDeletesOwnedPrefix() async throws {
+        let fm = FileManager.default
+        let owned = ParakeetEngine.makeRecordingFileURL(language: .english)
+        let unrelated = fm.temporaryDirectory
+            .appendingPathComponent("unrelated-\(UUID().uuidString).caf")
+        try Data("owned".utf8).write(to: owned)
+        try Data("unrelated".utf8).write(to: unrelated)
+        defer {
+            try? fm.removeItem(at: owned)
+            try? fm.removeItem(at: unrelated)
+        }
+
+        let engine = ParakeetEngine()
+        await engine.discardRecoveredRecording(id: owned.lastPathComponent)
+        await engine.discardRecoveredRecording(id: unrelated.lastPathComponent)
+
+        XCTAssertFalse(fm.fileExists(atPath: owned.path))
+        XCTAssertTrue(fm.fileExists(atPath: unrelated.path))
     }
 }

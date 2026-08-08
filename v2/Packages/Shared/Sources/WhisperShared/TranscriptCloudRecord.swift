@@ -32,6 +32,8 @@ public enum TranscriptCloudRecord {
         public static let segments = "segments"          // JSON Data
         public static let speakerNames = "speakerNames"  // JSON Data
         public static let modifiedAt = "modifiedAt"      // Int64 epoch ms (LWW clock)
+        public static let noteId = "noteId"
+        public static let noteLinkVersion = "noteLinkVersion"
     }
 
     /// Writes the local record's fields onto a `CKRecord` (create the CKRecord
@@ -49,6 +51,8 @@ public enum TranscriptCloudRecord {
         ck[Field.segments] = Data(local.segments.utf8) as CKRecordValue
         ck[Field.speakerNames] = Data(local.speakerNames.utf8) as CKRecordValue
         ck[Field.modifiedAt] = local.modifiedAt as CKRecordValue
+        ck[Field.noteId] = local.noteId as CKRecordValue?
+        ck[Field.noteLinkVersion] = 1 as CKRecordValue
     }
 
     /// Reconstructs a local `TranscriptRecord` from a fetched `CKRecord`.
@@ -93,8 +97,15 @@ public enum TranscriptCloudRecord {
             segments: jsonString(Field.segments, "[]"),
             sortKey: sortKey,
             speakerNames: jsonString(Field.speakerNames, "{}"),
-            modifiedAt: modifiedAt
+            modifiedAt: modifiedAt,
+            noteId: ck[Field.noteId] as? String
         )
+    }
+
+    /// Old CloudKit records predate note syncing. Only a record carrying this
+    /// version marker may explicitly attach or detach a local transcript.
+    public static func carriesNoteLink(_ ck: CKRecord) -> Bool {
+        (ck[Field.noteLinkVersion] as? Int64 ?? Int64(ck[Field.noteLinkVersion] as? Int ?? 0)) >= 1
     }
 
     // MARK: - Conflict resolution (last-writer-wins)

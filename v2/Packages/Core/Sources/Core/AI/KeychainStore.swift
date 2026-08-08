@@ -28,8 +28,11 @@ public struct KeychainStore: Sendable {
     }
 
     public static let service = "nl.nielscroiset.whisperclipboard"
-    /// Account for the Claude API key (unchanged).
+    /// Account for the Claude API key (unchanged, zodat bestaande installaties
+    /// hun sleutel zonder migratie behouden).
     public static let account = "anthropic-api-key"
+    public static let openAIAccount = "openai-api-key"
+    public static let geminiAccount = "gemini-api-key"
     /// Account for the PLAUD credentials blob (email + password/token as JSON).
     public static let plaudAccount = "plaud-credentials"
 
@@ -42,6 +45,12 @@ public struct KeychainStore: Sendable {
 
     /// A store for the PLAUD credentials item.
     public static let plaud = KeychainStore(account: plaudAccount)
+
+    /// Afzonderlijk Keychain-item per AI-aanbieder. `ThisDeviceOnly` voorkomt
+    /// zowel iCloud-Keychain-sync als migratie naar een ander toestel.
+    public static func ai(provider: AIProvider) -> KeychainStore {
+        KeychainStore(account: provider.keychainAccount)
+    }
 
     // MARK: - Instance API (arbitrary account)
 
@@ -141,6 +150,22 @@ public struct KeychainStore: Sendable {
 
     /// Convenience: whether a non-empty key is currently stored.
     public static func hasKey() -> Bool { apiKeyStore.hasValue() }
+
+    public static func save(_ key: String, for provider: AIProvider) throws {
+        try ai(provider: provider).save(key)
+    }
+
+    public static func read(for provider: AIProvider) throws -> String? {
+        try ai(provider: provider).read()
+    }
+
+    public static func delete(for provider: AIProvider) throws {
+        try ai(provider: provider).delete()
+    }
+
+    public static func hasKey(for provider: AIProvider) -> Bool {
+        ai(provider: provider).hasValue()
+    }
 }
 
 // MARK: - PLAUD credentials

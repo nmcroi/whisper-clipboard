@@ -77,8 +77,17 @@ final class SystemAudioTap: @unchecked Sendable {
     private var converter: AVAudioConverter?
     private var continuation: AsyncStream<AudioBufferBox>.Continuation?
 
-    /// Serializes start/stop against the realtime IO block's teardown check.
-    private let lock = NSLock()
+    /// Serialiseert ``start()`` tegen ``stop()``. Wordt NOOIT door het realtime
+    /// IO-block genomen, zodat het blokkerende `AudioDeviceStop` er veilig onder
+    /// mag draaien. Slotvolgorde is altijd `lifecycleLock` → ``stateLock``,
+    /// nooit andersom (bevinding 2026-08-03).
+    private let lifecycleLock = NSLock()
+
+    /// Beschermt uitsluitend de velden die het realtime IO-block leest
+    /// (`isRunning`, `converter`, `tapFormat`, `continuation`). Wordt alleen voor
+    /// een handvol pointer-reads vastgehouden — nooit rond een blokkerende Core
+    /// Audio-aanroep.
+    private let stateLock = NSLock()
     private var isRunning = false
 
     /// The target format the Parakeet model consumes.
@@ -95,9 +104,16 @@ final class SystemAudioTap: @unchecked Sendable {
     /// buffers. Throws a typed ``SystemAudioTapError`` on failure; a permission
     /// denial surfaces as ``SystemAudioTapError/permissionDenied``.
     func start() throws -> AsyncStream<AudioBufferBox> {
-        lock.lock()
-        defer { lock.unlock() }
-        guard !isRunning else {
+        // De hele opbouw draait onder de lifecycle-lock: dat sluit een
+        // gelijktijdige ``stop()`` uit, zonder dat het realtime IO-block ooit op
+        // deze lock hoeft te wachten.
+        lifecycleLock.lock()
+        defer { lifecycleLock.unlock() }
+
+        stateLock.lock()
+        let alreadyRunning = isRunning
+        stateLock.unlock()
+        guard !alreadyRunning else {
             // Already running: hand back a finished stream so callers don't hang.
             let (stream, cont) = AsyncStream<AudioBufferBox>.makeStream()
             cont.finish()
@@ -119,17 +135,18 @@ final class SystemAudioTap: @unchecked Sendable {
         }
         tapID = newTapID
 
-        // 2. Read the tap's native stream format.
+        // 2. Read the tap's native stream format. Blijft even lokaal: pas vlak
+        //    voor `AudioDeviceStart` publiceren we de toestand die `handleIO`
+        //    leest, zodat de foutpaden hieronder niets hoeven op te ruimen.
         guard let format = Self.readTapFormat(tapID) else {
-            teardownLocked()
+            teardownCoreAudio()
             throw SystemAudioTapError.formatUnavailable
         }
-        tapFormat = format
 
         // 3. Build a private aggregate device with the tap, backed by the system
         //    default output device as the main sub-device.
         guard let outputUID = Self.defaultOutputDeviceUID() else {
-            teardownLocked()
+            teardownCoreAudio()
             throw SystemAudioTapError.noAudioDevice
         }
 
@@ -153,22 +170,20 @@ final class SystemAudioTap: @unchecked Sendable {
             &newAggregate
         )
         guard aggStatus == noErr, newAggregate != kAudioObjectUnknown else {
-            teardownLocked()
+            teardownCoreAudio()
             throw SystemAudioTapError.aggregateDeviceFailed(aggStatus)
         }
         aggregateDeviceID = newAggregate
 
         // 4. Build the converter tap-format → 16 kHz mono Float32.
         guard let converter = AVAudioConverter(from: format, to: Self.outputFormat) else {
-            teardownLocked()
+            teardownCoreAudio()
             throw SystemAudioTapError.converterUnavailable
         }
-        self.converter = converter
 
         // 5. Install the realtime IO proc. The block runs on Core Audio's realtime
         //    thread; keep it isolation-free (see class doc) and non-blocking.
         let (stream, cont) = AsyncStream<AudioBufferBox>.makeStream(bufferingPolicy: .unbounded)
-        continuation = cont
 
         let ioBlock: AudioDeviceIOBlock = { [weak self] _, inInputData, _, _, _ in
             self?.handleIO(inInputData)
@@ -182,44 +197,80 @@ final class SystemAudioTap: @unchecked Sendable {
             ioBlock
         )
         guard procStatus == noErr, let procID = newProcID else {
-            continuation = nil
-            teardownLocked()
+            teardownCoreAudio()
             throw SystemAudioTapError.ioProcFailed(procStatus)
         }
         ioProcID = procID
 
+        // Publiceer de gedeelde toestand vóórdat de IOProc mag lopen: vanaf
+        // `AudioDeviceStart` kan `handleIO` elk moment binnenvallen.
+        stateLock.lock()
+        tapFormat = format
+        self.converter = converter
+        continuation = cont
+        isRunning = true
+        stateLock.unlock()
+
         let startStatus = AudioDeviceStart(aggregateDeviceID, procID)
         guard startStatus == noErr else {
+            stateLock.lock()
+            isRunning = false
+            tapFormat = nil
+            self.converter = nil
             continuation = nil
-            teardownLocked()
+            stateLock.unlock()
+            teardownCoreAudio()
             throw SystemAudioTapError.ioProcFailed(startStatus)
         }
 
-        isRunning = true
         return stream
     }
 
     /// Stops capture and tears down the IO proc, aggregate device and tap in the
     /// correct order, finishing the stream.
     ///
-    /// Order matters for the realtime-thread race: `teardownLocked()` runs
-    /// `AudioDeviceStop` **first**, so no further `handleIO` invocations can begin
-    /// once it returns; only then do we finish/nil the continuation. `handleIO`
-    /// itself snapshots `converter`/`tapFormat`/`continuation` under the same
-    /// `lock`, so a torn read across this teardown is impossible.
+    /// bevinding 2026-08-03: dit liep vast. `stop()` nam de lock en riep daarmee
+    /// nog vast `teardownLocked()` → `AudioDeviceStop` aan, en die blokkeert tot
+    /// de lopende IOProc terug is. `handleIO` neemt op de realtimethread als
+    /// eerste diezelfde lock: de main thread wachtte op de IOProc, de IOProc
+    /// wachtte op de lock. Elke "captions stoppen" was een gok.
+    ///
+    /// Nu in drie stappen. (1) Kort onder ``stateLock``: vlag om en de gedeelde
+    /// toestand loskoppelen — vanaf dat moment ziet `handleIO` `isRunning ==
+    /// false` en raakt het niets meer aan. (2) Buiten ``stateLock``, maar nog wel
+    /// onder ``lifecycleLock``, de Core Audio-afbraak met de blokkerende
+    /// `AudioDeviceStop`; het IO-block neemt de lifecycle-lock nooit, dus er valt
+    /// niets te deadlocken. (3) De stream afsluiten. Een gelijktijdige ``start()``
+    /// kan er niet tussen komen: die houdt ``lifecycleLock`` over zijn hele body.
     func stop() {
-        lock.lock()
-        defer { lock.unlock() }
-        guard isRunning else { return }
+        lifecycleLock.lock()
+        defer { lifecycleLock.unlock() }
+
+        stateLock.lock()
+        guard isRunning else {
+            stateLock.unlock()
+            return
+        }
         isRunning = false
-        teardownLocked()          // AudioDeviceStop runs before we touch the
-        continuation?.finish()    // continuation, so no in-flight handleIO can be
-        continuation = nil        // reading it concurrently (handleIO also locks).
+        let pending = continuation
+        continuation = nil
+        converter = nil
+        tapFormat = nil
+        stateLock.unlock()
+
+        // AudioDeviceStop wacht op de in-flight IOProc — dus zonder stateLock.
+        teardownCoreAudio()
+
+        // Pas afsluiten als er gegarandeerd geen IOProc meer loopt. Een yield na
+        // finish is overigens een gedocumenteerde no-op op AsyncStream.
+        pending?.finish()
     }
 
-    /// Tears down all Core Audio objects (idempotent). Must be called with `lock`
-    /// held. Order: stop IO → destroy IO proc → destroy aggregate → destroy tap.
-    private func teardownLocked() {
+    /// Tears down all Core Audio objects (idempotent). Aanroepen met
+    /// ``lifecycleLock`` vast en ``stateLock`` NIET vast: `AudioDeviceStop`
+    /// blokkeert tot de lopende IOProc terug is, en die IOProc heeft de stateLock
+    /// nodig. Order: stop IO → destroy IO proc → destroy aggregate → destroy tap.
+    private func teardownCoreAudio() {
         if let procID = ioProcID, aggregateDeviceID != kAudioObjectUnknown {
             AudioDeviceStop(aggregateDeviceID, procID)
             AudioDeviceDestroyIOProcID(aggregateDeviceID, procID)
@@ -234,8 +285,6 @@ final class SystemAudioTap: @unchecked Sendable {
             AudioHardwareDestroyProcessTap(tapID)
             tapID = kAudioObjectUnknown
         }
-        converter = nil
-        tapFormat = nil
     }
 
     // MARK: - Realtime IO handling
@@ -244,23 +293,25 @@ final class SystemAudioTap: @unchecked Sendable {
     /// an `AVAudioPCMBuffer` over the tap format, converts to 16 kHz mono Float32,
     /// and yields a deep-copied box. Non-blocking; drops on any anomaly.
     private func handleIO(_ inInputData: UnsafePointer<AudioBufferList>) {
-        // Snapshot converter/format/continuation under `lock` so the read can't
-        // tear against stop()'s teardownLocked() niling them out. The critical
-        // section is three pointer reads only — the heavy conversion + yield work
-        // happens OUTSIDE the lock, so realtime-thread priority-inversion risk is
-        // negligible. `stop()` runs AudioDeviceStop before touching these, so once
-        // stop() has returned no further handleIO call can begin; while stop() is
-        // mid-flight the lock serializes us against it.
-        lock.lock()
+        // Snapshot converter/format/continuation under `stateLock` so the read
+        // can't tear against stop() niling them out. De kritieke sectie is drie
+        // pointer-reads; het zware convert + yield gebeurt BUITEN de lock, dus het
+        // risico op priority inversion op de realtimethread is verwaarloosbaar.
+        // stop() zet `isRunning` op false vóór het blokkerende AudioDeviceStop en
+        // houdt deze lock daarbij expliciet NIET vast (bevinding 2026-08-03), dus
+        // we kunnen hier nooit meer op elkaar staan wachten. De lokale sterke
+        // referenties houden converter/continuation in leven zolang we ze nodig
+        // hebben, ook als stop() de properties intussen leeggooit.
+        stateLock.lock()
         guard isRunning,
               let converter = self.converter,
               let tapFormat = self.tapFormat,
               let continuation = self.continuation
         else {
-            lock.unlock()
+            stateLock.unlock()
             return
         }
-        lock.unlock()
+        stateLock.unlock()
 
         let bufferList = inInputData.pointee
         guard bufferList.mNumberBuffers > 0 else { return }

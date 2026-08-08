@@ -40,13 +40,17 @@ public enum ClaudeError: Error, LocalizedError, Equatable {
 /// the Server-Sent Events stream by hand, yielding `text_delta` chunks. The API
 /// key is supplied per call (read from the Keychain by the caller) so this type
 /// holds no secrets.
-public struct ClaudeClient: Sendable {
+public struct ClaudeClient: AITextClient, Sendable {
+
+    public typealias Usage = AIUsage
+
+    public let provider = AIProvider.anthropic
 
     /// The model used for all AI-mode completions.
     public static let model = "claude-sonnet-5"
     public static let anthropicVersion = "2023-06-01"
     public static let endpoint = URL(string: "https://api.anthropic.com/v1/messages")!
-    public static let maxTokens = 2048
+    public static let maxTokens = 16_384
 
     private let apiKey: String
     private let session: URLSession
@@ -63,14 +67,34 @@ public struct ClaudeClient: Sendable {
     ///   - user: the user content (the transcript).
     /// - Returns: an async stream yielding text chunks; it finishes on
     ///   `message_stop` and throws a typed ``ClaudeError`` on failure.
-    public func complete(system: String, user: String) -> AsyncThrowingStream<String, Error> {
+    public func complete(
+        system: String,
+        user: String,
+        onUsage: @escaping @Sendable (Usage) -> Void = { _ in }
+    ) -> AsyncThrowingStream<String, Error> {
+        complete(system: system, user: user, model: Self.model, onUsage: onUsage)
+    }
+
+    /// Providerneutrale variant met een expliciete modelkeuze.
+    public func complete(
+        system: String,
+        user: String,
+        model: String,
+        onUsage: @escaping @Sendable (Usage) -> Void = { _ in }
+    ) -> AsyncThrowingStream<String, Error> {
         AsyncThrowingStream { continuation in
             let task = Task {
                 do {
-                    try await self.run(system: system, user: user, into: continuation)
+                    try await self.run(
+                        system: system,
+                        user: user,
+                        model: model,
+                        into: continuation,
+                        onUsage: onUsage
+                    )
                     continuation.finish()
                 } catch is CancellationError {
-                    continuation.finish()
+                    continuation.finish(throwing: CancellationError())
                 } catch {
                     continuation.finish(throwing: error)
                 }
@@ -80,25 +104,25 @@ public struct ClaudeClient: Sendable {
     }
 
     /// Non-streaming convenience: accumulates the stream into a single string.
-    public func completeText(system: String, user: String) async throws -> String {
-        var accumulated = ""
-        for try await chunk in complete(system: system, user: user) {
-            accumulated += chunk
-        }
-        return accumulated
+    public func completeText(
+        system: String,
+        user: String,
+        onUsage: @escaping @Sendable (Usage) -> Void = { _ in }
+    ) async throws -> String {
+        try await completeText(system: system, user: user, model: Self.model, onUsage: onUsage)
     }
 
     // MARK: - Internals
 
-    private func makeRequest(system: String, user: String) throws -> URLRequest {
-        var request = URLRequest(url: Self.endpoint)
+    private func makeRequest(system: String, user: String, model: String) throws -> URLRequest {
+        var request = URLRequest(url: Self.endpoint, timeoutInterval: 120)
         request.httpMethod = "POST"
         request.setValue("application/json", forHTTPHeaderField: "Content-Type")
         request.setValue(apiKey, forHTTPHeaderField: "x-api-key")
         request.setValue(Self.anthropicVersion, forHTTPHeaderField: "anthropic-version")
 
-        let body: [String: Any] = [
-            "model": Self.model,
+        var body: [String: Any] = [
+            "model": model,
             "max_tokens": Self.maxTokens,
             "stream": true,
             "system": system,
@@ -106,6 +130,12 @@ public struct ClaudeClient: Sendable {
                 ["role": "user", "content": user]
             ],
         ]
+        // Generation 5 models enable adaptive thinking by default. These
+        // transcript transformations need deterministic text, not hidden
+        // reasoning that consumes the output budget.
+        if model.contains("-5") {
+            body["thinking"] = ["type": "disabled"]
+        }
         request.httpBody = try JSONSerialization.data(withJSONObject: body)
         return request
     }
@@ -113,9 +143,11 @@ public struct ClaudeClient: Sendable {
     private func run(
         system: String,
         user: String,
-        into continuation: AsyncThrowingStream<String, Error>.Continuation
+        model: String,
+        into continuation: AsyncThrowingStream<String, Error>.Continuation,
+        onUsage: @escaping @Sendable (Usage) -> Void
     ) async throws {
-        let request = try makeRequest(system: system, user: user)
+        let request = try makeRequest(system: system, user: user, model: model)
 
         let bytes: URLSession.AsyncBytes
         let response: URLResponse
@@ -138,6 +170,8 @@ public struct ClaudeClient: Sendable {
         }
 
         // Parse the SSE stream line by line.
+        var inputTokens = 0
+        var outputTokens = 0
         for try await line in bytes.lines {
             try Task.checkCancellation()
             switch Self.parseSSELine(line) {
@@ -145,7 +179,11 @@ public struct ClaudeClient: Sendable {
                 continuation.yield(text)
             case .error(let message):
                 throw ClaudeError.server(message)
+            case .usage(let input, let output):
+                if let input { inputTokens = input }
+                if let output { outputTokens = output }
             case .stop:
+                onUsage(Usage(inputTokens: inputTokens, outputTokens: outputTokens))
                 return
             case .ignore:
                 break
@@ -153,10 +191,36 @@ public struct ClaudeClient: Sendable {
         }
     }
 
+    /// Haalt na sleutelvalidatie de beschikbare Claude-modellen op. Bij een
+    /// tijdelijke serverfout kan de UI de ingebouwde fallbacklijst blijven tonen.
+    public func listModels() async throws -> [String] {
+        var request = URLRequest(url: URL(string: "https://api.anthropic.com/v1/models?limit=100")!)
+        request.setValue(apiKey, forHTTPHeaderField: "x-api-key")
+        request.setValue(Self.anthropicVersion, forHTTPHeaderField: "anthropic-version")
+        let (data, response): (Data, URLResponse)
+        do {
+            (data, response) = try await session.data(for: request)
+        } catch let error as URLError {
+            throw Self.mapURLError(error)
+        }
+        guard let http = response as? HTTPURLResponse else { throw ClaudeError.server("") }
+        guard (200..<300).contains(http.statusCode) else {
+            throw Self.mapHTTPError(status: http.statusCode, body: data)
+        }
+        guard let object = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
+              let rows = object["data"] as? [[String: Any]] else {
+            throw ClaudeError.server("Onleesbare modellenlijst")
+        }
+        return rows.compactMap { $0["id"] as? String }
+            .filter { $0.hasPrefix("claude-") }
+            .sorted()
+    }
+
     /// The meaning of a single parsed SSE line.
     public enum SSEEvent: Equatable {
         case text(String)
         case error(String)
+        case usage(input: Int?, output: Int?)
         case stop
         case ignore
     }
@@ -175,6 +239,14 @@ public struct ClaudeClient: Sendable {
         else { return .ignore }
 
         switch type {
+        case "message_start":
+            let usage = (event["message"] as? [String: Any])?["usage"] as? [String: Any]
+            guard let input = usage?["input_tokens"] as? Int else { return .ignore }
+            return .usage(input: input, output: nil)
+        case "message_delta":
+            let usage = event["usage"] as? [String: Any]
+            guard let output = usage?["output_tokens"] as? Int else { return .ignore }
+            return .usage(input: nil, output: output)
         case "content_block_delta":
             if let delta = event["delta"] as? [String: Any],
                delta["type"] as? String == "text_delta",

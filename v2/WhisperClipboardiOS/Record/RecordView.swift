@@ -24,22 +24,10 @@ struct RecordView: View {
                 content
             }
             .navigationTitle("")
+            .navigationBarTitleDisplayMode(.inline)
             .toolbar {
                 ToolbarItem(placement: .principal) {
                     Wordmark(size: 20)
-                }
-                // Ingang van de private notulist: deelnemers invoeren → opnemen
-                // → verslag mailen. Verborgen tijdens een lopende opname.
-                if !controller.isRecording && !controller.isTranscribing {
-                    ToolbarItem(placement: .topBarTrailing) {
-                        NavigationLink {
-                            MeetingSetupView()
-                        } label: {
-                            Label("Notulen", systemImage: "person.2.wave.2")
-                                .font(ThemeFont.ui(14, weight: .medium))
-                                .foregroundStyle(Theme.accentText)
-                        }
-                    }
                 }
             }
         }
@@ -49,6 +37,7 @@ struct RecordView: View {
             // van meer dan vijf minuten oud hoort dan al gewist te zijn.
             controller.clearResultIfExpired()
             await app.refreshModelStatus()
+            await controller.warmUpEngine()
         }
         // Auto-wis bij elk foreground-moment (app komt terug in beeld). Er loopt
         // geen achtergrond-timer; dit event is het enige check-moment.
@@ -62,24 +51,35 @@ struct RecordView: View {
         if !app.modelStatus.isReady {
             ModelDownloadCard()
         } else {
-            VStack(spacing: 32) {
-                Spacer()
-                statusText
-                HStack(spacing: 28) {
-                    if controller.isRecording {
-                        // Onzichtbare tegenhanger zodat de opnameknop gecentreerd
-                        // blijft terwijl de pauzeknop rechts verschijnt.
-                        PauseToggleButton(isPaused: false, enabled: false) {}
-                            .opacity(0)
-                            .accessibilityHidden(true)
+            GeometryReader { proxy in
+                let buttonY = Self.mainButtonY(in: proxy.size.height)
+                let centerX = proxy.size.width / 2
+
+                ZStack {
+                    // Knop, statusregel en taalkeuze staan onder elkaar in het
+                    // deel bóven de resultaatkaart, zodat de kaart nooit over de
+                    // knop valt (wens Niels, 2026-08-02).
+                    statusText
+                        .frame(width: proxy.size.width - 40)
+                        .frame(minHeight: 44)
+                        .fixedSize(horizontal: false, vertical: true)
+                        .position(x: centerX, y: buttonY - 108)
+
+                    if !controller.isRecording,
+                       !controller.isTranscribing {
+                        TranscriptionLanguageMenu(selection: $app.transcriptionLanguage)
+                            .position(x: centerX, y: buttonY + 120)
                     }
+
                     RecordButton(
                         isRecording: controller.isRecording,
                         isBusy: controller.isTranscribing,
                         level: controller.level
                     ) {
-                        controller.toggle()
+                        controller.toggle(language: app.transcriptionLanguage)
                     }
+                    .position(x: centerX, y: buttonY)
+
                     if controller.isRecording {
                         PauseToggleButton(
                             isPaused: controller.isPaused,
@@ -89,52 +89,102 @@ struct RecordView: View {
                         ) {
                             controller.togglePause()
                         }
+                        .position(x: centerX, y: buttonY + 168)
                     }
-                }
-                if controller.isRecording {
-                    VStack(spacing: 12) {
-                        LevelBars(level: controller.isPaused ? 0 : controller.level)
-                        Text(Self.formatElapsed(controller.elapsed))
-                            .font(ThemeFont.ui(28, weight: .semibold).monospacedDigit())
-                            .foregroundStyle(Theme.text)
-                        if controller.isPaused {
-                            Label(
-                                controller.pausedByInterruption ? "Gepauzeerd (onderbreking)" : "Gepauzeerd",
-                                systemImage: "pause.circle"
-                            )
-                            .font(ThemeFont.ui(13, weight: .medium))
-                            .foregroundStyle(Theme.danger)
+
+                    Text(controller.isRecording ? Self.formatElapsed(controller.elapsed) : "00:00")
+                        .font(ThemeFont.ui(28, weight: .semibold).monospacedDigit())
+                        .foregroundStyle(Theme.text)
+                    .opacity(controller.isRecording ? 1 : 0)
+                    .accessibilityHidden(!controller.isRecording)
+                    .frame(width: proxy.size.width)
+                    .frame(minHeight: 40)
+                    .position(x: centerX, y: buttonY + 240)
+
+                    if let result = controller.lastResult, !controller.isRecording {
+                        VStack {
+                            Spacer()
+                            ResultCard(text: result, maxTextHeight: min(220, proxy.size.height * 0.32)) {
+                                UIPasteboard.general.string = result
+                                controller.markCopied()
+                            } copied: {
+                                controller.didCopy
+                            } needsSaveRetry: {
+                                controller.hasPendingSave
+                            } onSaveRetry: {
+                                _ = controller.retryPendingSave()
+                            } onClear: {
+                                controller.clearResult()
+                            }
+                            .frame(maxHeight: proxy.size.height * Self.resultAreaFraction)
+                            .padding(.bottom, 12)
                         }
+                        .padding(.horizontal, 20)
                     }
                 }
-                Spacer()
-                if let result = controller.lastResult, !controller.isRecording {
-                    ResultCard(text: result) {
-                        UIPasteboard.general.string = result
-                        controller.markCopied()
-                    } copied: {
-                        controller.didCopy
-                    } onClear: {
-                        controller.clearResult()
-                    }
-                }
-                Spacer(minLength: 12)
+                .frame(width: proxy.size.width, height: proxy.size.height)
             }
-            .padding(.horizontal, 20)
             .animation(.easeInOut(duration: 0.2), value: controller.isRecording)
         }
     }
 
     private var statusText: some View {
-        Text(controller.statusLine)
+        Text(!app.showHelpTips && controller.isIdle ? "" : controller.statusLine)
             .font(ThemeFont.ui(15))
-            .foregroundStyle(Theme.textSecondary)
+            .foregroundStyle(controller.isPaused ? Theme.danger : Theme.textSecondary)
             .multilineTextAlignment(.center)
     }
 
     private static func formatElapsed(_ seconds: Double) -> String {
         let total = Int(seconds)
         return String(format: "%02d:%02d", total / 60, total % 60)
+    }
+
+    /// Het onderste deel van het scherm is voor de resultaatkaart. De statusregel
+    /// staat bóven de knop, tussen woordmerk en knop; de taalkeuze eronder
+    /// (wens Niels, 2026-08-02). Alles schuift daardoor omhoog en de kaart kan
+    /// een paar regels meer tonen.
+    static let resultAreaFraction: CGFloat = 0.40
+
+    private static func mainButtonY(in height: CGFloat) -> CGFloat {
+        max(height * (1 - resultAreaFraction) / 2 - 10, 190)
+    }
+}
+
+/// Compacte snelle keuze die vóór gewone en Notulist-opnames wordt hergebruikt.
+struct TranscriptionLanguageMenu: View {
+    @EnvironmentObject private var app: AppModel
+    @Binding var selection: TranscriptionLanguage
+
+    var body: some View {
+        Menu {
+            Picker("Transcriptietaal", selection: $selection) {
+                ForEach(TranscriptionLanguage.allCases) { language in
+                    Text(language.whisperClipLabel(in: app.interfaceLanguage)).tag(language)
+                }
+            }
+        } label: {
+            Label(selection.whisperClipLabel(in: app.interfaceLanguage), systemImage: "waveform.badge.globe")
+                .font(ThemeFont.ui(14, weight: .semibold))
+                .foregroundStyle(Theme.accentText)
+                .frame(minHeight: 44)
+                .padding(.horizontal, 12)
+                .background(Theme.surface, in: Capsule())
+                .overlay { Capsule().strokeBorder(Theme.border, lineWidth: 1) }
+        }
+        .accessibilityLabel("Transcriptietaal")
+        .accessibilityValue(selection.whisperClipLabel(in: app.interfaceLanguage))
+    }
+}
+
+extension TranscriptionLanguage {
+    func whisperClipLabel(in language: AppLanguage) -> String {
+        switch self {
+        case .automatic: L10n.string( "Automatisch", locale: language.locale)
+        case .dutch: L10n.string( "Nederlands", locale: language.locale)
+        case .english: "English"
+        case .german: "Deutsch"
+        }
     }
 }
 
@@ -173,6 +223,7 @@ private struct LevelBars: View {
 /// The record button: a yellow ring with a rounded-square core (matching the app
 /// icon motif). Square shrinks into a smaller "stop" square while recording.
 private struct RecordButton: View {
+    @Environment(\.locale) private var locale
     let isRecording: Bool
     let isBusy: Bool
     let level: Double
@@ -182,8 +233,8 @@ private struct RecordButton: View {
         Button(action: action) {
             ZStack {
                 Circle()
-                    .strokeBorder(isRecording ? Theme.danger : Theme.accent, lineWidth: 6)
-                    .frame(width: 132, height: 132)
+                    .strokeBorder(isRecording ? Theme.danger : Theme.accent, lineWidth: 7)
+                    .frame(width: 148, height: 148)
                     // Live level ripple while recording.
                     .scaleEffect(isRecording ? 1 + CGFloat(level) * 0.08 : 1)
 
@@ -193,8 +244,8 @@ private struct RecordButton: View {
                 RoundedRectangle(cornerRadius: isRecording ? 8 : 14, style: .continuous)
                     .fill(isRecording ? Theme.danger : Theme.accent)
                     .frame(
-                        width: isRecording ? 46 : 56,
-                        height: isRecording ? 46 : 56
+                        width: isRecording ? 52 : 62,
+                        height: isRecording ? 52 : 62
                     )
 
                 if isBusy {
@@ -206,16 +257,30 @@ private struct RecordButton: View {
         }
         .buttonStyle(.plain)
         .disabled(isBusy)
+        .accessibilityLabel(accessibilityLabel)
         .animation(.spring(response: 0.3, dampingFraction: 0.7), value: isRecording)
+    }
+
+    private var accessibilityLabel: String {
+        if isBusy {
+            return L10n.string("Bezig met transcriberen…", locale: locale)
+        }
+        return isRecording
+            ? L10n.string("Stop en transcribeer", locale: locale)
+            : L10n.string("Tik om op te nemen", locale: locale)
     }
 }
 
 // MARK: - Result card
 
 private struct ResultCard: View {
+    @Environment(\.locale) private var locale
     let text: String
+    var maxTextHeight: CGFloat = 180
     let onCopy: () -> Void
     let copied: () -> Bool
+    let needsSaveRetry: () -> Bool
+    let onSaveRetry: () -> Void
     let onClear: () -> Void
 
     var body: some View {
@@ -228,7 +293,7 @@ private struct ResultCard: View {
                     Image(systemName: "xmark")
                         .font(.system(size: 13, weight: .semibold))
                         .foregroundStyle(Theme.textSecondary)
-                        .padding(6)
+                        .frame(width: 44, height: 44)
                 }
                 .buttonStyle(.plain)
                 .accessibilityLabel("Wis resultaat")
@@ -241,10 +306,31 @@ private struct ResultCard: View {
                     .frame(maxWidth: .infinity, alignment: .leading)
                     .textSelection(.enabled)
             }
-            .frame(maxHeight: 180)
+            .frame(maxHeight: maxTextHeight)
+
+            if needsSaveRetry() {
+                Button(action: onSaveRetry) {
+                    Label(
+                        L10n.string("Bewaren opnieuw proberen", locale: locale),
+                        systemImage: "arrow.clockwise"
+                    )
+                        .font(ThemeFont.ui(16, weight: .semibold))
+                        .foregroundStyle(Theme.onAccent)
+                        .frame(maxWidth: .infinity)
+                        .padding(.vertical, 12)
+                        .background(Theme.accent)
+                        .clipShape(RoundedRectangle(cornerRadius: Theme.Metrics.radius, style: .continuous))
+                }
+                .buttonStyle(.plain)
+            }
 
             Button(action: onCopy) {
-                Label(copied() ? "Gekopieerd" : "Kopieer", systemImage: copied() ? "checkmark" : "doc.on.doc")
+                Label(
+                    copied()
+                        ? L10n.string( "Gekopieerd", locale: locale)
+                        : L10n.string( "Kopieer", locale: locale),
+                    systemImage: copied() ? "checkmark" : "doc.on.doc"
+                )
                     .font(ThemeFont.ui(16, weight: .semibold))
                     .foregroundStyle(Theme.onAccent)
                     .frame(maxWidth: .infinity)

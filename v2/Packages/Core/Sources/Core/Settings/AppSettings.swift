@@ -131,7 +131,7 @@ public struct AppSettings: Codable, Equatable, Sendable {
         watchedFolders: [String] = [],
         plaudSyncEnabled: Bool = false,
         plaudSyncIntervalMinutes: Int = 15,
-        plaudSyncWindowDays: Int = 30,
+        plaudSyncWindowDays: Int = 2,
         plaudEmail: String = "",
         icloudSyncEnabled: Bool = true
     ) {

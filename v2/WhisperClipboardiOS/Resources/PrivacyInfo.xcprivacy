@@ -2,9 +2,12 @@
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
 <plist version="1.0">
 <dict>
-	<!-- Whisper Clipboard doet geen tracking en verzamelt/verstuurt geen data:
-	     transcriptie draait volledig op het toestel; de enige netwerkoproepen zijn
-	     door de gebruiker gestarte Claude-API-verzoeken met diens eigen sleutel. -->
+	<!-- WhisperClip doet geen tracking en de maker verzamelt geen gegevens.
+	     Transcriptie draait lokaal. Netwerkverkeer is beperkt tot expliciet door
+	     de gebruiker gestarte modeldownloads, directe BYOK-AI-verwerking, vrijwillige
+	     iCloud-sync en, uitsluitend in Personal, PLAUD-sync. De volledige stromen en
+	     eventuele verwerking door die externe diensten staan in PRIVACY.md en worden
+	     vóór distributie opnieuw naast de uiteindelijke Public-binary gelegd. -->
 	<key>NSPrivacyTracking</key>
 	<false/>
 	<key>NSPrivacyTrackingDomains</key>
@@ -34,6 +37,14 @@
 			<key>NSPrivacyAccessedAPITypeReasons</key>
 			<array>
 				<string>35F9.1</string>
+			</array>
+		</dict>
+		<dict>
+			<key>NSPrivacyAccessedAPIType</key>
+			<string>NSPrivacyAccessedAPICategoryFileTimestamp</string>
+			<key>NSPrivacyAccessedAPITypeReasons</key>
+			<array>
+				<string>C617.1</string>
 			</array>
 		</dict>
 	</array>

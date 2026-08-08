@@ -24,9 +24,13 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private var openWindowCount = 0
     private var cancellables = Set<AnyCancellable>()
 
-    /// Whether a real Sparkle update feed is configured. `SUFeedURL` ships with
-    /// a placeholder until a public release location (e.g. GitHub Releases)
-    /// exists; until then the updater stays dormant and the menu item is hidden.
+    /// Whether a real Sparkle update feed is configured. `SUFeedURL` is nu leeg
+    /// en automatische controles staan uit: er stond een placeholder-URL in de
+    /// niet-geclaimde naamruimte `github.com/USER/`, en wie die claimt bepaalt de
+    /// updatefeed van een app zonder sandbox (bevinding 2026-08-03). Zolang de
+    /// feed leeg is blijft de updater slapen en blijft het menu-item verborgen.
+    /// De `github.com/USER/`-controle blijft staan als vangnet voor een oudere
+    /// `Info.plist` die nog wél die waarde bevat.
     static var updateFeedConfigured: Bool {
         guard let feed = Bundle.main.object(forInfoDictionaryKey: "SUFeedURL") as? String else {
             return false
@@ -220,6 +224,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             : "Live ondertitels starten"
 
         switch environment.dictation.phase {
+        case .preparing:
+            recordMenuItem?.title = "Even klaarzetten…"
+            recordMenuItem?.isEnabled = false
         case .recording:
             recordMenuItem?.title = "Stop opname"
             recordMenuItem?.isEnabled = true

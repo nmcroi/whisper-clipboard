@@ -196,7 +196,7 @@ final class AudioDecoderTests: XCTestCase {
     }
 }
 
-extension FileImportError: Equatable {
+extension FileImportError: @retroactive Equatable {
     public static func == (lhs: FileImportError, rhs: FileImportError) -> Bool {
         lhs.errorDescription == rhs.errorDescription
     }

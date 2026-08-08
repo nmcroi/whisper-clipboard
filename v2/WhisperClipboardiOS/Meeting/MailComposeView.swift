@@ -30,20 +30,22 @@ struct MailComposeView: UIViewControllerRepresentable {
         Coordinator(onFinished: onFinished)
     }
 
-    final class Coordinator: NSObject, MFMailComposeViewControllerDelegate {
+    @MainActor final class Coordinator: NSObject, MFMailComposeViewControllerDelegate {
         let onFinished: (MFMailComposeResult) -> Void
 
         init(onFinished: @escaping (MFMailComposeResult) -> Void) {
             self.onFinished = onFinished
         }
 
-        func mailComposeController(
+        nonisolated func mailComposeController(
             _ controller: MFMailComposeViewController,
             didFinishWith result: MFMailComposeResult,
             error: Error?
         ) {
-            controller.dismiss(animated: true)
-            onFinished(result)
+            MainActor.assumeIsolated {
+                controller.dismiss(animated: true)
+                onFinished(result)
+            }
         }
     }
 }

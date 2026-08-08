@@ -312,18 +312,9 @@ final class InsertionClipboardRestoreTests: XCTestCase {
         func sendPaste() -> Bool { sentPaste = true; return true }
     }
 
-    private var pasteboard: NSPasteboard!
-
-    override func setUp() {
-        super.setUp()
+    private func makePasteboard() -> NSPasteboard {
         // Uniek benoemd klembord per test — isoleert van het systeemklembord.
-        pasteboard = NSPasteboard(name: .init(rawValue: "WhisperClipboardTest.\(UUID().uuidString)"))
-    }
-
-    override func tearDown() {
-        pasteboard.releaseGlobally()
-        pasteboard = nil
-        super.tearDown()
+        NSPasteboard(name: .init(rawValue: "WhisperClipboardTest.\(UUID().uuidString)"))
     }
 
     private func settings(directInsertion: Bool) -> AppSettings {
@@ -342,6 +333,8 @@ final class InsertionClipboardRestoreTests: XCTestCase {
     /// headless/CI niet heeft — zie `testRestorePutsBackOriginalString` voor de
     /// restore-logica die we wél zonder AX kunnen bewijzen.
     func testSnapshotCapturesUserClipboardNotTranscript() {
+        let pasteboard = makePasteboard()
+        defer { pasteboard.releaseGlobally() }
         let userClipboard = "belangrijke tekst van de gebruiker"
         pasteboard.clearContents()
         pasteboard.setString(userClipboard, forType: .string)
@@ -369,6 +362,8 @@ final class InsertionClipboardRestoreTests: XCTestCase {
     /// echte klembord van de gebruiker terugkomt na het overschrijven met de
     /// transcriptie.
     func testRestorePutsBackOriginalString() {
+        let pasteboard = makePasteboard()
+        defer { pasteboard.releaseGlobally() }
         let userClipboard = "origineel van de gebruiker"
         pasteboard.clearContents()
         pasteboard.setString(userClipboard, forType: .string)
@@ -398,6 +393,8 @@ final class InsertionClipboardRestoreTests: XCTestCase {
     /// Regressie-vangnet: als de snapshot ná het schrijven van de transcriptie was
     /// gemaakt (de oude, buggy volgorde), zou hij de transcriptie bevatten.
     func testSnapshotAfterTranscriptWouldCaptureTranscript_documentsTheBug() {
+        let pasteboard = makePasteboard()
+        defer { pasteboard.releaseGlobally() }
         let userClipboard = "origineel"
         pasteboard.clearContents()
         pasteboard.setString(userClipboard, forType: .string)
@@ -422,6 +419,8 @@ final class InsertionClipboardRestoreTests: XCTestCase {
     /// Bevestigt dat een verhuld/geheim item als concealed wordt herkend in de
     /// snapshot, zodat de restore het niet als platte string terugzet.
     func testConcealedClipboardIsFlaggedInSnapshot() {
+        let pasteboard = makePasteboard()
+        defer { pasteboard.releaseGlobally() }
         let concealed = NSPasteboard.PasteboardType("org.nspasteboard.ConcealedType")
         pasteboard.clearContents()
         pasteboard.setString("s3cret", forType: .string)

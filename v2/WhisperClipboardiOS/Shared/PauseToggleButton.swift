@@ -4,8 +4,12 @@ import SwiftUI
 /// (driehoekje) de lopende opname. Gedeeld door het Opnemen-tabblad en de
 /// notitie-detailweergave.
 struct PauseToggleButton: View {
+    @Environment(\.locale) private var locale
     let isPaused: Bool
     let enabled: Bool
+    var size: CGFloat = 56
+    var symbolSize: CGFloat = 18
+    var prominent: Bool = false
     let action: () -> Void
 
     var body: some View {
@@ -14,15 +18,20 @@ struct PauseToggleButton: View {
                 Circle()
                     .fill(Theme.surface)
                 Circle()
-                    .strokeBorder(Theme.border, lineWidth: 1.5)
+                    .strokeBorder(prominent ? Theme.accent : Theme.border, lineWidth: prominent ? 6 : 1.5)
                 Image(systemName: isPaused ? "play.fill" : "pause.fill")
-                    .font(.system(size: 18, weight: .semibold))
-                    .foregroundStyle(enabled ? Theme.text : Theme.textTertiary)
+                    .font(.system(size: symbolSize, weight: .semibold))
+                    .foregroundStyle(enabled ? (prominent ? Theme.accent : Theme.text) : Theme.textTertiary)
             }
-            .frame(width: 56, height: 56)
+            .frame(width: size, height: size)
+            .shadow(color: prominent ? Theme.accent.opacity(0.28) : .clear, radius: 18, y: 8)
         }
         .buttonStyle(.plain)
         .disabled(!enabled)
-        .accessibilityLabel(isPaused ? "Hervat opname" : "Pauzeer opname")
+        .accessibilityLabel(
+            isPaused
+                ? L10n.string( "Hervat opname", locale: locale)
+                : L10n.string( "Pauzeer opname", locale: locale)
+        )
     }
 }

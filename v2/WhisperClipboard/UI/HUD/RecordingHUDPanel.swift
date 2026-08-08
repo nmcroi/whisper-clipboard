@@ -16,6 +16,12 @@ final class RecordingHUDController {
     /// recording re-showed the panel never orders the live HUD off screen.
     private var showHideGeneration = 0
 
+    /// Of de uitfade van ``hidePanel()`` nog loopt. Zonder dit vlaggetje ziet een
+    /// nieuwe opname binnen die 0,2 s het paneel als "al zichtbaar", terwijl de
+    /// lopende animatie de alpha alsnog naar 0 trekt — de HUD blijft dan de hele
+    /// sessie onzichtbaar.
+    private var isFadingOut = false
+
     /// Supplies the `NSAppearance` the panel should adopt so its dynamic `Theme`
     /// colors resolve to the user-chosen palette (`nil` → follow the system).
     /// Set by `AppEnvironment` from `settings.appearance`.
@@ -32,6 +38,19 @@ final class RecordingHUDController {
         panel?.appearance = appearanceProvider()
     }
 
+    /// Bouwt de SwiftUI/AppKit-HUD één keer onzichtbaar op tijdens het starten
+    /// van de app. Daardoor hoeft de eerste sneltoetsdruk niet te wachten op een
+    /// NSHostingController, layout en panelconstructie.
+    func prepare() {
+        guard panel == nil else { return }
+        let prepared = makePanel()
+        prepared.appearance = appearanceProvider()
+        prepared.layoutIfNeeded()
+        prepared.alphaValue = 0
+        prepared.orderOut(nil)
+        panel = prepared
+    }
+
     private func observePhase() {
         controller.$phase
             .removeDuplicates()
@@ -43,7 +62,7 @@ final class RecordingHUDController {
 
     private func handle(phase: DictationController.Phase) {
         switch phase {
-        case .recording, .paused, .transcribing, .finished:
+        case .preparing, .recording, .paused, .transcribing, .finished:
             showPanel()
         case .idle:
             hidePanel()
@@ -61,36 +80,53 @@ final class RecordingHUDController {
         // Invalidate any in-flight hide-fade completion so it can't order this
         // (re-shown) panel off screen after we bring it forward.
         showHideGeneration += 1
-        let isFreshShow = panel == nil
+        // Een nog lopende uitfade telt als "dicht": we openen dan opnieuw vanaf
+        // de bewaarde plek, in plaats van te vertrouwen op een alpha die op dat
+        // moment nog naar 0 onderweg is.
+        let isOpening = panel?.isVisible != true || isFadingOut
+        isFadingOut = false
         if panel == nil {
             panel = makePanel()
         }
         guard let panel else { return }
         // Adopt the chosen palette every show (the theme may have changed since
-        // the panel was created).
-        panel.appearance = appearanceProvider()
+        // the panel was created), maar alleen bij een echte wijziging: het zetten
+        // van `NSWindow.appearance` stuurt een volledige appearance-cascade door
+        // de SwiftUI-boom, en showPanel() draait bij élke faseovergang.
+        let appearance = appearanceProvider()
+        if panel.appearance?.name != appearance?.name {
+            panel.appearance = appearance
+        }
 
-        panel.layoutIfNeeded()
+        // Een draaiende alpha-animatie (van de uitfade) overschrijven. Een kale
+        // toewijzing verliest het van de lopende animatie; een animatiegroep met
+        // duur 0 vervangt hem wel.
+        NSAnimationContext.runAnimationGroup { context in
+            context.duration = 0
+            panel.animator().alphaValue = 1
+        }
+        panel.alphaValue = 1
 
-        if isFreshShow {
-            // Open at the remembered (or default bottom-center) position, arriving
-            // with a subtle upward drift + fade.
+        if isOpening {
+            panel.layoutIfNeeded()
+            // Open at the remembered (or default bottom-center) position. Het
+            // paneel komt meteen op volle sterkte in beeld en legt alleen het
+            // laatste stukje omhoog nog af: een fade van 0 → 1 duurde ~0,2 s
+            // voordat de HUD te lezen was, en dat las als traagheid.
             let restingOrigin = restingOrigin(for: panel)
             panel.setFrameOrigin(NSPoint(x: restingOrigin.x, y: restingOrigin.y - Self.entranceDrift))
-            panel.alphaValue = 0
             panel.orderFrontRegardless()
 
             NSAnimationContext.runAnimationGroup { context in
-                context.duration = 0.2
+                context.duration = 0.14
                 context.timingFunction = CAMediaTimingFunction(name: .easeOut)
-                panel.animator().alphaValue = 1
                 panel.animator().setFrameOrigin(restingOrigin)
             }
         } else {
             // Already visible (recording → transcribing → finished): leave it
             // exactly where it is — including wherever the user just dragged it —
-            // and only ensure it's fully opaque and frontmost.
-            panel.alphaValue = 1
+            // and only ensure it's frontmost. Geen layout forceren: dat is per
+            // faseovergang een synchrone SwiftUI-layoutronde voor niets.
             panel.orderFrontRegardless()
         }
     }
@@ -103,6 +139,7 @@ final class RecordingHUDController {
         showHideGeneration += 1
         let myGeneration = showHideGeneration
         let restingOrigin = panel.frame.origin
+        isFadingOut = true
         NSAnimationContext.runAnimationGroup { context in
             context.duration = 0.2
             context.timingFunction = CAMediaTimingFunction(name: .easeOut)
@@ -112,6 +149,7 @@ final class RecordingHUDController {
             // Skip the orderOut if a newer show/hide happened while we faded — the
             // panel may have been re-shown for a fresh recording.
             guard let self, self.showHideGeneration == myGeneration else { return }
+            self.isFadingOut = false
             self.panel?.orderOut(nil)
         }
     }

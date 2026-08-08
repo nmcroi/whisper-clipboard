@@ -31,8 +31,9 @@ public struct TranscriptRecord: Codable, FetchableRecord, PersistableRecord {
     /// Notitie-koppeling (iPhone i2). `nil` = een losse Geschiedenis-entry
     /// (ongewijzigd gedrag). Niet-`nil` = deze opname hoort bij die notitie en
     /// wordt daar samengevoegd i.p.v. los in de Geschiedenis te verschijnen.
-    /// Sync-metadata alleen op deze laag: geen onderdeel van `Core.TranscriptEntry`
-    /// en (nog) niet meegestuurd naar CloudKit (bewust uitgesteld).
+    /// Sync-metadata alleen op deze laag: geen onderdeel van `Core.TranscriptEntry`.
+    /// CloudKit draagt deze koppeling versieerbaar mee, zodat oude records zonder
+    /// dit veld een bestaande lokale koppeling niet per ongeluk wissen.
     public var noteId: String?
 
     enum CodingKeys: String, CodingKey {

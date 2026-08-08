@@ -40,16 +40,20 @@ final class ModesServiceTests: XCTestCase {
     func testBuiltinsPresent() throws {
         let service = makeService(history: try makeHistory(), modesURL: tempModesURL())
         // The library expanded from the original 4 to a richer Dutch set.
-        XCTAssertEqual(AIMode.builtins.count, 10)
+        XCTAssertEqual(AIMode.builtins.count, 16)
         XCTAssertEqual(service.allModes.count, AIMode.builtins.count)
         XCTAssertTrue(service.allModes.allSatisfy(\.isBuiltin))
-        // The original four must still be present (stable ids/names).
+        // Core everyday modes remain present; e-mail is now an export route.
         let names = Set(service.allModes.map(\.name))
-        XCTAssertTrue(names.isSuperset(of: ["Samenvatting", "Actiepunten", "E-mail", "LinkedIn-post"]))
-        // A few of the new additions.
+        XCTAssertTrue(names.isSuperset(of: ["Slimme samenvatting", "Actiepunten", "LinkedIn-post"]))
+        XCTAssertFalse(names.contains("E-mail"))
+        // Specialized, context-aware additions.
         XCTAssertTrue(names.isSuperset(of: [
             "Korte samenvatting", "Uitgebreide samenvatting", "Notulen",
             "Doktersafspraak", "Belangrijkste punten", "Verbeterde transcriptie",
+            "Vraag en antwoord", "Lezing of workshop", "Interviewverslag",
+            "Brainstorm", "Klant- of adviesgesprek", "Redeneringsoverzicht",
+            "Volledig transcript",
         ]))
     }
 
@@ -61,7 +65,8 @@ final class ModesServiceTests: XCTestCase {
         // The original four ids are preserved.
         XCTAssertTrue(ids.contains("builtin.samenvatting"))
         XCTAssertTrue(ids.contains("builtin.actiepunten"))
-        XCTAssertTrue(ids.contains("builtin.email"))
+        XCTAssertTrue(ids.contains("builtin.lezing_workshop"))
+        XCTAssertTrue(ids.contains("builtin.klant_adviesgesprek"))
         XCTAssertTrue(ids.contains("builtin.linkedin"))
     }
 
@@ -326,6 +331,38 @@ final class ModesServiceTests: XCTestCase {
         XCTAssertTrue(service.results(for: "t1").isEmpty)
     }
 
+    func testStreamingRunRetriesTransientFailureBeforeFirstText() async throws {
+        let attempts = AIClientAttemptCounter()
+        let client = RetryOnceAITextClient(attempts: attempts)
+        let history = try makeHistory()
+        let service = ModesService(
+            history: history,
+            modesURL: tempModesURL(),
+            providerProvider: { .openAI },
+            modelProvider: { _ in "gpt-test" },
+            apiKeyProvider: { _ in "test-only" },
+            clientFactory: { _, _ in client }
+        )
+        let entry = TranscriptEntry(
+            id: "retry-stream", text: "Hallo", createdAt: "2026-08-01T10:00:00+02:00",
+            name: "", pinned: false, language: "nl", model: "m", source: "mic",
+            duration: 0, segments: []
+        )
+        try history.add(entry)
+
+        let run = service.run(mode: AIMode.builtins[0], on: entry)
+        for _ in 0..<400 where run.isRunning {
+            try await Task.sleep(for: .milliseconds(10))
+        }
+
+        XCTAssertFalse(run.isRunning)
+        XCTAssertNil(run.errorMessage)
+        XCTAssertEqual(run.output, "Hersteld zonder dubbele tekst.")
+        let attemptCount = await attempts.value()
+        XCTAssertEqual(attemptCount, 2)
+        XCTAssertEqual(service.results(for: entry.id).map(\.output), ["Hersteld zonder dubbele tekst."])
+    }
+
     // MARK: - SSE stub helpers
 
     /// Builds a minimal canned SSE stream that yields `text` in one delta then stops.
@@ -344,6 +381,44 @@ final class ModesServiceTests: XCTestCase {
         ]
         return Data(lines.joined(separator: "\n").utf8)
     }
+}
+
+private actor AIClientAttemptCounter {
+    private(set) var count = 0
+
+    func next() -> Int {
+        count += 1
+        return count
+    }
+
+    func value() -> Int { count }
+}
+
+private struct RetryOnceAITextClient: AITextClient {
+    let provider = AIProvider.openAI
+    let attempts: AIClientAttemptCounter
+
+    func complete(
+        system: String,
+        user: String,
+        model: String,
+        onUsage: @escaping @Sendable (AIUsage) -> Void
+    ) -> AsyncThrowingStream<String, Error> {
+        AsyncThrowingStream { continuation in
+            let task = Task {
+                if await attempts.next() == 1 {
+                    continuation.finish(throwing: AIServiceError.network(.openAI))
+                } else {
+                    continuation.yield("Hersteld zonder dubbele tekst.")
+                    onUsage(AIUsage(inputTokens: 1, outputTokens: 5))
+                    continuation.finish()
+                }
+            }
+            continuation.onTermination = { _ in task.cancel() }
+        }
+    }
+
+    func listModels() async throws -> [String] { [] }
 }
 
 /// A `URLProtocol` that returns a canned 200 SSE response and captures the request

@@ -38,8 +38,14 @@ final class AppModel: ObservableObject {
     /// te bewaren). Leest de API-key uit de Keychain van dit toestel.
     let modes: ModesService?
 
+    #if WHISPERCLIP_PERSONAL || !WHISPERCLIP_PUBLIC
+    /// PLAUD-cloudsync bestaat uitsluitend in de Personal-compilatie.
+    lazy var plaudSync = PlaudSynciOSService(app: self)
+    #endif
+
     /// Whether iCloud sync is enabled. Persisted in `UserDefaults` under
-    /// `ios.icloudSyncEnabled`; defaults to on (matches the Mac default).
+    /// `ios.icloudSyncEnabled`; available in Debug for Development-schema tests
+    /// and forced off in Release while the Production schema is not live.
     @Published var icloudSyncEnabled: Bool {
         didSet {
             guard icloudSyncEnabled != oldValue else { return }
@@ -51,6 +57,51 @@ final class AppModel: ObservableObject {
     /// Chosen appearance. Persisted in `UserDefaults` under `ios.appearance`.
     @Published var appearance: AppSettings.AppearanceMode {
         didSet { Self.persistAppearance(appearance) }
+    }
+
+    /// Interface language. System follows the current supported system locale;
+    /// the explicit alternatives override it app-wide without changing iOS.
+    @Published var interfaceLanguage: AppLanguage {
+        didSet { UserDefaults.standard.set(interfaceLanguage.rawValue, forKey: Self.interfaceLanguageKey) }
+    }
+
+    /// Toont korte, niet-essentiële aanwijzingen in de hoofdschermen, zoals
+    /// “Tik om op te nemen”. Statussen, voortgang en fouten blijven altijd staan.
+    @Published var showHelpTips: Bool {
+        didSet { UserDefaults.standard.set(showHelpTips, forKey: Self.showHelpTipsKey) }
+    }
+
+    /// Algemene hoofdschakelaar voor externe AI in de Notulist. Standaard uit;
+    /// per vergadering is daarna nog een tweede expliciete keuze vereist.
+    @Published var allowMeetingAI: Bool {
+        didSet { UserDefaults.standard.set(allowMeetingAI, forKey: Self.allowMeetingAIKey) }
+    }
+
+    /// Laatst gekozen taal is de standaard voor de volgende opname. De keuze
+    /// wordt ook afzonderlijk in ieder transcript opgeslagen.
+    @Published var transcriptionLanguage: TranscriptionLanguage {
+        didSet {
+            UserDefaults.standard.set(transcriptionLanguage.rawValue, forKey: Self.transcriptionLanguageKey)
+        }
+    }
+
+    /// Globale standaard-AI-aanbieder. Modellen blijven per aanbieder onthouden.
+    @Published var aiProvider: AIProvider {
+        didSet {
+            UserDefaults.standard.set(aiProvider.rawValue, forKey: Self.aiProviderKey)
+            // Notulist-AI heeft twee toestemmingen nodig. Een overstap naar een
+            // aanbieder zonder sleutel trekt de algemene toestemming daarom in.
+            if !hasAPIKey(for: aiProvider) { allowMeetingAI = false }
+        }
+    }
+
+    @Published var aiModels: [AIProvider: String] {
+        didSet {
+            for provider in AIProvider.allCases {
+                let model = aiModels[provider] ?? provider.defaultModel
+                UserDefaults.standard.set(model, forKey: Self.aiModelKey(provider))
+            }
+        }
     }
 
     /// De woordenlijst (find → replace-regels), toegepast op elke transcriptie —
@@ -69,12 +120,25 @@ final class AppModel: ObservableObject {
         }
     }
 
+    /// Herbruikbare deelnemers voor Notulen, lokaal bewaard en via iCloud met
+    /// de Mac gedeeld. Maximaal één contact is gemarkeerd als 'ik'.
+    @Published var meetingContacts: [SavedMeetingContact] {
+        didSet {
+            guard meetingContacts != oldValue else { return }
+            Self.persistMeetingContacts(meetingContacts)
+            guard !applyingRemoteMeetingContacts else { return }
+            meetingContactsSync.publish(meetingContacts)
+        }
+    }
+
     /// iCloud KV-sync voor de woordenlijst. Los van `historySync` (CKSyncEngine):
     /// werkt ook nu die nog uit staat, en degradeert stil zonder entitlement.
     private let replacementsSync = ReplacementsCloudSync(updatedAtKey: "ios.replacementsUpdatedAt")
     /// Vlag rond het toepassen van een remote lijst, zodat de didSet hierboven
     /// niet opnieuw publiceert (sync-lus-preventie, laag 2).
     private var applyingRemoteReplacements = false
+    private let meetingContactsSync = MeetingContactsCloudSync(updatedAtKey: "ios.meetingContactsUpdatedAt")
+    private var applyingRemoteMeetingContacts = false
 
     /// Current model-download / readiness state, driving the onboarding card.
     @Published var modelStatus: ModelAssetStatus = .unknown
@@ -86,27 +150,59 @@ final class AppModel: ObservableObject {
 
     /// The last user-facing error message (nil = none).
     @Published var errorMessage: String?
+    /// Niet-foutieve, eenmalige melding, bijvoorbeeld na geslaagd crashherstel.
+    @Published var noticeMessage: String?
+
+    private var didAttemptRecordingRecovery = false
 
     private static let appearanceKey = "ios.appearance"
+    private static let interfaceLanguageKey = "ios.interfaceLanguage"
+    private static let showHelpTipsKey = "ios.showHelpTips"
+    private static let allowMeetingAIKey = "ios.allowMeetingAI"
     private static let icloudSyncKey = "ios.icloudSyncEnabled"
     private static let replacementsKey = "ios.replacements"
+    private static let meetingContactsKey = "ios.meetingContacts"
+    private static let transcriptionLanguageKey = "ios.transcriptionLanguage"
+    private static let aiProviderKey = "ai.defaultProvider"
 
     init() {
         self.appearance = Self.loadAppearance()
+        self.interfaceLanguage = AppLanguage(
+            rawValue: UserDefaults.standard.string(forKey: Self.interfaceLanguageKey) ?? ""
+        ) ?? .system
+        self.showHelpTips = UserDefaults.standard.object(forKey: Self.showHelpTipsKey) as? Bool ?? true
+        self.allowMeetingAI = UserDefaults.standard.bool(forKey: Self.allowMeetingAIKey)
+        self.transcriptionLanguage = TranscriptionLanguage(
+            rawValue: UserDefaults.standard.string(forKey: Self.transcriptionLanguageKey) ?? ""
+        ) ?? AppFeatureConfiguration.defaultTranscriptionLanguage
+        self.aiProvider = AIProvider(
+            rawValue: UserDefaults.standard.string(forKey: Self.aiProviderKey) ?? ""
+        ) ?? .anthropic
+        self.aiModels = Dictionary(uniqueKeysWithValues: AIProvider.allCases.map { provider in
+            let saved = UserDefaults.standard.string(forKey: Self.aiModelKey(provider))
+            return (provider, saved?.isEmpty == false ? saved! : provider.defaultModel)
+        })
         self.replacements = Self.loadReplacements()
-        // iCloud-sync staat voorlopig UIT: de CloudKit-container bestaat wel, maar
-        // het Production-schema is nog niet uitgerold, en de account-check kan
-        // tegen Production hard traps veroorzaken. Tot dat na de vakantie netjes is
-        // ingericht (schema → Production + een betrouwbare binary-entitlement-check;
-        // `HistorySyncEngine.hasCloudKitEntitlement` leest nu het profiel i.p.v. de
-        // binary en klopt niet als App ID iCloud heeft maar de build zonder iCloud
-        // is gesigneerd) blijft de toggle uit én uitgeschakeld (zie SettingsSheet).
+        self.meetingContacts = Self.loadMeetingContacts()
+        // Debug mag expliciet tegen het Development-schema testen, maar begint
+        // altijd met de eerder gekozen (standaard uitgeschakelde) stand. Release
+        // blijft hard uit totdat het schema bewust naar Production is uitgerold.
+        #if DEBUG
         UserDefaults.standard.register(defaults: [Self.icloudSyncKey: false])
-        let syncEnabled = UserDefaults.standard.bool(forKey: Self.icloudSyncKey)
-        self.icloudSyncEnabled = syncEnabled
+        let initialSyncEnabled = UserDefaults.standard.bool(forKey: Self.icloudSyncKey)
+        #else
+        UserDefaults.standard.set(false, forKey: Self.icloudSyncKey)
+        let initialSyncEnabled = false
+        #endif
+        self.icloudSyncEnabled = initialSyncEnabled
         // Retention is unlimited for now (settings round adds a control). The DB
         // lives in this app's own sandbox, isolated from the Mac's copy.
-        let store = try? HistoryStore(retentionProvider: { nil })
+        let store: HistoryStore?
+        do {
+            store = try HistoryStore(retentionProvider: { nil })
+        } catch {
+            store = nil
+        }
         self.history = store
         self.modes = store.map { ModesService(history: $0) }
         if let store {
@@ -136,6 +232,12 @@ final class AppModel: ObservableObject {
         self.historyObservation = store?.objectWillChange.sink { [weak self] _ in
             self?.objectWillChange.send()
         }
+        if store == nil {
+            self.errorMessage = L10n.string(
+                "De geschiedenis kon niet worden geopend.",
+                locale: interfaceLanguage.locale
+            )
+        }
 
         // Woordenlijst-sync: pas een remote lijst toe onder de vlag (didSet
         // publiceert dan niet terug). De timestamp-administratie doet het
@@ -147,17 +249,30 @@ final class AppModel: ObservableObject {
             self.applyingRemoteReplacements = false
         }
         replacementsSync.start()
+        meetingContactsSync.onRemoteChange = { [weak self] contacts in
+            guard let self, self.meetingContacts != contacts else { return }
+            self.applyingRemoteMeetingContacts = true
+            self.meetingContacts = contacts
+            self.applyingRemoteMeetingContacts = false
+        }
+        meetingContactsSync.start()
     }
 
     // MARK: - Model lifecycle
 
     /// Refreshes `modelStatus` from the engine (called on appear).
     func refreshModelStatus() async {
-        let status = await engine.assetStatus(for: Locale(identifier: "nl_NL"))
+        let status = await engine.assetStatus(for: transcriptionLanguage.locale)
         modelStatus = status
         // If already installed, pre-warm so the first record is instant.
         if status.isReady {
-            try? await engine.prepare()
+            do {
+                try await engine.prepare()
+                await recoverInterruptedRecordingsIfNeeded()
+            } catch {
+                modelStatus = await engine.assetStatus(for: transcriptionLanguage.locale)
+                errorMessage = ErrorLocalization.message(for: error, language: interfaceLanguage)
+            }
         }
     }
 
@@ -176,7 +291,7 @@ final class AppModel: ObservableObject {
         let pollTask = Task { [weak self] in
             while !Task.isCancelled {
                 guard let self else { return }
-                let status = await self.engine.assetStatus(for: Locale(identifier: "nl_NL"))
+                let status = await self.engine.assetStatus(for: self.transcriptionLanguage.locale)
                 let bytes = await self.engine.downloadByteProgress()
                 await MainActor.run {
                     if case .downloading = status { self.modelStatus = status }
@@ -186,15 +301,90 @@ final class AppModel: ObservableObject {
             }
         }
         do {
-            try await engine.downloadAssets(for: Locale(identifier: "nl_NL"))
+            try await engine.downloadAssets(for: transcriptionLanguage.locale)
             pollTask.cancel()
             downloadBytes = nil
             modelStatus = .installed
+            await recoverInterruptedRecordingsIfNeeded()
         } catch {
             pollTask.cancel()
             downloadBytes = nil
             modelStatus = .needsDownload(progress: 0)
-            errorMessage = error.localizedDescription
+            errorMessage = ErrorLocalization.message(for: error, language: interfaceLanguage)
+        }
+    }
+
+    /// Zet na een crash of geforceerd afsluiten achtergebleven tijdelijke audio
+    /// alsnog om in gewone geschiedenis-items. Het audiobestand wordt pas gewist
+    /// nadat de database-write is geslaagd.
+    private func recoverInterruptedRecordingsIfNeeded() async {
+        guard !didAttemptRecordingRecovery, let history else { return }
+        didAttemptRecordingRecovery = true
+
+        do {
+            let batch = try await engine.recoverOrphanedRecordings(
+                defaultLocale: transcriptionLanguage.locale
+            )
+            var savedCount = 0
+            var failedCount = batch.failedCount
+            for recovered in batch.recordings {
+                let processed = TextProcessor.process(
+                    recovered.result.text,
+                    replacements: replacements,
+                    clean: true,
+                    language: recovered.language == .automatic ? "" : recovered.language.rawValue
+                )
+                guard !processed.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
+                    await engine.discardRecoveredRecording(id: recovered.recoveryID)
+                    continue
+                }
+                let entry = TranscriptEntry(
+                    id: UUID().uuidString,
+                    text: processed,
+                    createdAt: ISO8601DateFormatter().string(from: recovered.createdAt),
+                    name: "",
+                    pinned: false,
+                    language: recovered.language.rawValue,
+                    model: "parakeet-tdt-0.6b-v3",
+                    source: "mic.ios",
+                    duration: recovered.duration,
+                    segments: recovered.result.segments
+                )
+                do {
+                    try history.add(entry)
+                    await engine.discardRecoveredRecording(id: recovered.recoveryID)
+                    savedCount += 1
+                } catch {
+                    failedCount += 1
+                }
+            }
+
+            if failedCount > 0 {
+                // RootView toont fout- en succesmeldingen met twee aparte alerts.
+                // Bied bij een gemengd resultaat alleen de fout aan, zodat twee
+                // gelijktijdige modal alerts elkaar niet kunnen verdringen.
+                noticeMessage = nil
+                errorMessage = L10n.string(
+                    "Een onderbroken opname kon niet automatisch worden hersteld. De tijdelijke audio blijft bewaard voor een volgende poging.",
+                    locale: interfaceLanguage.locale
+                )
+            } else if savedCount == 1 {
+                noticeMessage = L10n.string(
+                    "Een onderbroken opname is hersteld en in Geschiedenis bewaard.",
+                    locale: interfaceLanguage.locale
+                )
+            } else if savedCount > 1 {
+                noticeMessage = String(
+                    format: L10n.string(
+                        "%lld onderbroken opnamen zijn hersteld en in Geschiedenis bewaard.",
+                        locale: interfaceLanguage.locale
+                    ),
+                    locale: interfaceLanguage.locale,
+                    savedCount
+                )
+            }
+        } catch {
+            errorMessage = ErrorLocalization.message(for: error, language: interfaceLanguage)
         }
     }
 
@@ -209,6 +399,17 @@ final class AppModel: ObservableObject {
         UserDefaults.standard.set(mode.rawValue, forKey: appearanceKey)
     }
 
+    func presentDataChangeError(_ error: Error) {
+        errorMessage = String(
+            format: L10n.string(
+                "De wijziging kon niet worden opgeslagen: %@",
+                locale: interfaceLanguage.locale
+            ),
+            locale: interfaceLanguage.locale,
+            error.localizedDescription
+        )
+    }
+
     // MARK: - Woordenlijst-persistentie
 
     private static func loadReplacements() -> [Replacement] {
@@ -219,5 +420,43 @@ final class AppModel: ObservableObject {
     private static func persistReplacements(_ replacements: [Replacement]) {
         guard let data = try? JSONEncoder().encode(replacements) else { return }
         UserDefaults.standard.set(data, forKey: replacementsKey)
+    }
+
+    private static func loadMeetingContacts() -> [SavedMeetingContact] {
+        guard let data = UserDefaults.standard.data(forKey: meetingContactsKey) else { return [] }
+        return (try? JSONDecoder().decode([SavedMeetingContact].self, from: data)) ?? []
+    }
+
+    private static func persistMeetingContacts(_ contacts: [SavedMeetingContact]) {
+        guard let data = try? JSONEncoder().encode(contacts) else { return }
+        UserDefaults.standard.set(data, forKey: meetingContactsKey)
+    }
+
+    // MARK: - AI-providerinstellingen
+
+    func selectedModel(for provider: AIProvider) -> String {
+        aiModels[provider] ?? provider.defaultModel
+    }
+
+    func setSelectedModel(_ model: String, for provider: AIProvider) {
+        var updated = aiModels
+        updated[provider] = model
+        aiModels = updated
+    }
+
+    func hasAPIKey(for provider: AIProvider) -> Bool {
+        KeychainStore.hasKey(for: provider)
+    }
+
+    func availableModels(for provider: AIProvider) async throws -> [String] {
+        guard let key = try KeychainStore.read(for: provider), !key.isEmpty else {
+            throw AIServiceError.missingKey(provider)
+        }
+        let live = try await AIClientFactory.make(provider: provider, apiKey: key).listModels()
+        return live.isEmpty ? provider.fallbackModels : live
+    }
+
+    private static func aiModelKey(_ provider: AIProvider) -> String {
+        "ai.model.\(provider.rawValue)"
     }
 }

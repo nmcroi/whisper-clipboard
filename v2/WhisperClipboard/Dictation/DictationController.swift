@@ -18,6 +18,11 @@ final class DictationController: ObservableObject {
 
     enum Phase: Equatable {
         case idle
+        /// Model laden en microfoon openen. Er wordt nog niets vastgelegd. Dit
+        /// was eerder meteen `.recording`, waardoor de HUD een rode stip, een
+        /// teller op 0:00 en "Spreek nu…" toonde terwijl er niets binnenkwam —
+        /// op een koude start seconden lang (bevinding 2026-08-03).
+        case preparing
         case recording
         /// Gebruikerspauze: de mic-tap is eraf (er wordt niets vastgelegd), maar
         /// de sessie leeft door — hervatten gaat verder in dezelfde opname.
@@ -87,6 +92,11 @@ final class DictationController: ObservableObject {
         /// diarizer's format (e.g. the Apple Speech engine negotiated a different
         /// rate) — the consumer then simply skips diarization.
         let samples: [Float]?
+        /// Het bewaarde opnamebestand, als de gebruiker audio wil bewaren. De
+        /// ontvanger verplaatst het naar de Recordings-map zodra het transcript
+        /// werkelijk is opgeslagen, en ruimt het anders op — zodat er nooit een
+        /// weesbestand blijft slingeren (bevinding 2026-08-03).
+        let preservedAudioURL: URL?
     }
 
     /// Accumulates the recording's 16 kHz mono Float32 samples during a run, so a
@@ -124,6 +134,38 @@ final class DictationController: ObservableObject {
         self.modelManager = modelManager
         self.settingsProvider = settingsProvider
         self.onStateChange = onStateChange
+
+        // Valt de opname stil — apparaatwissel, slaapstand, of de engine die
+        // zichzelf stopt — dan ronden we af en bewaren we wat er is, in plaats
+        // van een teller te laten doortellen boven een dode microfoon
+        // (bevinding 2026-08-03).
+        self.audioEngine.onInterruption = { [weak self] reason in
+            self?.handleCaptureInterruption(reason)
+        }
+    }
+
+    /// De opname is onderbroken. Alles tot dit moment is al weggeschreven, dus
+    /// stoppen levert een bruikbaar transcript op; doorgaan zou alleen lege tijd
+    /// toevoegen.
+    private func handleCaptureInterruption(_ reason: AudioEngine.InterruptionReason) {
+        guard phase == .recording || phase == .paused else { return }
+
+        let explanation: String
+        switch reason {
+        case .configurationChanged:
+            explanation = "Het geluidsapparaat is gewijzigd."
+        case .systemWillSleep, .systemDidWake:
+            explanation = "De Mac ging in slaapstand."
+        case .engineStopped:
+            explanation = "De opname is door het systeem gestopt."
+        case .noBuffers(let seconds):
+            explanation = "Er kwam \(Int(seconds.rounded())) seconden geen geluid meer binnen."
+        }
+
+        Notifications.postCritical(
+            "\(explanation) De opname is afgerond en wat er is opgenomen wordt bewaard."
+        )
+        stop()
     }
 
     // MARK: - Public control (hotkey / menu)
@@ -137,6 +179,10 @@ final class DictationController: ObservableObject {
             // De hotkey tijdens een pauze rondt gewoon af: de opname bevat dan
             // alles tot het pauzemoment.
             stop()
+        case .preparing:
+            // Model laadt en de microfoon gaat open. Een tweede tik zou de
+            // sessie halverwege afbreken; negeren is hier het veilige gedrag.
+            break
         case .transcribing:
             // Busy: mirror Python "Still transcribing. Please wait."
             break
@@ -206,12 +252,12 @@ final class DictationController: ObservableObject {
         capturedInsertionTarget = captureInsertionTarget?()
 
         hudDismissTask?.cancel()
-        phase = .recording
+        phase = .preparing
         livePartial = StreamingPartial(finalizedText: "", volatileText: "")
         sampleCollector = nil
         samplesAreDiarizable = false
         elapsed = 0
-        onStateChange(.recording)
+        onStateChange(.loadingModel)
         latency.begin()
 
         let token = UUID()
@@ -222,12 +268,22 @@ final class DictationController: ObservableObject {
     private func beginSession(token: UUID) async {
         let locale = Locale(identifier: settingsProvider().language.isEmpty ? "nl-NL" : settingsProvider().language)
 
+        // De tijd tussen de sneltoets en een lopende microfoon is de vertraging
+        // die de gebruiker voelt. Meten in plaats van gissen: bij een trage start
+        // staat de verdeling over de drie stappen in het log
+        // (bevinding 2026-08-04).
+        let t0 = DispatchTime.now().uptimeNanoseconds
+        func msSince(_ mark: UInt64) -> Double {
+            Double(DispatchTime.now().uptimeNanoseconds - mark) / 1_000_000
+        }
+
         do {
             try await engine.startStreaming(locale: locale)
         } catch {
             await handleFailure(error)
             return
         }
+        let modelMs = msSince(t0)
 
         // If a stop/failure landed while startStreaming was awaiting, this session
         // is stale: undo the engine start and bail before touching the mic.
@@ -247,7 +303,12 @@ final class DictationController: ObservableObject {
         // when the engine negotiated exactly the diarizer's format (16 kHz mono
         // Float32 — the Parakeet path). For any other format we skip capture, and
         // diarization is skipped downstream (no re-decode, no wrong-rate turns).
+        // Ook de instelling meetellen, niet alleen het audioformaat: zonder deze
+        // controle werd élke dictatie volledig in RAM meegeschreven (~230 MB per
+        // uur) terwijl sprekerherkenning uit stond en die samples nooit werden
+        // gebruikt (bevinding 2026-08-03).
         samplesAreDiarizable = Self.isDiarizerFormat(format)
+            && settingsProvider().speakerRecognitionEnabled
 
         let stream: AsyncStream<AudioBufferBox>
         do {
@@ -270,6 +331,21 @@ final class DictationController: ObservableObject {
             await engine.cancel()
             return
         }
+
+        let totalMs = msSince(t0)
+        if totalMs > 400 {
+            NSLog(
+                "DictationController: start duurde %.0f ms (model %.0f ms, microfoon %.0f ms)",
+                totalMs,
+                modelMs,
+                totalMs - modelMs
+            )
+        }
+
+        // Pas hier loopt de microfoon werkelijk; vanaf nu mag de app zeggen dat
+        // er wordt opgenomen.
+        phase = .recording
+        onStateChange(.recording)
 
         Notifications.post("Opname gestart")
         startElapsedTicker()
@@ -338,32 +414,65 @@ final class DictationController: ObservableObject {
         do {
             result = try await engine.finalize()
         } catch {
-            // Engine failure mid-finalize: keep whatever partials produced.
-            let salvaged = livePartial.finalizedText
-            await completeTranscription(
-                text: salvaged,
-                segments: [],
-                samples: samples,
-                salvagedFromError: true
-            )
+            // Hier stond een "redding" van `livePartial.finalizedText`. Die
+            // string is bij Parakeet altijd leeg — de partials-stream wordt in
+            // `ParakeetEngine.init` meteen afgesloten — dus liep dit onvermijdelijk
+            // uit op "Geen spraak herkend", terwijl de werkelijke fout nergens
+            // werd getoond. Een mislukte transcriptie van een lang gesprek zag er
+            // zo uit alsof je niets had gezegd (bevinding 2026-08-03).
+            //
+            // De opname zelf is nu niet meer weg: `finalize()` laat het tijdelijke
+            // bestand bij een fout staan, zodat de volgende start het opnieuw
+            // aanbiedt.
+            failFinalize(error)
             return
         }
 
         latency.markFinalized()
-        await completeTranscription(text: result.text, segments: result.segments, samples: samples, salvagedFromError: false)
+        await completeTranscription(
+            text: result.text,
+            segments: result.segments,
+            samples: samples,
+            audioDuration: result.audioDuration,
+            partialFailure: result.partialFailure,
+            preservedAudioURL: result.preservedAudioURL
+        )
     }
 
+    /// Een mislukte transcriptie: toon de echte fout en meld dat de opname
+    /// bewaard is gebleven voor een nieuwe poging.
+    private func failFinalize(_ error: Error) {
+        let message = (error as? LocalizedError)?.errorDescription ?? error.localizedDescription
+        Notifications.postCritical(
+            "De transcriptie is mislukt: \(message) "
+                + "De opname is bewaard en wordt bij de volgende start opnieuw aangeboden."
+        )
+        phase = .idle
+        onStateChange(.ready)
+        finishHUD(success: false)
+    }
+
+    /// De parameter `salvagedFromError` is verdwenen: hij werd in deze functie
+    /// nooit uitgelezen en het bijbehorende reddingspad bestond alleen op papier
+    /// (bevinding 2026-08-03).
     private func completeTranscription(
         text: String,
         segments: [Core.TranscriptSegment],
         samples: [Float]?,
-        salvagedFromError: Bool
+        audioDuration: Double = 0,
+        partialFailure: String? = nil,
+        preservedAudioURL: URL? = nil
     ) async {
         partialsTask?.cancel()
         partialsTask = nil
 
         let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !trimmed.isEmpty else {
+            // Er komt geen item, dus ook geen plek om bewaarde audio aan te
+            // hangen: opruimen in plaats van laten slingeren.
+            if let preservedAudioURL {
+                try? FileManager.default.removeItem(at: preservedAudioURL)
+            }
             // Zero speech → no clipboard write, mirror Python "Geen spraak herkend".
             Notifications.post("Geen spraak herkend")
             onStateChange(.ready)
@@ -405,21 +514,62 @@ final class DictationController: ObservableObject {
             break
         }
 
-        // Persist the completed transcript (history store). Duration is the last
-        // ticked recording elapsed; source is always mic for hotkey/menu dictation.
-        onTranscriptCompleted?(
-            TranscriptCompletion(
-                text: processed,
-                segments: segments,
-                duration: elapsed,
-                language: settings.language.isEmpty ? "nl" : settings.language,
-                model: "parakeet-tdt-0.6b-v3",
-                source: "mic",
-                // Only carry samples through when the segments are non-empty (a
-                // salvaged/empty-segment run has nothing to attach speakers to).
-                samples: segments.isEmpty ? nil : samples
+        // Opslaan gebeurt hieronder meteen, vóór het klaarmelden.
+        //
+        // Voorheen ging dit naar een volgende main-actor beurt om de gevoelde
+        // stop→klaar-tijd te drukken. Op dat moment is het tijdelijke
+        // geluidsbestand echter al opgeruimd door `finalize()`, en bestaat de
+        // tekst nog nergens op schijf. Een crash in dat gaatje kostte de hele
+        // opname — precies wat er op 3 augustus 2026 gebeurde met een lang
+        // gesprek. De winst was bovendien klein: opslaan is één lokale
+        // SQLite-insert, en het echte schijfwerk (diarisatie, export) draaide
+        // toch al op een eigen taak.
+        // De klok op het scherm loopt door zolang de opname "aan" staat, ook als
+        // de microfoon geen buffers meer levert. Wijkt de werkelijk opgenomen
+        // audio daar merkbaar van af, dan is er audio verloren gegaan en hoort
+        // de gebruiker dat te weten (bevinding 2026-08-03). We bewaren dan ook
+        // de échte duur, niet de klok.
+        let wallClock = elapsed
+        let trustedDuration = audioDuration > 0 ? audioDuration : wallClock
+        if audioDuration > 0, wallClock - audioDuration > max(5, wallClock * 0.05) {
+            NSLog(
+                "DictationController: audio gap — klok %.1fs, opgenomen %.1fs",
+                wallClock,
+                audioDuration
             )
+            Notifications.postCritical(
+                "Let op: er is minder audio opgenomen dan de teller aangaf "
+                    + "(\(Int(audioDuration.rounded())) s van \(Int(wallClock.rounded())) s). "
+                    + "De microfoon lijkt tijdens de opname te zijn weggevallen."
+            )
+        }
+
+        // Een schrijffout onderweg: wat er is, is getranscribeerd, maar de
+        // gebruiker moet weten dat het verslag niet compleet is.
+        if let partialFailure {
+            Notifications.postCritical(
+                "Een deel van de audio ging tijdens de opname verloren "
+                    + "(\(partialFailure)). De tekst bevat alleen wat er is opgenomen."
+            )
+        }
+
+        let completion = TranscriptCompletion(
+            text: processed,
+            segments: segments,
+            duration: trustedDuration,
+            language: settings.language.isEmpty ? "nl" : settings.language,
+            model: "parakeet-tdt-0.6b-v3",
+            // `AppEnvironment.saveCompletedTranscript` plakt hier ".mac" achter,
+            // dus dit blijft de kale bron.
+            source: "mic",
+            // Only carry samples through when the segments are non-empty (a
+            // salvaged/empty-segment run has nothing to attach speakers to).
+            samples: segments.isEmpty ? nil : samples,
+            preservedAudioURL: preservedAudioURL
         )
+
+        // Eerst vastleggen, dan pas klaarmelden.
+        onTranscriptCompleted?(completion)
 
         livePartial = StreamingPartial(finalizedText: processed, volatileText: "")
         // The insertionFailed case already posted its own notification above.

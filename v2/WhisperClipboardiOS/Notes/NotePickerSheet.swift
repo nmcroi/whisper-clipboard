@@ -93,6 +93,8 @@ struct NotePickerSheet: View {
 
     private func displayTitle(for note: Note) -> String {
         let trimmed = note.title.trimmingCharacters(in: .whitespacesAndNewlines)
-        return trimmed.isEmpty ? "Naamloze notitie" : trimmed
+        return trimmed.isEmpty
+            ? L10n.string( "Naamloze notitie", locale: app.interfaceLanguage.locale)
+            : trimmed
     }
 }

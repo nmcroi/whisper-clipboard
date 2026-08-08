@@ -121,11 +121,14 @@ public final class HistoryStore: ObservableObject {
 
     /// Inserts (or replaces) an entry, then prunes to the retention limit.
     public func add(_ entry: TranscriptEntry) throws {
-        try dbQueue.write { db in
+        let prunedIDs = try dbQueue.write { db -> [String] in
             try TranscriptRecord(entry: entry).insert(db)
-            try Self.prune(db, retention: self.retentionProvider())
+            return try Self.prune(db, retention: self.retentionProvider())
         }
         emit(.upsert(id: entry.id))
+        // bevinding 2026-08-03: door retentie verwijderde rijen worden nu ook als
+        // sync-verwijdering uitgezonden, net als in `delete(id:)`.
+        for prunedID in prunedIDs { emit(.delete(id: prunedID)) }
         bump()
     }
 
@@ -154,17 +157,21 @@ public final class HistoryStore: ObservableObject {
 
     public func setPinned(id: String, _ pinned: Bool) throws {
         var changed = false
-        try dbQueue.write { db in
-            if var record = try TranscriptRecord.fetchOne(db, key: id), record.pinned != pinned {
-                record.pinned = pinned
-                record.modifiedAt = TranscriptRecord.nowMillis()
-                try record.update(db)
-                changed = true
-                // Unpinning may push the entry over the retention limit.
-                try Self.prune(db, retention: self.retentionProvider())
-            }
+        let prunedIDs = try dbQueue.write { db -> [String] in
+            guard var record = try TranscriptRecord.fetchOne(db, key: id),
+                  record.pinned != pinned
+            else { return [] }
+            record.pinned = pinned
+            record.modifiedAt = TranscriptRecord.nowMillis()
+            try record.update(db)
+            changed = true
+            // Unpinning may push the entry over the retention limit.
+            return try Self.prune(db, retention: self.retentionProvider())
         }
         if changed { emit(.upsert(id: id)) }
+        // bevinding 2026-08-03: ook hier de gepruunde rijen als verwijdering
+        // uitzenden (het losmaken van een pin kan er rijen over de limiet duwen).
+        for prunedID in prunedIDs { emit(.delete(id: prunedID)) }
         bump()
     }
 
@@ -282,6 +289,56 @@ public final class HistoryStore: ObservableObject {
         bump()
     }
 
+    /// Reduces an over-diarized transcript to the requested number of speakers.
+    /// The speakers with the most spoken time are retained. Tiny false-positive
+    /// labels are reassigned to the nearest retained speaker in time, preferring
+    /// matching neighbours. Transcript text and timings remain unchanged.
+    public func limitSpeakers(id: String, maximum: Int) throws {
+        guard maximum >= 1 else { return }
+        var changed = false
+        try dbQueue.write { db in
+            guard let record = try TranscriptRecord.fetchOne(db, key: id) else { return }
+            var entry = record.entry
+            let totals = Dictionary(grouping: entry.segments.compactMap { segment in
+                segment.speaker.map { ($0, max(0, segment.end - segment.start)) }
+            }, by: { $0.0 }).mapValues { $0.reduce(0) { $0 + $1.1 } }
+            let retained = Set(totals.sorted {
+                $0.value == $1.value ? $0.key < $1.key : $0.value > $1.value
+            }.prefix(maximum).map(\.key))
+            guard totals.count > retained.count, !retained.isEmpty else { return }
+
+            for index in entry.segments.indices {
+                guard let speaker = entry.segments[index].speaker,
+                      !retained.contains(speaker) else { continue }
+                let previous = entry.segments[..<index].reversed().first { segment in
+                    segment.speaker.map(retained.contains) == true
+                }
+                let next = entry.segments[(index + 1)...].first { segment in
+                    segment.speaker.map(retained.contains) == true
+                }
+                let replacement: String?
+                if previous?.speaker == next?.speaker {
+                    replacement = previous?.speaker
+                } else {
+                    let previousGap = previous.map { max(0, entry.segments[index].start - $0.end) } ?? .greatestFiniteMagnitude
+                    let nextGap = next.map { max(0, $0.start - entry.segments[index].end) } ?? .greatestFiniteMagnitude
+                    replacement = previousGap <= nextGap ? previous?.speaker : next?.speaker
+                }
+                entry.segments[index].speaker = replacement ?? retained.first
+            }
+
+            var updated = TranscriptRecord(entry: entry)
+            updated.pinned = record.pinned
+            updated.noteId = record.noteId
+            let retainedNames = entry.speakerNames.filter { retained.contains($0.key) }
+            updated.speakerNames = (try? String(data: JSONEncoder().encode(retainedNames), encoding: .utf8)) ?? "{}"
+            try updated.update(db)
+            changed = true
+        }
+        if changed { emit(.upsert(id: id)) }
+        bump()
+    }
+
     /// Rebuilds a transcript's plain `text` from (possibly trimmed) segments by
     /// joining the word texts with single spaces — matching how the `text` field
     /// is originally produced (a plain transcript, no speaker labels). Speaker
@@ -321,6 +378,14 @@ public final class HistoryStore: ObservableObject {
         }
     }
 
+    /// Every locally-held transcript id, including entries linked to a note.
+    /// Used once per approved iCloud account to seed pre-existing history.
+    public func allRecordIDs() throws -> [String] {
+        try dbQueue.read { db in
+            try String.fetchAll(db, sql: "SELECT id FROM transcripts ORDER BY id")
+        }
+    }
+
     /// The `modifiedAt` clocks for a set of ids, keyed by id. Used by the
     /// conflict resolver to compare a locally-held row against an incoming remote
     /// record without materializing the whole entry. Missing ids are absent.
@@ -341,23 +406,29 @@ public final class HistoryStore: ObservableObject {
     /// Applies a record fetched from iCloud, WITHOUT re-emitting an outbound
     /// change (the `applyingRemote` guard is held for the duration). This is the
     /// inbound half of sync: the engine has already run last-writer-wins and only
-    /// calls this when the remote copy should win. Retention pruning runs so a
-    /// remote insert still respects the local limit.
+    /// calls this when the remote copy should win.
     ///
     /// The incoming `record` carries the remote `modifiedAt`, which is persisted
     /// verbatim so both devices converge on the same clock for that row.
-    public func applyRemoteUpsert(_ record: TranscriptRecord) throws {
+    ///
+    /// bevinding 2026-08-03: retention-pruning draait hier BEWUST niet meer. Het
+    /// liep bij élke binnenkomende upsert, dus een eerste iCloud-seed kon lokale
+    /// rijen massaal wissen — en zonder sync-verwijdering (de `applyingRemote`-
+    /// guard onderdrukt `emit`), zodat die rijen in iCloud bleven staan en
+    /// telkens terugkwamen. Het bewaarlimiet wordt weer toegepast bij de
+    /// eerstvolgende lokale mutatie (`add` / `setPinned`).
+    public func applyRemoteUpsert(_ record: TranscriptRecord, includesNoteLink: Bool = false) throws {
         applyingRemote = true
         defer { applyingRemote = false }
         try dbQueue.write { db in
             var record = record
-            // `note_id` isn't part of the synced schema yet (Notes/note_id sync is
-            // deferred), so an incoming remote record never carries one. Without
-            // this, a remote-wins resolution on a note-linked row would silently
-            // unlink it from its note by overwriting note_id with NULL.
-            record.noteId = try TranscriptRecord.fetchOne(db, key: record.id)?.noteId
+            // Legacy CloudKit records did not carry a note-link marker. Preserve
+            // the local link for those; current records may explicitly attach or
+            // detach through their versioned `noteId` field.
+            if !includesNoteLink {
+                record.noteId = try TranscriptRecord.fetchOne(db, key: record.id)?.noteId
+            }
             try record.save(db)
-            try Self.prune(db, retention: self.retentionProvider())
         }
         bump()
     }
@@ -426,6 +497,45 @@ public final class HistoryStore: ObservableObject {
         }
     }
 
+    public func noteRecord(id: String) throws -> NoteRecord? {
+        try dbQueue.read { db in try NoteRecord.fetchOne(db, key: id) }
+    }
+
+    public func allNoteRecordIDs() throws -> [String] {
+        try dbQueue.read { db in
+            try String.fetchAll(db, sql: "SELECT id FROM notes ORDER BY id")
+        }
+    }
+
+    public func noteModifiedAt(ids: [String]) throws -> [String: Int64] {
+        guard !ids.isEmpty else { return [:] }
+        return try dbQueue.read { db in
+            let records = try NoteRecord.fetchAll(
+                db,
+                sql: "SELECT * FROM notes WHERE id IN (\(databaseQuestionMarks(count: ids.count)))",
+                arguments: StatementArguments(ids)
+            )
+            return Dictionary(uniqueKeysWithValues: records.map { ($0.id, $0.modifiedAtMillis) })
+        }
+    }
+
+    public func applyRemoteNoteUpsert(_ record: NoteRecord) throws {
+        applyingRemote = true
+        defer { applyingRemote = false }
+        try dbQueue.write { db in try record.save(db) }
+        bump()
+    }
+
+    public func applyRemoteNoteDelete(id: String) throws {
+        applyingRemote = true
+        defer { applyingRemote = false }
+        try dbQueue.write { db in
+            try db.execute(sql: "UPDATE transcripts SET note_id = NULL WHERE note_id = ?", arguments: [id])
+            _ = try NoteRecord.deleteOne(db, key: id)
+        }
+        bump()
+    }
+
     /// Maakt een nieuwe notitie aan met de gegeven titel en retourneert hem.
     @discardableResult
     public func createNote(title: String) throws -> Note {
@@ -439,6 +549,47 @@ public final class HistoryStore: ObservableObject {
         try dbQueue.write { db in
             try NoteRecord(note: note).insert(db)
         }
+        emit(.noteUpsert(id: note.id))
+        bump()
+        return note
+    }
+
+    /// Maakt een nieuwe notitie en verplaatst een bestaande opname ernaartoe in
+    /// één transactie. Zo kan een databasefout nooit een lege notitie achterlaten
+    /// nadat het verplaatsen van de opname is mislukt.
+    @discardableResult
+    public func createNote(title: String, movingEntryId entryId: String) throws -> Note? {
+        let now = ISO8601DateFormatter().string(from: Date())
+        let note = Note(
+            id: UUID().uuidString,
+            title: title.trimmingCharacters(in: .whitespacesAndNewlines),
+            createdAt: now,
+            modifiedAt: now
+        )
+        var previousNoteId: String?
+        var didCreate = false
+
+        try dbQueue.write { db in
+            guard var entry = try TranscriptRecord.fetchOne(db, key: entryId) else { return }
+            previousNoteId = entry.noteId
+            try NoteRecord(note: note).insert(db)
+            entry.noteId = note.id
+            entry.modifiedAt = TranscriptRecord.nowMillis()
+            try entry.update(db)
+
+            if let previousNoteId,
+               var previousNote = try NoteRecord.fetchOne(db, key: previousNoteId) {
+                previousNote.modifiedAt = now
+                previousNote.sortKey = Date().timeIntervalSince1970
+                try previousNote.update(db)
+            }
+            didCreate = true
+        }
+
+        guard didCreate else { return nil }
+        emit(.noteUpsert(id: note.id))
+        emit(.upsert(id: entryId))
+        if let previousNoteId { emit(.noteUpsert(id: previousNoteId)) }
         bump()
         return note
     }
@@ -446,14 +597,17 @@ public final class HistoryStore: ObservableObject {
     /// Hernoemt een notitie en werkt zijn `modifiedAt` bij.
     public func renameNote(id: String, title: String) throws {
         let clean = title.trimmingCharacters(in: .whitespacesAndNewlines)
+        var changed = false
         try dbQueue.write { db in
             if var record = try NoteRecord.fetchOne(db, key: id) {
                 record.title = clean
                 record.modifiedAt = ISO8601DateFormatter().string(from: Date())
                 record.sortKey = Date().timeIntervalSince1970
                 try record.update(db)
+                changed = true
             }
         }
+        if changed { emit(.noteUpsert(id: id)) }
         bump()
     }
 
@@ -489,6 +643,7 @@ public final class HistoryStore: ObservableObject {
             }
             try NoteRecord.deleteOne(db, key: id)
         }
+        emit(.noteDelete(id: id))
         if deleteEntries {
             for freed in freedIds { emit(.delete(id: freed)) }
         } else {
@@ -524,6 +679,7 @@ public final class HistoryStore: ObservableObject {
             }
         }
         emit(.upsert(id: entry.id))
+        emit(.noteUpsert(id: noteId))
         bump()
     }
 
@@ -533,8 +689,10 @@ public final class HistoryStore: ObservableObject {
     public func moveEntryToNote(entryId: String, noteId: String) throws {
         let now = ISO8601DateFormatter().string(from: Date())
         var changed = false
+        var previousNoteId: String?
         try dbQueue.write { db in
             if var record = try TranscriptRecord.fetchOne(db, key: entryId) {
+                previousNoteId = record.noteId
                 record.noteId = noteId
                 record.modifiedAt = TranscriptRecord.nowMillis()
                 try record.update(db)
@@ -544,9 +702,60 @@ public final class HistoryStore: ObservableObject {
                     noteRecord.sortKey = Date().timeIntervalSince1970
                     try noteRecord.update(db)
                 }
+                if let previousNoteId, previousNoteId != noteId,
+                   var oldNote = try NoteRecord.fetchOne(db, key: previousNoteId) {
+                    oldNote.modifiedAt = now
+                    oldNote.sortKey = Date().timeIntervalSince1970
+                    try oldNote.update(db)
+                }
             }
         }
-        if changed { emit(.upsert(id: entryId)) }
+        if changed {
+            emit(.upsert(id: entryId))
+            emit(.noteUpsert(id: noteId))
+            if let previousNoteId, previousNoteId != noteId {
+                emit(.noteUpsert(id: previousNoteId))
+            }
+        }
+        bump()
+    }
+
+    /// Verhuist alle opnames van `sourceNoteId` naar `targetNoteId` en verwijdert
+    /// de daarna lege bronnotitie in één database-transactie. Bij iedere fout
+    /// wordt de volledige wijziging teruggedraaid, zodat een samenvoeging nooit
+    /// half uitgevoerd eindigt of resterende opnames als losse historie achterlaat.
+    public func mergeNote(sourceNoteId: String, into targetNoteId: String) throws {
+        guard sourceNoteId != targetNoteId else { return }
+        let now = ISO8601DateFormatter().string(from: Date())
+        let modifiedAt = TranscriptRecord.nowMillis()
+        var movedIds: [String] = []
+        var didMerge = false
+
+        try dbQueue.write { db in
+            guard try NoteRecord.fetchOne(db, key: sourceNoteId) != nil,
+                  var target = try NoteRecord.fetchOne(db, key: targetNoteId)
+            else { return }
+
+            movedIds = try String.fetchAll(
+                db,
+                sql: "SELECT id FROM transcripts WHERE note_id = ? ORDER BY sort_key, created_at",
+                arguments: [sourceNoteId]
+            )
+            try db.execute(
+                sql: "UPDATE transcripts SET note_id = ?, modified_at = ? WHERE note_id = ?",
+                arguments: [targetNoteId, modifiedAt, sourceNoteId]
+            )
+            target.modifiedAt = now
+            target.sortKey = Date().timeIntervalSince1970
+            try target.update(db)
+            try NoteRecord.deleteOne(db, key: sourceNoteId)
+            didMerge = true
+        }
+
+        guard didMerge else { return }
+        for id in movedIds { emit(.upsert(id: id)) }
+        emit(.noteUpsert(id: targetNoteId))
+        emit(.noteDelete(id: sourceNoteId))
         bump()
     }
 
@@ -555,15 +764,27 @@ public final class HistoryStore: ObservableObject {
     /// ``moveEntryToNote`` — bumpt `modifiedAt` en zendt een upsert uit voor sync.
     public func detachEntryFromNote(entryId: String) throws {
         var changed = false
+        var previousNoteId: String?
+        let now = ISO8601DateFormatter().string(from: Date())
         try dbQueue.write { db in
             if var record = try TranscriptRecord.fetchOne(db, key: entryId) {
+                previousNoteId = record.noteId
                 record.noteId = nil
                 record.modifiedAt = TranscriptRecord.nowMillis()
                 try record.update(db)
                 changed = true
+                if let previousNoteId,
+                   var noteRecord = try NoteRecord.fetchOne(db, key: previousNoteId) {
+                    noteRecord.modifiedAt = now
+                    noteRecord.sortKey = Date().timeIntervalSince1970
+                    try noteRecord.update(db)
+                }
             }
         }
-        if changed { emit(.upsert(id: entryId)) }
+        if changed {
+            emit(.upsert(id: entryId))
+            if let previousNoteId { emit(.noteUpsert(id: previousNoteId)) }
+        }
         bump()
     }
 
@@ -629,15 +850,20 @@ public final class HistoryStore: ObservableObject {
 
         do {
             let result = try HistoryV3Migrator.migrate(contentsOf: legacyURL)
-            try dbQueue.write { db in
+            let prunedIDs = try dbQueue.write { db -> [String] in
                 for entry in result.entries {
                     // Only insert entries the DB doesn't already have.
                     if try TranscriptRecord.fetchOne(db, key: entry.id) == nil {
                         try TranscriptRecord(entry: entry).insert(db)
                     }
                 }
-                try Self.prune(db, retention: self.retentionProvider())
+                return try Self.prune(db, retention: self.retentionProvider())
             }
+            // bevinding 2026-08-03: pruning verwijdert hier ook rijen die al in
+            // iCloud stonden (de migratie slaat bestaande ids over maar pruunt de
+            // hele losse geschiedenis), dus die verwijderingen moeten worden
+            // uitgezonden.
+            for prunedID in prunedIDs { emit(.delete(id: prunedID)) }
             // Persist the "migration done" flag only when the import actually
             // landed in the durable on-disk DB. An in-memory fallback still returns
             // the imported count (so this session has usable data) but leaves the
@@ -673,11 +899,17 @@ public final class HistoryStore: ObservableObject {
 
     /// Ports Python `_trim`: walking newest-first, keep every pinned entry and
     /// up to `limit` unpinned entries; delete the rest. `nil` = unlimited.
-    private static func prune(_ db: Database, retention: Int?) throws {
+    ///
+    /// Geeft de verwijderde ids terug. bevinding 2026-08-03: pruning wiste rijen
+    /// zonder `emit(.delete(id:))`, waardoor ze in iCloud bleven staan, opnieuw
+    /// werden opgehaald en meteen weer werden gepruund — een eindeloze lus. Elke
+    /// aanroeper moet de teruggegeven ids ná de transactie als verwijdering
+    /// uitzenden, precies zoals `delete(id:)` doet.
+    private static func prune(_ db: Database, retention: Int?) throws -> [String] {
         // `nil` = unlimited. `<= 0` is also treated as "disabled/unlimited": a
         // literal 0 would otherwise delete every unpinned entry (including a
         // transcript the user just recorded), which is never the intent.
-        guard let limit = retention, limit > 0 else { return }
+        guard let limit = retention, limit > 0 else { return [] }
         // Ordered newest-first (pinned status does not affect ordering here;
         // it only exempts rows from the unpinned budget).
         // Notitie-opnames (note_id gezet) tellen niet mee voor het bewaarlimiet —
@@ -702,6 +934,7 @@ public final class HistoryStore: ObservableObject {
         if !toDelete.isEmpty {
             try TranscriptRecord.deleteAll(db, keys: toDelete)
         }
+        return toDelete
     }
 
     private static func fetchRecords(
@@ -785,15 +1018,15 @@ public final class HistoryStore: ObservableObject {
         case .all:
             break
         case .mic:
-            conditions.append("t.source = ?")
-            _ = args.append(contentsOf: StatementArguments(["mic"]))
+            conditions.append("(t.source = ? OR t.source LIKE ?)")
+            _ = args.append(contentsOf: StatementArguments(["mic", "mic.%"]))
         case .file:
             // "Bestand" also covers live-captions sessions (both are non-mic).
-            conditions.append("t.source IN (?, ?)")
-            _ = args.append(contentsOf: StatementArguments(["file", "captions"]))
+            conditions.append("(t.source IN (?, ?) OR t.source LIKE ? OR t.source LIKE ?)")
+            _ = args.append(contentsOf: StatementArguments(["file", "captions", "file.%", "captions.%"]))
         case .plaud:
-            conditions.append("t.source = ?")
-            _ = args.append(contentsOf: StatementArguments(["plaud"]))
+            conditions.append("(t.source = ? OR t.source LIKE ?)")
+            _ = args.append(contentsOf: StatementArguments(["plaud", "plaud.%"]))
         }
 
         let clause = conditions.isEmpty ? "" : "WHERE " + conditions.joined(separator: " AND ")

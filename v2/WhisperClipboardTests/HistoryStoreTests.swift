@@ -497,6 +497,85 @@ final class HistoryStoreTests: XCTestCase {
         XCTAssertEqual(try store.entries().first?.id, "e1")
     }
 
+    func testMergeNoteMovesEveryEntryAndRemovesSourceAtomically() throws {
+        let store = try makeStore()
+        let source = try store.createNote(title: "Bron")
+        let target = try store.createNote(title: "Doel")
+        try store.appendToNote(entry(id: "e1", text: "Eerste"), noteId: source.id)
+        try store.appendToNote(
+            entry(id: "e2", text: "Tweede", createdAt: "2026-06-21T10:01:00+02:00"),
+            noteId: source.id
+        )
+
+        try store.mergeNote(sourceNoteId: source.id, into: target.id)
+
+        XCTAssertNil(try store.note(id: source.id))
+        XCTAssertEqual(try store.noteEntries(noteId: source.id), [])
+        XCTAssertEqual(try store.noteEntries(noteId: target.id).map(\.id), ["e1", "e2"])
+        XCTAssertEqual(try store.count(), 0, "Samengevoegde opnames blijven notitie-items")
+    }
+
+    func testCreateNoteAndMoveEntryHappenTogether() throws {
+        let store = try makeStore()
+        try store.add(entry(id: "e1", text: "Losse opname"))
+
+        let note = try XCTUnwrap(
+            store.createNote(title: " Nieuwe notitie ", movingEntryId: "e1")
+        )
+
+        XCTAssertEqual(note.title, "Nieuwe notitie")
+        XCTAssertEqual(try store.notes().map(\.id), [note.id])
+        XCTAssertEqual(try store.noteEntries(noteId: note.id).map(\.id), ["e1"])
+        XCTAssertEqual(try store.count(), 0)
+    }
+
+    func testCreateNoteAndMoveMissingEntryLeavesNoEmptyNote() throws {
+        let store = try makeStore()
+
+        XCTAssertNil(try store.createNote(title: "Mag niet blijven", movingEntryId: "weg"))
+        XCTAssertTrue(try store.notes().isEmpty)
+    }
+
+    // MARK: - Opschonen en synchronisatie (bevinding 2026-08-03)
+
+    /// Opschonen verwijderde rijen zonder een sync-verwijdering uit te geven.
+    /// Gevolg: het item bleef in iCloud staan, werd opnieuw opgehaald en opnieuw
+    /// opgeschoond — een eindeloze heen-en-weer.
+    func testPruneEmitsDeletionsSoICloudFollows() throws {
+        let store = try makeStore(retention: 2)
+        var changes: [HistoryChange] = []
+        store.onChange = { changes.append($0) }
+
+        try store.add(entry(id: "oud", text: "eerste", createdAt: "2026-06-01T10:00:00+02:00"))
+        try store.add(entry(id: "midden", text: "tweede", createdAt: "2026-06-02T10:00:00+02:00"))
+        try store.add(entry(id: "nieuw", text: "derde", createdAt: "2026-06-03T10:00:00+02:00"))
+
+        XCTAssertEqual(try store.count(), 2, "de retentie van 2 hoort het oudste item te wissen")
+        XCTAssertTrue(
+            changes.contains(.delete(id: "oud")),
+            "het opgeschoonde item moet als verwijdering worden uitgegeven, anders komt het via iCloud terug"
+        )
+    }
+
+    /// Opschonen liep ook vanuit een inkomende iCloud-wijziging. Een eerste
+    /// vulling vanaf de iPhone kon daardoor lokale rijen massaal wissen.
+    func testRemoteUpsertDoesNotPrune() throws {
+        let store = try makeStore(retention: 1)
+        try store.add(entry(id: "lokaal", text: "blijft staan"))
+
+        let remote = TranscriptRecord(
+            entry: entry(id: "vanafiPhone", text: "komt binnen", createdAt: "2026-06-05T10:00:00+02:00"),
+            modifiedAt: 999
+        )
+        try store.applyRemoteUpsert(remote)
+
+        XCTAssertEqual(
+            try store.count(),
+            2,
+            "een inkomende wijziging mag de retentie niet toepassen; dat gebeurt bij de volgende lokale opname"
+        )
+    }
+
     // MARK: - FTS pattern helper
 
     func testFTSPatternEscaping() {

@@ -188,11 +188,16 @@ final class PlaudSyncServiceTests: XCTestCase {
 
         var settings = AppSettings()
         settings.plaudSyncEnabled = true
+        var importCall = 0
         let service = PlaudSyncService(
             settings: { settings },
             credentialsProvider: { PlaudCredentials(email: "", password: "", token: "tok") },
-            // Accept only the first downloaded URL, reject the rest.
-            importer: { urls in Array(urls.prefix(1)) },
+            // The production service now imports one at a time. Accept only the
+            // first call and reject subsequent recordings.
+            importer: { urls in
+                defer { importCall += 1 }
+                return importCall == 0 ? urls : []
+            },
             isBusy: { false },
             client: PlaudClient(session: PlaudRouteURLProtocol.session(), region: .us),
             store: store,

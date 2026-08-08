@@ -78,7 +78,7 @@ struct RecordingLiveActivityWidget: Widget {
 }
 
 /// Centrale statusregel-tekst: stale wint van pauze wint van "loopt".
-private func statusText(isPaused: Bool, isStale: Bool) -> String {
+private func statusText(isPaused: Bool, isStale: Bool) -> LocalizedStringResource {
     if isStale { return "Opname gestopt?" }
     return isPaused ? "Gepauzeerd" : "Opname loopt"
 }
@@ -119,7 +119,7 @@ private struct LockScreenView: View {
     let state: RecordingActivityAttributes.ContentState
     let isStale: Bool
 
-    private var subtitle: String {
+    private var subtitle: LocalizedStringResource {
         if isStale { return "Opname gestopt? Tik Stop om op te ruimen." }
         return state.isPaused ? "Gepauzeerd (onderbreking)" : "Opname loopt"
     }
@@ -128,7 +128,7 @@ private struct LockScreenView: View {
         HStack(spacing: 14) {
             RecordingDot(isPaused: state.isPaused, isStale: isStale)
             VStack(alignment: .leading, spacing: 4) {
-                Text("Whisper Clip")
+                Text("WhisperClip")
                     .font(.headline)
                     .foregroundStyle(WidgetTheme.text.opacity(isStale ? 0.55 : 1))
                 Text(subtitle)

@@ -6,9 +6,9 @@ import GRDB
 /// opname wordt als transcript-rij met `note_id` aan deze notitie gehangen en
 /// achteraan de tekst samengevoegd.
 ///
-/// Bewust een simpel, plat value type — géén afhankelijkheid van `Core`, want
-/// een notitie is (nog) geen onderdeel van het v3-JSON-schema en wordt (nog) niet
-/// naar CloudKit gesynct (uitgesteld, net als AIResult-sync).
+/// Bewust een simpel, plat value type — géén afhankelijkheid van `Core`. De
+/// sync-laag bewaart de metadata als een apart CloudKit-record; de inhoud blijft
+/// bestaan uit de gekoppelde transcript-rijen.
 public struct Note: Identifiable, Equatable, Sendable {
     public var id: String
     public var title: String
@@ -52,6 +52,10 @@ public struct NoteRecord: Codable, FetchableRecord, PersistableRecord {
     /// Epoch-seconden afgeleid van `modifiedAt` voor snelle "laatst gewijzigd"-sortering.
     public var sortKey: Double
 
+    public var modifiedAtMillis: Int64 {
+        Int64((sortKey * 1000).rounded())
+    }
+
     enum CodingKeys: String, CodingKey {
         case id
         case title
@@ -73,10 +77,19 @@ public struct NoteRecord: Codable, FetchableRecord, PersistableRecord {
         self.title = note.title
         self.createdAt = note.createdAt
         self.modifiedAt = note.modifiedAt
-        self.sortKey = note.modifiedDate?.timeIntervalSince1970 ?? 0
+        self.sortKey = Self.sortKey(for: note.modifiedAt)
     }
 
     public var note: Note {
         Note(id: id, title: title, createdAt: createdAt, modifiedAt: modifiedAt)
+    }
+
+    public static func sortKey(for iso8601: String) -> Double {
+        let fractional = ISO8601DateFormatter()
+        fractional.formatOptions = [.withInternetDateTime, .withFractionalSeconds]
+        if let date = fractional.date(from: iso8601) { return date.timeIntervalSince1970 }
+        let plain = ISO8601DateFormatter()
+        plain.formatOptions = [.withInternetDateTime]
+        return plain.date(from: iso8601)?.timeIntervalSince1970 ?? 0
     }
 }

@@ -38,9 +38,9 @@ struct PlaudSettingsView: View {
     /// "Aangepast…" escape hatch for any other value.
     private static let intervalPresets = [5, 10, 15, 30, 60, 120, 240]
 
-    /// Window presets (days) offered near the sync section; `0` = "Alles" (all
-    /// history). Wired to `plaudSyncWindowDays`.
-    private static let windowPresets = [7, 30, 90, 365, 0]
+    /// A deliberately bounded lookup window. Full-history import is not offered:
+    /// it can monopolise transcription for hours after one accidental click.
+    private static let windowPresets = [2, 7, 14, 30]
 
     var body: some View {
         ScrollView {
@@ -175,6 +175,7 @@ struct PlaudSettingsView: View {
                 get: { environment.settings.plaudSyncEnabled },
                 set: { newValue in
                     environment.settings.plaudSyncEnabled = newValue
+                    if !newValue { environment.plaudSync.cancelSync() }
                     environment.plaudSync.refresh()
                 }
             )) {
@@ -281,9 +282,25 @@ struct PlaudSettingsView: View {
                 .disabled(!credentialsSaved || environment.plaudSync.isSyncing)
 
                 if environment.plaudSync.isSyncing {
-                    HStack(spacing: 6) {
-                        ProgressView().controlSize(.small).tint(Theme.accent)
-                        Text("Synchroniseren…").font(ThemeFont.ui(11)).foregroundStyle(Theme.textSecondary)
+                    Button("Stop") { environment.plaudSync.cancelSync() }
+                        .buttonStyle(SecondaryButtonStyle())
+                    VStack(alignment: .leading, spacing: 4) {
+                        HStack(spacing: 6) {
+                            ProgressView().controlSize(.small).tint(Theme.accent)
+                            Text(environment.plaudSync.progressMessage.isEmpty
+                                 ? "Synchroniseren…"
+                                 : environment.plaudSync.progressMessage)
+                                .font(ThemeFont.ui(11))
+                                .foregroundStyle(Theme.textSecondary)
+                        }
+                        if environment.plaudSync.progressTotal > 0 {
+                            ProgressView(
+                                value: Double(environment.plaudSync.progressCompleted),
+                                total: Double(environment.plaudSync.progressTotal)
+                            )
+                            .frame(width: 180)
+                            .tint(Theme.accent)
+                        }
                     }
                 }
                 Spacer(minLength: 0)
@@ -398,11 +415,10 @@ struct PlaudSettingsView: View {
         }
     }
 
-    /// A Dutch label for a window preset (days); `0` = "Alles".
+    /// A Dutch label for a bounded window preset.
     private static func windowLabel(_ days: Int) -> String {
         switch days {
-        case 0: return "Alles"
-        case 365: return "1 jaar"
+        case 2: return "Afgelopen 48 uur"
         default: return "\(days) dagen"
         }
     }

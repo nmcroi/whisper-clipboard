@@ -1,0 +1,60 @@
+{
+  "sourceLanguage" : "nl",
+  "strings" : {
+    "Gepauzeerd" : {
+      "localizations" : {
+        "de" : { "stringUnit" : { "state" : "translated", "value" : "Pausiert" } },
+        "en" : { "stringUnit" : { "state" : "translated", "value" : "Paused" } }
+      }
+    },
+    "Gepauzeerd (onderbreking)" : {
+      "localizations" : {
+        "de" : { "stringUnit" : { "state" : "translated", "value" : "Pausiert (Unterbrechung)" } },
+        "en" : { "stringUnit" : { "state" : "translated", "value" : "Paused (interruption)" } }
+      }
+    },
+    "Opname gestopt?" : {
+      "localizations" : {
+        "de" : { "stringUnit" : { "state" : "translated", "value" : "Aufnahme gestoppt?" } },
+        "en" : { "stringUnit" : { "state" : "translated", "value" : "Recording stopped?" } }
+      }
+    },
+    "Opname gestopt? Tik Stop om op te ruimen." : {
+      "localizations" : {
+        "de" : { "stringUnit" : { "state" : "translated", "value" : "Aufnahme gestoppt? Tippen Sie zum Aufräumen auf Stopp." } },
+        "en" : { "stringUnit" : { "state" : "translated", "value" : "Recording stopped? Tap Stop to clean up." } }
+      }
+    },
+    "Opname loopt" : {
+      "localizations" : {
+        "de" : { "stringUnit" : { "state" : "translated", "value" : "Aufnahme läuft" } },
+        "en" : { "stringUnit" : { "state" : "translated", "value" : "Recording" } }
+      }
+    },
+    "Opname stoppen" : {
+      "localizations" : {
+        "de" : { "stringUnit" : { "state" : "translated", "value" : "Aufnahme stoppen" } },
+        "en" : { "stringUnit" : { "state" : "translated", "value" : "Stop recording" } }
+      }
+    },
+    "Stop" : {
+      "localizations" : {
+        "de" : { "stringUnit" : { "state" : "translated", "value" : "Stopp" } },
+        "en" : { "stringUnit" : { "state" : "translated", "value" : "Stop" } }
+      }
+    },
+    "Stopt de lopende opname en transcribeert." : {
+      "localizations" : {
+        "de" : { "stringUnit" : { "state" : "translated", "value" : "Stoppt die laufende Aufnahme und transkribiert sie." } },
+        "en" : { "stringUnit" : { "state" : "translated", "value" : "Stops and transcribes the current recording." } }
+      }
+    },
+    "WhisperClip" : {
+      "localizations" : {
+        "de" : { "stringUnit" : { "state" : "translated", "value" : "WhisperClip" } },
+        "en" : { "stringUnit" : { "state" : "translated", "value" : "WhisperClip" } }
+      }
+    }
+  },
+  "version" : "1.0"
+}

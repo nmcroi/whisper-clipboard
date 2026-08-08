@@ -18,11 +18,18 @@ final class MeetingController: ObservableObject {
 
     enum Phase: Equatable {
         case idle
+        /// Model laden en microfoon openen. Nog niets wordt opgenomen — dit was
+        /// eerder al `.recording`, waardoor de sheet een rode stip en "Aan het
+        /// opnemen…" toonde terwijl er niets binnenkwam (bevinding 2026-08-03).
+        case preparing
         case recording
         case paused
         case transcribing
         /// Transcript klaar (staat in ``transcript`` en in de Geschiedenis).
         case finished
+        /// Transcript klaar, maar het opslaan in de Geschiedenis mislukte. De
+        /// tekst staat alleen nog in ``transcript`` en mag niet worden gewist.
+        case savingFailed
     }
 
     @Published private(set) var phase: Phase = .idle
@@ -44,7 +51,7 @@ final class MeetingController: ObservableObject {
     /// True zolang er een notulen-sessie leeft — telt mee in de busy-guards
     /// van dicteren, import, ondertitels en de automatiseringen.
     var isBusy: Bool {
-        phase == .recording || phase == .paused || phase == .transcribing
+        phase == .preparing || phase == .recording || phase == .paused || phase == .transcribing
     }
 
     private var feedTask: Task<Void, Never>?
@@ -58,12 +65,38 @@ final class MeetingController: ObservableObject {
         self.engine = engine
         self.history = history
         self.settingsProvider = settingsProvider
+
+        // Valt de opname stil, dan ronden we de vergadering af en bewaren we wat
+        // er is. Een notulenopname zonder deze controle telde gewoon door boven
+        // een dode microfoon (bevinding 2026-08-03).
+        self.audioEngine.onInterruption = { [weak self] reason in
+            self?.handleCaptureInterruption(reason)
+        }
+    }
+
+    private func handleCaptureInterruption(_ reason: AudioEngine.InterruptionReason) {
+        guard phase == .recording || phase == .paused else { return }
+
+        let explanation: String
+        switch reason {
+        case .configurationChanged:
+            explanation = "Het geluidsapparaat is gewijzigd."
+        case .systemWillSleep, .systemDidWake:
+            explanation = "De Mac ging in slaapstand."
+        case .engineStopped:
+            explanation = "De opname is door het systeem gestopt."
+        case .noBuffers(let seconds):
+            explanation = "Er kwam \(Int(seconds.rounded())) seconden geen geluid meer binnen."
+        }
+
+        errorMessage = "\(explanation) De vergadering is afgerond en wat er is opgenomen wordt bewaard."
+        stop()
     }
 
     // MARK: - Besturing
 
     func start() {
-        guard phase == .idle || phase == .finished else { return }
+        guard phase == .idle || phase == .finished || phase == .savingFailed else { return }
         if let reason = busyReason?() {
             errorMessage = reason
             return
@@ -71,7 +104,7 @@ final class MeetingController: ObservableObject {
         errorMessage = nil
         transcript = nil
         elapsed = 0
-        phase = .recording
+        phase = .preparing
         Task { await beginSession() }
     }
 
@@ -100,6 +133,10 @@ final class MeetingController: ObservableObject {
             fail(error)
             return
         }
+
+        // Pas nu loopt er werkelijk audio binnen; vanaf hier mag de sheet
+        // zeggen dat er wordt opgenomen.
+        phase = .recording
 
         // De sheet kan tijdens het async opstarten niet stoppen (de knoppen
         // verschijnen pas in .recording), dus geen sessionToken-dans nodig
@@ -179,6 +216,10 @@ final class MeetingController: ObservableObject {
             return
         }
 
+        // De werkelijk opgenomen duur is eerlijker dan de klok: die telt door
+        // wanneer de microfoon stilvalt (bevinding 2026-08-03).
+        let recordedDuration = result.audioDuration > 0 ? result.audioDuration : elapsed
+
         let entry = TranscriptEntry(
             id: UUID().uuidString,
             text: processed,
@@ -187,11 +228,34 @@ final class MeetingController: ObservableObject {
             pinned: false,
             language: settings.language.isEmpty ? "nl" : settings.language,
             model: "parakeet-tdt-0.6b-v3",
-            source: "meeting",
-            duration: elapsed,
+            source: "meeting.mac",
+            duration: recordedDuration,
             segments: result.segments
         )
-        try? history.add(entry)
+
+        // Een verslag komt nooit op het klembord: mislukt het opslaan, dan is
+        // dit de enige plek waar het nog bestaat. Vroeger stond hier `try?` en
+        // meldde de sheet daarna alsnog succes — een vergadering van een uur kon
+        // zo spoorloos verdwijnen (bevinding 2026-08-03).
+        do {
+            try history.add(entry)
+        } catch {
+            transcript = processed
+            errorMessage = """
+                Het verslag kon niet in de Geschiedenis worden bewaard: \
+                \(error.localizedDescription)
+                Kopieer de tekst hieronder voordat je dit venster sluit.
+                """
+            phase = .savingFailed
+            return
+        }
+
+        if let partialFailure = result.partialFailure {
+            errorMessage = """
+                Let op: een deel van de audio ging tijdens de opname verloren \
+                (\(partialFailure)). Het verslag bevat alleen wat er is opgenomen.
+                """
+        }
 
         transcript = processed
         phase = .finished

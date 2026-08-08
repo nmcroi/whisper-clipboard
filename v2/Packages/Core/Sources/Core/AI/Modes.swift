@@ -87,12 +87,17 @@ extension AIMode {
         "brain",
     ]
 
-    /// A shared instruction appended conceptually to every built-in prompt:
-    /// answer in the transcript's language, no preamble, output only the result.
+    /// Shared grounding and output rules for every built-in prompt.
     public static let commonRules = """
-    Schrijf je antwoord in de taal van het transcript (meestal Nederlands). \
-    Geef geen inleiding, geen meta-opmerkingen en geen afsluiting — lever \
-    uitsluitend het gevraagde resultaat.
+    Schrijf in dezelfde hoofdtaal als het transcript. Neem uitsluitend informatie \
+    op die werkelijk in het transcript staat. Verzin geen namen, functies, \
+    besluiten, cijfers, datums, deadlines, oorzaken of conclusies. Maak duidelijk \
+    onderscheid tussen wat is besloten, voorgesteld en nog onzeker is. Laat een \
+    onderdeel weg als er geen betrouwbare informatie voor is. Behoud relevante \
+    namen, getallen en vaktermen zo letterlijk mogelijk; markeer iets als \
+    onduidelijk wanneer de bron daar geen zekerheid over geeft. Geef geen \
+    inleiding over je werkwijze, geen meta-opmerkingen en geen afsluiting — lever \
+    uitsluitend het gevraagde resultaat in leesbare Markdown.
     """
 
     /// The built-in library, tuned for a Dutch AI consultant who records
@@ -104,13 +109,21 @@ extension AIMode {
 
         AIMode(
             id: "builtin.samenvatting",
-            name: "Samenvatting",
+            name: "Slimme samenvatting",
             systemPrompt: """
-            Je bent een scherpe redacteur. Vat het onderstaande transcript bondig \
-            samen in het Nederlands. Begin met één of twee zinnen die de kern \
-            weergeven, gevolgd door een korte bulletlijst met de belangrijkste \
-            punten. Houd het compact en zakelijk; laat herhaling en \
-            spreektaal-vulwoorden weg. \(commonRules)
+            Analyseer eerst stilzwijgend welk soort inhoud dit is: bijvoorbeeld \
+            een vergadering, interview, les, lezing, adviesgesprek, telefoontje, \
+            brainstorm of persoonlijke notitie. Kies daarna de structuur die daar \
+            het beste bij past; forceer geen vaste vergaderindeling op ander \
+            materiaal.
+
+            Begin met **In het kort**: twee of drie zinnen met doel, kern en \
+            belangrijkste uitkomst. Werk daarna alle wezenlijke onderwerpen uit \
+            onder korte, inhoudelijke kopjes, bij voorkeur in de volgorde waarin \
+            ze besproken zijn. Voeg alleen wanneer van toepassing aparte blokken \
+            toe voor **Besluiten**, **Acties**, **Open vragen**, **Voorbeelden** of \
+            **Vervolg**. Maak het resultaat compact bij eenvoudige inhoud en \
+            uitgebreider bij lange of complexe inhoud. \(commonRules)
             """,
             icon: "text.alignleft",
             category: .samenvatten,
@@ -133,13 +146,16 @@ extension AIMode {
             id: "builtin.uitgebreide_samenvatting",
             name: "Uitgebreide samenvatting",
             systemPrompt: """
-            Schrijf een uitgebreide, gestructureerde samenvatting van het \
-            transcript in het Nederlands. Gebruik korte kopjes voor de \
-            verschillende onderwerpen die aan bod komen, en werk elk onderwerp \
-            uit in een alinea of bulletlijst. Behoud nuance, context en \
-            belangrijke details, maar laat spreektaal, herhaling en zijsporen \
-            weg. Sluit af met een kort kopje met eventuele open vragen of \
-            vervolgstappen als die in het gesprek naar voren komen. \(commonRules)
+            Schrijf een grondige, gestructureerde samenvatting voor iemand die de \
+            opname niet heeft gehoord. Begin met **Kernsamenvatting**. Behandel \
+            daarna ieder inhoudelijk onderwerp in de oorspronkelijke volgorde, \
+            met een duidelijke tussenkop en concrete bullets of korte alinea's. \
+            Behoud argumenten, context, relevante voorbeelden, bezwaren, nuances \
+            en conclusies. Neem alle wezenlijke onderwerpen mee, maar verwijder \
+            small talk, herhaling en zijsporen. Sluit waar van toepassing af met \
+            **Besluiten**, **Acties en toezeggingen** en **Openstaande punten**. \
+            Noem bij een actie alleen verantwoordelijke en termijn als die echt \
+            zijn genoemd. \(commonRules)
             """,
             icon: "text.justify",
             category: .samenvatten,
@@ -155,6 +171,23 @@ extension AIMode {
             geen small talk, herhaling of vulwoorden op. \(commonRules)
             """,
             icon: "list.bullet",
+            category: .samenvatten,
+            isBuiltin: true
+        ),
+        AIMode(
+            id: "builtin.redeneringsoverzicht",
+            name: "Redeneringsoverzicht",
+            systemPrompt: """
+            Breng de redenering in het transcript overzichtelijk in kaart. Begin \
+            met **Centrale vraag of stelling**. Geef daarna per belangrijk \
+            onderwerp: **Standpunt**, **Onderbouwing uit het gesprek**, \
+            **Tegenwerpingen of alternatieven** en **Onzekerheden**. Eindig met \
+            **Conclusies uit het gesprek** en **Nog niet beantwoord**. Maak geen \
+            eigen redenering en presenteer een aanname niet als feit. Laat zien \
+            wanneer sprekers van mening verschillen of wanneer een conclusie \
+            slechts voorlopig is. \(commonRules)
+            """,
+            icon: "brain",
             category: .samenvatten,
             isBuiltin: true
         ),
@@ -179,19 +212,23 @@ extension AIMode {
             id: "builtin.notulen",
             name: "Notulen",
             systemPrompt: """
-            Maak beknopte notulen van deze vergadering in het Nederlands. \
-            Gebruik de volgende kopjes, en laat een kopje weg als er geen \
-            informatie voor is:
+            Maak zakelijke notulen die snel scanbaar zijn én voldoende detail \
+            bevatten voor opvolging. Begin met **Vergadering in het kort**. Voeg \
+            **Datum**, **Onderwerp** en **Aanwezigen** alleen toe als die werkelijk \
+            uit het transcript blijken. Beschrijf daarna alle **Besproken \
+            onderwerpen** in de oorspronkelijke volgorde; vermeld per onderwerp \
+            de kernpunten, relevante standpunten, concrete besluiten en nog \
+            openstaande vragen.
 
-            **Aanwezigen** — alleen als de deelnemers uit het transcript af te \
-            leiden zijn.
-            **Onderwerpen** — korte bulletlijst van wat er besproken is.
-            **Besluiten** — wat is er concreet besloten.
-            **Actiepunten** — per punt de taak, en eigenaar en deadline als \
-            genoemd (formaat: "— [eigenaar] · [deadline]").
-
-            Wees feitelijk en zakelijk; verzin geen aanwezigen of besluiten die \
-            er niet zijn. \(commonRules)
+            Sluit af met **Acties en toezeggingen**. Noteer per actie de taak, de \
+            verantwoordelijke en de termijn. Koppel een actie alleen aan een \
+            persoon wanneer diens naam letterlijk in het transcript bij die actie \
+            wordt genoemd. Schrijf anders exact **Eigenaar: niet duidelijk \
+            genoemd.** bij Nederlandse uitvoer, **Owner: not clearly named.** bij \
+            Engelse uitvoer of **Verantwortlich: nicht eindeutig genannt.** bij \
+            Duitse uitvoer. Gebruik de overeenkomstige gelokaliseerde variant van \
+            "niet genoemd" voor een ontbrekende termijn. Neem \
+            geen algemene observatie als actie op. \(commonRules)
             """,
             icon: "list.bullet.clipboard",
             category: .structureren,
@@ -202,7 +239,7 @@ extension AIMode {
             name: "Doktersafspraak",
             systemPrompt: """
             Zet dit gesprek met een arts of zorgverlener om in een overzichtelijk \
-            verslag in het Nederlands. Gebruik de volgende kopjes en laat een \
+            verslag. Gebruik de volgende kopjes en laat een \
             kopje weg als er niets over gezegd is:
 
             **Klachten** — de gemelde klachten of symptomen.
@@ -222,22 +259,89 @@ extension AIMode {
             isBuiltin: true
         ),
 
-        // MARK: Schrijven
-
         AIMode(
-            id: "builtin.email",
-            name: "E-mail",
+            id: "builtin.vraag_en_antwoord",
+            name: "Vraag en antwoord",
             systemPrompt: """
-            Zet het transcript om in een professionele maar warme Nederlandse \
-            e-mail. Gebruik een passende aanhef en afsluiting, korte alinea's en \
-            een duidelijke, vriendelijke toon. Behoud de intentie en de \
-            belangrijkste punten van de spreker; laat spreektaal en herhaling \
-            weg. \(commonRules)
+            Zet het inhoudelijke gesprek om in een overzicht met vragen en de \
+            bijbehorende antwoorden. Combineer vervolgvragen die over hetzelfde \
+            onderwerp gaan. Formuleer vragen kort, maar behoud in de antwoorden \
+            de betekenis, nuance, voorbeelden en eventuele voorbehouden van de \
+            spreker. Maak geen vraag van gewone opmerkingen en laat small talk \
+            weg. Gebruik per onderdeel **Vraag** en **Antwoord**. \(commonRules)
             """,
-            icon: "envelope",
-            category: .schrijven,
+            icon: "bubble.left.and.text.bubble.right",
+            category: .structureren,
             isBuiltin: true
         ),
+        AIMode(
+            id: "builtin.lezing_workshop",
+            name: "Lezing of workshop",
+            systemPrompt: """
+            Maak studeerbare notities van deze lezing, training, webinar of \
+            workshop. Begin met **Overzicht** en vermeld doel en centrale thema's. \
+            Werk vervolgens de behandelde stof in logische hoofdstukken uit met \
+            definities, uitleg, voorbeelden en praktische toepassingen uit de \
+            opname. Voeg waar aanwezig **Vragen en antwoorden**, **Nog niet \
+            behandeld**, **Genoemde bronnen** en **Belangrijk om te onthouden** \
+            toe. Behoud vaktermen en corrigeer een vermoedelijke transcriptiefout \
+            alleen wanneer de juiste lezing vrijwel zeker is; markeer twijfel \
+            anders als onduidelijk. Schrijf voor iemand die niet aanwezig was en \
+            de inhoud later wil bestuderen of toepassen. \(commonRules)
+            """,
+            icon: "book.closed",
+            category: .structureren,
+            isBuiltin: true
+        ),
+        AIMode(
+            id: "builtin.interview",
+            name: "Interviewverslag",
+            systemPrompt: """
+            Maak een feitelijk interviewverslag. Begin met het centrale onderwerp \
+            en groepeer daarna de uitspraken van de geïnterviewde per thema. Neem \
+            relevante ervaringen, argumenten, twijfels, voorbeelden en opvallende \
+            formuleringen op. Gebruik alleen een letterlijk citaat als de precieze \
+            bewoording betrouwbaar in het transcript staat. Beoordeel de persoon \
+            niet en trek geen conclusies over geschiktheid tenzij daar expliciet \
+            om wordt gevraagd. \(commonRules)
+            """,
+            icon: "person.2",
+            category: .structureren,
+            isBuiltin: true
+        ),
+        AIMode(
+            id: "builtin.brainstorm",
+            name: "Brainstorm",
+            systemPrompt: """
+            Structureer deze brainstorm zonder ideeën voortijdig af te wijzen. \
+            Gebruik de kopjes **Doel of vraagstuk**, **Ideeën per thema**, \
+            **Kansrijke richtingen**, **Aandachtspunten** en **Volgende stappen**. \
+            Voeg vergelijkbare ideeën samen maar verlies unieke voorstellen niet. \
+            Zet een richting alleen bij kansrijk als de deelnemers daar zelf \
+            positieve signalen over geven; bedenk geen eigen rangorde. \(commonRules)
+            """,
+            icon: "lightbulb",
+            category: .structureren,
+            isBuiltin: true
+        ),
+        AIMode(
+            id: "builtin.klant_adviesgesprek",
+            name: "Klant- of adviesgesprek",
+            systemPrompt: """
+            Maak een bruikbaar verslag van dit klant-, intake- of adviesgesprek. \
+            Gebruik waar aanwezig de kopjes **Aanleiding**, **Behoeften en doelen**, \
+            **Huidige situatie**, **Problemen of bezwaren**, **Besproken oplossingen**, \
+            **Afspraken**, **Actiepunten** en **Open vragen**. Benoem bij acties alleen \
+            een eigenaar, datum, budget of besluitvormer wanneer die expliciet is \
+            genoemd. Schrijf voor intern vervolg én om afspraken terug te kunnen \
+            vinden. \(commonRules)
+            """,
+            icon: "person.2",
+            category: .structureren,
+            isBuiltin: true
+        ),
+
+        // MARK: Schrijven
         AIMode(
             id: "builtin.linkedin",
             name: "LinkedIn-post",
@@ -269,6 +373,23 @@ extension AIMode {
             \(commonRules)
             """,
             icon: "sparkles",
+            category: .opschonen,
+            isBuiltin: true
+        ),
+        AIMode(
+            id: "builtin.volledig_transcript",
+            name: "Volledig transcript",
+            systemPrompt: """
+            Maak van de invoer een volledig, extern deelbaar transcript. Behoud \
+            alle inhoud, voorbeelden, details, betekenisvolle herhalingen en de \
+            chronologische volgorde. Maak sprekerswisselingen duidelijk met de \
+            beschikbare sprekerlabels. Verbeter alleen interpunctie, hoofdletters \
+            en evidente spraak-naar-tekstfouten; herschrijf uitspraken niet en vat \
+            niets samen. Voeg geen titel, analyse, commentaar, conclusie of nieuwe \
+            informatie toe. Markeer een onbegrijpelijke passage als \
+            **[onverstaanbaar]** in plaats van te gokken. \(commonRules)
+            """,
+            icon: "doc.text",
             category: .opschonen,
             isBuiltin: true
         ),

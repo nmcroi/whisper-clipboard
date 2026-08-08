@@ -8,6 +8,9 @@ public enum SyncStatus: Equatable, Sendable {
     /// iCloud is unavailable: no account signed in, or the build has no CloudKit
     /// entitlement (ad-hoc dev builds, CI). Sync stays dormant, quietly.
     case unavailable(reason: String)
+    /// Local history exists but this database variant has not yet been approved
+    /// to merge with the currently signed-in iCloud account.
+    case requiresApproval(localCount: Int, accountChanged: Bool)
     /// Sync is active. `lastSync` is the last successful exchange, if any.
     case active(lastSync: Date?)
     /// A transient error surfaced from the engine; sync keeps retrying.
@@ -20,6 +23,11 @@ public enum SyncStatus: Equatable, Sendable {
             return "Uitgeschakeld"
         case .unavailable:
             return "iCloud niet beschikbaar"
+        case .requiresApproval(let localCount, let accountChanged):
+            if accountChanged {
+                return "Gepauzeerd — ander iCloud-account"
+            }
+            return "Wacht op toestemming voor \(localCount) lokale items"
         case .active(let lastSync):
             guard let lastSync else { return "Actief" }
             let f = DateFormatter()

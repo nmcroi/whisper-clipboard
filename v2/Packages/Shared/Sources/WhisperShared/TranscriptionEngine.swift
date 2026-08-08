@@ -34,9 +34,39 @@ public struct TranscriptionResult: Sendable, Equatable {
     public var text: String
     public var segments: [Core.TranscriptSegment]
 
-    public init(text: String, segments: [Core.TranscriptSegment]) {
+    /// De werkelijk opgenomen audioduur in seconden, gemeten aan het aantal
+    /// weggeschreven samples. Dit is iets anders dan de klok op het scherm: die
+    /// loopt door zolang de opname "aan" staat, ook als de microfoon geen
+    /// buffers meer levert. Een gat tussen die twee betekent verloren audio
+    /// (bevinding 2026-08-03). `0` wanneer onbekend.
+    public var audioDuration: Double
+
+    /// Niet-fatale storing tijdens de opname: een deel van de audio is verloren
+    /// gegaan (bijvoorbeeld een mislukte schrijfactie naar het tijdelijke
+    /// bestand), maar wat wél op schijf stond is gewoon getranscribeerd. De
+    /// aanroeper meldt dit náást het resultaat in plaats van het bruikbare deel
+    /// weg te gooien (bevinding 2026-08-03). `nil` wanneer de opname vlekkeloos
+    /// verliep.
+    public var partialFailure: String?
+
+    /// Het tijdelijke opnamebestand dat bewust is blijven staan omdat de
+    /// aanroeper een kopie wil bewaren. De aanroeper is er daarna eigenaar van:
+    /// verplaatsen als het bewaren lukt, anders zelf opruimen. `nil` wanneer de
+    /// opname is weggegooid, wat de standaard blijft.
+    public var preservedAudioURL: URL?
+
+    public init(
+        text: String,
+        segments: [Core.TranscriptSegment],
+        audioDuration: Double = 0,
+        partialFailure: String? = nil,
+        preservedAudioURL: URL? = nil
+    ) {
         self.text = text
         self.segments = segments
+        self.audioDuration = audioDuration
+        self.partialFailure = partialFailure
+        self.preservedAudioURL = preservedAudioURL
     }
 
     public static let empty = TranscriptionResult(text: "", segments: [])

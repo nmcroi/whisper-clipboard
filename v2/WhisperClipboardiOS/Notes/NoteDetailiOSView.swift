@@ -117,8 +117,8 @@ struct NoteDetailiOSView: View {
         // Hele notitie samenvoegen met een andere (task 4a).
         .sheet(isPresented: $showMergeSheet) {
             NotePickerSheet(
-                title: "Voeg samen met…",
-                header: "Alle opnames verhuizen naar de gekozen notitie",
+                title: L10n.string( "Voeg samen met…", locale: app.interfaceLanguage.locale),
+                header: L10n.string( "Alle opnames verhuizen naar de gekozen notitie", locale: app.interfaceLanguage.locale),
                 excludingNoteId: note.id
             ) { targetNoteId in
                 mergeNote(into: targetNoteId)
@@ -140,11 +140,11 @@ struct NoteDetailiOSView: View {
         // Losse sessie verplaatsen naar een andere notitie (task 4b).
         .sheet(item: $movingEntry) { moving in
             NotePickerSheet(
-                title: "Verplaats naar…",
-                header: "Deze opname verhuist naar de gekozen notitie",
+                title: L10n.string( "Verplaats naar…", locale: app.interfaceLanguage.locale),
+                header: L10n.string( "Deze opname verhuist naar de gekozen notitie", locale: app.interfaceLanguage.locale),
                 excludingNoteId: note.id
             ) { targetNoteId in
-                try? app.history?.moveEntryToNote(entryId: moving.id, noteId: targetNoteId)
+                moveEntry(moving.id, to: targetNoteId)
             }
             .environmentObject(app)
             .preferredColorScheme(app.appearance.preferredColorScheme)
@@ -152,7 +152,7 @@ struct NoteDetailiOSView: View {
         .alert("Notitie hernoemen", isPresented: $showRename) {
             TextField("Titel", text: $renameText)
             Button("Bewaar") {
-                try? app.history?.renameNote(id: note.id, title: renameText)
+                renameNote()
             }
             Button("Annuleer", role: .cancel) {}
         }
@@ -163,12 +163,10 @@ struct NoteDetailiOSView: View {
         ) {
             Button("Verwijder, opnames behouden") {
                 // Veilige standaard: entries worden losse Geschiedenis-items.
-                try? app.history?.deleteNote(id: note.id, deleteEntries: false)
-                dismiss()
+                deleteNote(deleteEntries: false)
             }
             Button("Verwijder alles", role: .destructive) {
-                try? app.history?.deleteNote(id: note.id, deleteEntries: true)
-                dismiss()
+                deleteNote(deleteEntries: true)
             }
             Button("Annuleer", role: .cancel) {}
         } message: {
@@ -222,7 +220,7 @@ struct NoteDetailiOSView: View {
                     }
                     Button {
                         // Terug naar Geschiedenis als losse opname.
-                        try? app.history?.detachEntryFromNote(entryId: entry.id)
+                        detachEntry(entry.id)
                     } label: {
                         Label("Maak losse opname", systemImage: "arrow.uturn.backward")
                     }
@@ -266,7 +264,12 @@ struct NoteDetailiOSView: View {
             UIPasteboard.general.string = concatenatedText(entries)
             didCopy = true
         } label: {
-            Label(didCopy ? "Gekopieerd" : "Kopieer notitie", systemImage: didCopy ? "checkmark" : "doc.on.doc")
+            Label(
+                didCopy
+                    ? L10n.string( "Gekopieerd", locale: app.interfaceLanguage.locale)
+                    : L10n.string( "Kopieer notitie", locale: app.interfaceLanguage.locale),
+                systemImage: didCopy ? "checkmark" : "doc.on.doc"
+            )
                 .font(ThemeFont.ui(16, weight: .semibold))
                 .foregroundStyle(Theme.onAccent)
                 .frame(maxWidth: .infinity)
@@ -335,12 +338,14 @@ struct NoteDetailiOSView: View {
             let time = Self.formatElapsed(controller.elapsed)
             if controller.isPaused {
                 return controller.pausedByInterruption
-                    ? "\(time) — gepauzeerd (onderbreking)"
-                    : "\(time) — gepauzeerd"
+                    ? String(format: L10n.string( "%@ — gepauzeerd (onderbreking)", locale: app.interfaceLanguage.locale), locale: app.interfaceLanguage.locale, time)
+                    : String(format: L10n.string( "%@ — gepauzeerd", locale: app.interfaceLanguage.locale), locale: app.interfaceLanguage.locale, time)
             }
             return time
         }
-        return controller.isTranscribing ? "Bezig met transcriberen…" : "Tik om toe te voegen"
+        return controller.isTranscribing
+            ? L10n.string( "Bezig met transcriberen…", locale: app.interfaceLanguage.locale)
+            : L10n.string( "Tik om toe te voegen", locale: app.interfaceLanguage.locale)
     }
 
     // MARK: - Toolbar
@@ -415,12 +420,50 @@ struct NoteDetailiOSView: View {
     /// opnames chronologisch naar de doelnotitie, verwijdert dan deze nu lege
     /// notitie (opnames behouden) en sluit het detail terug naar de lijst.
     private func mergeNote(into targetNoteId: String) {
-        let entries = fetchEntries() // al oudste → nieuwste
-        for entry in entries {
-            try? app.history?.moveEntryToNote(entryId: entry.id, noteId: targetNoteId)
+        guard let history = app.history else { return }
+        do {
+            try history.mergeNote(sourceNoteId: note.id, into: targetNoteId)
+            dismiss()
+        } catch {
+            app.presentDataChangeError(error)
         }
-        try? app.history?.deleteNote(id: note.id, deleteEntries: false)
-        dismiss()
+    }
+
+    private func moveEntry(_ entryId: String, to targetNoteId: String) {
+        guard let history = app.history else { return }
+        do {
+            try history.moveEntryToNote(entryId: entryId, noteId: targetNoteId)
+        } catch {
+            app.presentDataChangeError(error)
+        }
+    }
+
+    private func detachEntry(_ entryId: String) {
+        guard let history = app.history else { return }
+        do {
+            try history.detachEntryFromNote(entryId: entryId)
+        } catch {
+            app.presentDataChangeError(error)
+        }
+    }
+
+    private func renameNote() {
+        guard let history = app.history else { return }
+        do {
+            try history.renameNote(id: note.id, title: renameText)
+        } catch {
+            app.presentDataChangeError(error)
+        }
+    }
+
+    private func deleteNote(deleteEntries: Bool) {
+        guard let history = app.history else { return }
+        do {
+            try history.deleteNote(id: note.id, deleteEntries: deleteEntries)
+            dismiss()
+        } catch {
+            app.presentDataChangeError(error)
+        }
     }
 
     /// Bouwt een synthetische ``TranscriptEntry`` uit de samengevoegde tekst van
@@ -449,14 +492,16 @@ struct NoteDetailiOSView: View {
         _ = app.history?.revision
         let live = (try? app.history?.note(id: note.id))?.title ?? note.title
         let trimmed = live.trimmingCharacters(in: .whitespacesAndNewlines)
-        return trimmed.isEmpty ? "Naamloze notitie" : trimmed
+        return trimmed.isEmpty
+            ? L10n.string( "Naamloze notitie", locale: app.interfaceLanguage.locale)
+            : trimmed
     }
 
     private func sessionTime(for entry: TranscriptEntry) -> String {
         guard let date = entry.timestamp else { return "" }
         let formatter = DateFormatter()
-        formatter.locale = Locale(identifier: "nl_NL")
-        formatter.dateFormat = "d MMM HH:mm"
+        formatter.locale = app.interfaceLanguage.locale
+        formatter.setLocalizedDateFormatFromTemplate("dMMMHHmm")
         return formatter.string(from: date)
     }
 

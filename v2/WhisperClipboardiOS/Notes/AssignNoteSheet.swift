@@ -38,7 +38,8 @@ struct AssignNoteSheet: View {
         }
         .onAppear {
             let trimmed = initialTitle.trimmingCharacters(in: .whitespacesAndNewlines)
-            titleText = (trimmed == "Naamloze notitie") ? "" : trimmed
+            let untitled = L10n.string( "Naamloze notitie", locale: app.interfaceLanguage.locale)
+            titleText = (trimmed == untitled || trimmed == "Naamloze notitie") ? "" : trimmed
         }
     }
 
@@ -110,7 +111,9 @@ struct AssignNoteSheet: View {
 
     private func title(for note: Note) -> String {
         let trimmed = note.title.trimmingCharacters(in: .whitespacesAndNewlines)
-        return trimmed.isEmpty ? "Naamloze notitie" : trimmed
+        return trimmed.isEmpty
+            ? L10n.string( "Naamloze notitie", locale: app.interfaceLanguage.locale)
+            : trimmed
     }
 
     // MARK: - Uitkomsten
@@ -119,22 +122,25 @@ struct AssignNoteSheet: View {
     /// nu benoemde notitie.
     private func saveName() {
         let trimmed = titleText.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !trimmed.isEmpty else { return }
-        try? app.history?.renameNote(id: tempNoteId, title: trimmed)
-        dismiss()
+        guard !trimmed.isEmpty, let history = app.history else { return }
+        do {
+            try history.renameNote(id: tempNoteId, title: trimmed)
+            dismiss()
+        } catch {
+            app.presentDataChangeError(error)
+        }
     }
 
     /// Verplaatst de zojuist opgenomen entry naar de gekozen notitie, verwijdert de
     /// nu lege tijdelijke notitie, sluit de sheet en laat het detail zich sluiten.
     private func move(to targetNoteId: String) {
-        let entries = (try? app.history?.noteEntries(noteId: tempNoteId)) ?? []
-        for entry in entries {
-            try? app.history?.moveEntryToNote(entryId: entry.id, noteId: targetNoteId)
+        guard let history = app.history else { return }
+        do {
+            try history.mergeNote(sourceNoteId: tempNoteId, into: targetNoteId)
+            dismiss()
+            onMovedToOther?()
+        } catch {
+            app.presentDataChangeError(error)
         }
-        // De tijdelijke notitie is nu leeg (entries verplaatst) → veilig te
-        // verwijderen zonder entry-verlies.
-        try? app.history?.deleteNote(id: tempNoteId, deleteEntries: false)
-        dismiss()
-        onMovedToOther?()
     }
 }

@@ -11,8 +11,10 @@ import Foundation
 /// beide targets in `project.yml`): de widget refereert het type in `Button(intent:)`,
 /// de app voert het uit.
 struct StopRecordingIntent: LiveActivityIntent {
-    static let title: LocalizedStringResource = "Opname stoppen"
-    static let description = IntentDescription("Stopt de lopende opname en transcribeert.")
+    static let title = LocalizedStringResource("Opname stoppen")
+    static let description = IntentDescription(
+        LocalizedStringResource("Stopt de lopende opname en transcribeert.")
+    )
 
     /// Draait in het app-proces. Vraagt de actieve controller (indien er één
     /// draait) om te stoppen; is er geen actieve controller (app opnieuw gestart,

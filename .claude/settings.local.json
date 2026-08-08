@@ -9,7 +9,10 @@
       "Bash(git check-ignore *)",
       "WebFetch(domain:cocoadev.github.io)",
       "Bash(ls tests/conftest.py)",
-      "Bash(grep -rn \"pytest\\\\|tool.pytest\\\\|testpaths\\\\|addopts\" pyproject.toml)"
+      "Bash(grep -rn \"pytest\\\\|tool.pytest\\\\|testpaths\\\\|addopts\" pyproject.toml)",
+      "Bash(xcrun devicectl *)",
+      "Bash(xcode-select -p)",
+      "Bash(xcodebuild -version)"
     ]
   }
 }

@@ -74,6 +74,49 @@ final class HistorySyncTests: XCTestCase {
         XCTAssertEqual(back.entry.speakerNames, ["Spreker 1": "Klant", "Spreker 2": "Verkoper"])
     }
 
+    func testTranscriptCloudRecordRoundTripPreservesNoteLink() {
+        let local = TranscriptRecord(
+            entry: entry(id: "linked"),
+            modifiedAt: 1_700_000_000_000,
+            noteId: "note-123"
+        )
+        let zoneID = CKRecordZone.ID(zoneName: TranscriptCloudRecord.zoneName)
+        let ck = CKRecord(
+            recordType: TranscriptCloudRecord.recordType,
+            recordID: CKRecord.ID(recordName: local.id, zoneID: zoneID)
+        )
+
+        TranscriptCloudRecord.apply(local, to: ck)
+        let back = TranscriptCloudRecord.local(from: ck)
+
+        XCTAssertEqual(back.noteId, "note-123")
+        XCTAssertTrue(TranscriptCloudRecord.carriesNoteLink(ck))
+    }
+
+    func testNoteCloudRecordRoundTripPreservesAllFields() {
+        let local = NoteRecord(
+            id: "note-123",
+            title: "Vakantie",
+            createdAt: "2026-06-21T08:00:00Z",
+            modifiedAt: "2026-06-21T10:00:00Z",
+            sortKey: 1_750_496_400
+        )
+        let zoneID = CKRecordZone.ID(zoneName: NoteCloudRecord.zoneName)
+        let ck = CKRecord(
+            recordType: NoteCloudRecord.recordType,
+            recordID: CKRecord.ID(recordName: local.id, zoneID: zoneID)
+        )
+
+        NoteCloudRecord.apply(local, to: ck)
+        let back = NoteCloudRecord.local(from: ck)
+
+        XCTAssertEqual(back.id, local.id)
+        XCTAssertEqual(back.title, local.title)
+        XCTAssertEqual(back.createdAt, local.createdAt)
+        XCTAssertEqual(back.modifiedAt, local.modifiedAt)
+        XCTAssertEqual(back.modifiedAtMillis, local.modifiedAtMillis)
+    }
+
     // MARK: - Conflict resolution (last-writer-wins)
 
     func testResolveTakesRemoteWhenLocalAbsent() {
@@ -106,6 +149,20 @@ final class HistorySyncTests: XCTestCase {
 
     // MARK: - Pending journal
 
+    func testDebugSyncSidecarsAreIsolatedFromReleaseNames() {
+        #if DEBUG
+        XCTAssertEqual(HistorySyncStorage.stateFilename, "sync-state-dev.bin")
+        XCTAssertEqual(HistorySyncStorage.pendingFilename, "sync-pending-dev.json")
+        XCTAssertEqual(HistorySyncStorage.accountFilename, "sync-account-dev.json")
+        XCTAssertEqual(HistorySyncStorage.seedFilename, "sync-seed-dev.json")
+        #else
+        XCTAssertEqual(HistorySyncStorage.stateFilename, "sync-state-release.bin")
+        XCTAssertEqual(HistorySyncStorage.pendingFilename, "sync-pending-release.json")
+        XCTAssertEqual(HistorySyncStorage.accountFilename, "sync-account-release.json")
+        XCTAssertEqual(HistorySyncStorage.seedFilename, "sync-seed-release.json")
+        #endif
+    }
+
     func testPendingJournalReplayOrdering() throws {
         let url = FileManager.default.temporaryDirectory
             .appendingPathComponent("journal-\(UUID().uuidString).json")
@@ -132,6 +189,21 @@ final class HistorySyncTests: XCTestCase {
         XCTAssertEqual(journal.pending(), [.upsert(id: "b"), .delete(id: "a")])
     }
 
+    func testPendingJournalKeepsTranscriptAndNoteWithSameIDSeparate() throws {
+        let url = FileManager.default.temporaryDirectory
+            .appendingPathComponent("journal-\(UUID().uuidString).json")
+        defer { try? FileManager.default.removeItem(at: url) }
+        let journal = HistoryPendingJournal(fileURL: url)
+
+        journal.append(.upsert(id: "same-id"))
+        journal.append(.noteUpsert(id: "same-id"))
+
+        XCTAssertEqual(journal.pending(), [
+            .upsert(id: "same-id"),
+            .noteUpsert(id: "same-id")
+        ])
+    }
+
     func testPendingJournalClear() throws {
         let url = FileManager.default.temporaryDirectory
             .appendingPathComponent("journal-\(UUID().uuidString).json")
@@ -143,6 +215,49 @@ final class HistorySyncTests: XCTestCase {
         XCTAssertEqual(journal.pending(), [.upsert(id: "b")])
         journal.clearAll()
         XCTAssertEqual(journal.pending(), [])
+    }
+
+    func testAcknowledgingOlderMutationDoesNotClearNewerMutationForSameID() throws {
+        let url = FileManager.default.temporaryDirectory
+            .appendingPathComponent("journal-\(UUID().uuidString).json")
+        defer { try? FileManager.default.removeItem(at: url) }
+        let journal = HistoryPendingJournal(fileURL: url)
+
+        journal.append(.upsert(id: "a"))
+        let first = try XCTUnwrap(journal.pendingItems().first)
+        journal.append(.delete(id: "a"))
+
+        journal.clear(journalKey: first.change.journalKey, token: first.token)
+        XCTAssertEqual(journal.pending(), [.delete(id: "a")])
+
+        let latest = try XCTUnwrap(journal.pendingItems().first)
+        journal.clear(journalKey: latest.change.journalKey, token: latest.token)
+        XCTAssertTrue(journal.pending().isEmpty)
+    }
+
+    func testAccountBindingRoundTripAndReplacement() throws {
+        let url = FileManager.default.temporaryDirectory
+            .appendingPathComponent("account-\(UUID().uuidString).json")
+        defer { try? FileManager.default.removeItem(at: url) }
+        let binding = HistorySyncAccountBinding(fileURL: url)
+
+        XCTAssertNil(binding.userRecordName())
+        XCTAssertTrue(binding.bind(to: "account-a"))
+        XCTAssertEqual(binding.userRecordName(), "account-a")
+        XCTAssertTrue(binding.bind(to: "account-b"))
+        XCTAssertEqual(binding.userRecordName(), "account-b")
+    }
+
+    func testSeedLedgerTracksAccountsIndependently() throws {
+        let url = FileManager.default.temporaryDirectory
+            .appendingPathComponent("seed-\(UUID().uuidString).json")
+        defer { try? FileManager.default.removeItem(at: url) }
+        let ledger = HistorySyncSeedLedger(fileURL: url)
+
+        XCTAssertFalse(ledger.contains("account-a"))
+        XCTAssertTrue(ledger.markSeeded("account-a"))
+        XCTAssertTrue(ledger.contains("account-a"))
+        XCTAssertFalse(ledger.contains("account-b"))
     }
 
     // MARK: - HistoryStore change hook
@@ -170,6 +285,54 @@ final class HistorySyncTests: XCTestCase {
         ])
     }
 
+    func testNoteMutationsEmitNoteAndTranscriptChanges() throws {
+        let store = try makeStore()
+        var changes: [HistoryChange] = []
+        store.onChange = { changes.append($0) }
+
+        let note = try store.createNote(title: "Vakantie")
+        XCTAssertEqual(changes, [.noteUpsert(id: note.id)])
+
+        changes.removeAll()
+        try store.appendToNote(entry(id: "recording"), noteId: note.id)
+        XCTAssertEqual(changes, [
+            .upsert(id: "recording"),
+            .noteUpsert(id: note.id)
+        ])
+
+        changes.removeAll()
+        try store.detachEntryFromNote(entryId: "recording")
+        XCTAssertEqual(changes, [
+            .upsert(id: "recording"),
+            .noteUpsert(id: note.id)
+        ])
+
+        changes.removeAll()
+        try store.deleteNote(id: note.id, deleteEntries: false)
+        XCTAssertEqual(changes, [.noteDelete(id: note.id)])
+    }
+
+    func testRemoteNoteChangesDoNotReEmitAndDeletionDetachesEntries() throws {
+        let store = try makeStore()
+        let note = NoteRecord(
+            id: "remote-note",
+            title: "Remote",
+            createdAt: "2026-06-21T08:00:00Z",
+            modifiedAt: "2026-06-21T10:00:00Z",
+            sortKey: 1_750_496_400
+        )
+        try store.applyRemoteNoteUpsert(note)
+        try store.appendToNote(entry(id: "linked"), noteId: note.id)
+
+        var changes: [HistoryChange] = []
+        store.onChange = { changes.append($0) }
+        try store.applyRemoteNoteDelete(id: note.id)
+
+        XCTAssertTrue(changes.isEmpty)
+        XCTAssertNil(try store.note(id: note.id))
+        XCTAssertNil(try store.record(id: "linked")?.noteId)
+    }
+
     func testDeleteAllEmitsDeletePerEntry() throws {
         let store = try makeStore()
         try store.add(entry(id: "a"))
@@ -179,6 +342,14 @@ final class HistorySyncTests: XCTestCase {
         try store.deleteAll()
         XCTAssertEqual(Set(changes), [.delete(id: "a"), .delete(id: "b")])
         XCTAssertEqual(changes.count, 2)
+    }
+
+    func testAllRecordIDsIncludesCompleteExistingHistory() throws {
+        let store = try makeStore()
+        try store.add(entry(id: "b"))
+        try store.add(entry(id: "a"))
+
+        XCTAssertEqual(try store.allRecordIDs(), ["a", "b"])
     }
 
     func testRemoteApplyDoesNotReEmit() throws {
@@ -219,11 +390,9 @@ final class HistorySyncTests: XCTestCase {
         // Build a DB at the v4 schema (pre-modified_at), insert a row, then run
         // the full migrator and assert modified_at was backfilled from sort_key.
         let queue = try DatabaseQueue()
-        var partial = DatabaseMigrator()
         // Re-run only through v4 by using the real migrator up to that point:
         // simplest is to migrate fully (which includes v5) — instead we insert a
         // row via the store and confirm the backfill path produced a sane value.
-        _ = partial
         let store = try HistoryStore(dbQueue: queue, retentionProvider: { nil })
         // createdAt → 2026-06-21T10:00:00+02:00 → epoch seconds > 0 → modified_at
         // must be non-zero (either the insert stamp or the backfill).

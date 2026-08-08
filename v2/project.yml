@@ -109,33 +109,46 @@ targets:
       path: WhisperClipboard/Resources/Info.plist
       properties:
         CFBundleDevelopmentRegion: nl
-        CFBundleDisplayName: Whisper Clip
-        CFBundleName: Whisper Clip
+        CFBundleDisplayName: WhisperClip
+        CFBundleName: WhisperClip
         CFBundleIconFile: AppIcon
         CFBundleShortVersionString: $(MARKETING_VERSION)
         CFBundleVersion: $(CURRENT_PROJECT_VERSION)
         LSMinimumSystemVersion: $(MACOSX_DEPLOYMENT_TARGET)
         # Menu bar app: no Dock icon by default (toggled to .regular at runtime).
         LSUIElement: true
-        NSMicrophoneUsageDescription: "Whisper Clipboard gebruikt de microfoon om je spraak lokaal op je Mac om te zetten naar tekst. Er verlaat geen audio je computer."
-        NSAudioCaptureUsageDescription: "Whisper Clipboard gebruikt systeemaudio om live ondertitels te maken van wat er op je Mac klinkt. Er verlaat geen audio je computer."
+        NSMicrophoneUsageDescription: "WhisperClip gebruikt de microfoon om je spraak lokaal op je Mac om te zetten naar tekst. Er verlaat geen audio je computer."
+        NSAudioCaptureUsageDescription: "WhisperClip gebruikt systeemaudio om live ondertitels te maken van wat er op je Mac klinkt. Er verlaat geen audio je computer."
         ATSApplicationFontsPath: Fonts
         NSHumanReadableCopyright: "© 2026 NightStory"
         # --- Sparkle 2 auto-update configuration ---
-        # SUFeedURL: the appcast Sparkle polls for new versions.
-        # TODO(release): replace USER/whisper-clipboard with the real GitHub repo
-        # once the public repo exists. This "latest release" URL always points at
-        # the appcast.xml uploaded to the most recent GitHub Release.
-        SUFeedURL: "https://github.com/USER/whisper-clipboard/releases/latest/download/appcast.xml"
+        # SUFeedURL: de appcast die Sparkle raadpleegt voor nieuwe versies.
+        #
+        # BEWUST LEEG (bevinding 2026-08-03). Hier stond de letterlijke
+        # placeholder https://github.com/USER/whisper-clipboard/… Die naamruimte
+        # is door niemand geclaimd: iedereen kan het GitHub-account "USER"
+        # registreren en daarmee de updatefeed van deze NIET-gesandboxte app
+        # bepalen. Met SUEnableAutomaticChecks = true deed de app daar ook nog
+        # eens uit zichzelf periodiek uitgaande verzoeken naartoe.
+        #
+        # Een lege string is onmiskenbaar inert: Sparkle heeft geen feed en
+        # AppDelegate.updateFeedConfigured (die op !feed.isEmpty controleert)
+        # blijft false, dus de updater start niet en het menu-item blijft
+        # verborgen. Geen verzonnen URL: vul dit pas in met de ECHTE publieke
+        # release-locatie, en zet SUEnableAutomaticChecks dan pas weer aan.
+        SUFeedURL: ""
         # EdDSA public key. Sparkle verifies every downloaded update against this.
         # The matching PRIVATE key lives ONLY in the login keychain (service
         # "https://sparkle-project.org", account "nl.nielscroiset.whisperclipboard");
         # see Packaging/RELEASING.md. It must NEVER be committed. Generated with
         # Sparkle 2.9.4 `generate_keys` on 2026-07-03.
         SUPublicEDKey: "ykAoJsoYRdrAQb2cN0p7GPcLUxjTKwEwDmNeUkWPmEI="
-        # Check automatically, but ask the user before the first automatic check
-        # (Sparkle shows a one-time "check for updates automatically?" prompt).
-        SUEnableAutomaticChecks: true
+        # UIT (bevinding 2026-08-03): automatisch controleren mag pas zodra
+        # SUFeedURL hierboven een echte, door onszelf beheerde feed is. Anders
+        # praat de app periodiek uit zichzelf met een adres dat een derde kan
+        # overnemen. Het interval blijft staan zodat het klopt zodra dit weer aan
+        # gaat; zonder automatische controle doet het niets.
+        SUEnableAutomaticChecks: false
         SUScheduledCheckInterval: 86400
     entitlements:
       path: WhisperClipboard/WhisperClipboard.entitlements
@@ -153,7 +166,7 @@ targets:
         # appmenu en de Dock de naam van de executable/.app-bundel, dus alleen
         # CFBundleName/DisplayName aanpassen was niet genoeg. Target- en
         # schemanaam blijven "WhisperClipboard" (geen spatie in paden/CI).
-        PRODUCT_NAME: "Whisper Clip"
+        PRODUCT_NAME: "WhisperClip"
         # De Swift-module blijft "WhisperClipboard": anders wordt hij
         # "Whisper_Clip" en breekt elke `@testable import WhisperClipboard`.
         PRODUCT_MODULE_NAME: WhisperClipboard
@@ -184,7 +197,7 @@ targets:
         # XcodeGen leidt TEST_HOST af van de TARGETnaam, maar het product heet
         # sinds de hernoeming "Whisper Clip.app" — expliciet zetten dus, anders
         # vindt xcodebuild de host-app niet ("Could not find test host").
-        TEST_HOST: "$(BUILT_PRODUCTS_DIR)/Whisper Clip.app/Contents/MacOS/Whisper Clip"
+        TEST_HOST: "$(BUILT_PRODUCTS_DIR)/WhisperClip.app/Contents/MacOS/WhisperClip"
         BUNDLE_LOADER: "$(TEST_HOST)"
 
   # iOS companion app. Record → transcribe locally with Parakeet (Dutch) →
@@ -202,6 +215,10 @@ targets:
           # Fonts are copied intact into the app bundle root by the
           # postCompileScripts phase below (UIAppFonts references them by name).
           - "Resources/Fonts"
+      # Personal gebruikt dezelfde transportclient als de Mac. De Public-target
+      # krijgt deze bronbestanden nadrukkelijk niet.
+      - path: WhisperClipboard/PLAUD/PlaudClient.swift
+      - path: WhisperClipboard/PLAUD/PlaudClient+Wire.swift
     dependencies:
       - package: Core
       - package: WhisperShared
@@ -224,18 +241,21 @@ targets:
       path: WhisperClipboardiOS/Resources/Info.plist
       properties:
         CFBundleDevelopmentRegion: nl
-        CFBundleDisplayName: Whisper Clip
-        CFBundleName: Whisper Clip
+        CFBundleDisplayName: WhisperClip
+        CFBundleName: WhisperClip
         CFBundleShortVersionString: $(MARKETING_VERSION)
         CFBundleVersion: $(CURRENT_PROJECT_VERSION)
         LSRequiresIPhoneOS: true
+        # Alleen vrijgestelde standaardversleuteling (HTTPS, Keychain en
+        # Apple-systeemdiensten); geen zelf geïmplementeerde/non-exempt crypto.
+        ITSAppUsesNonExemptEncryption: false
         UILaunchScreen: {}
         UIApplicationSceneManifest:
           UIApplicationSupportsMultipleScenes: false
         # Portrait-primary: the record UI is a single vertical column.
         UISupportedInterfaceOrientations:
           - UIInterfaceOrientationPortrait
-        NSMicrophoneUsageDescription: "Whisper Clipboard gebruikt de microfoon om je spraak lokaal op je iPhone om te zetten naar tekst. Er verlaat geen audio je toestel."
+        NSMicrophoneUsageDescription: "WhisperClip gebruikt de microfoon om je spraak lokaal op je iPhone om te zetten naar tekst. Er verlaat geen audio je toestel."
         # Achtergrond-opname: laat de mic-capture doorlopen wanneer de app op de
         # achtergrond staat of het scherm vergrendeld is.
         UIBackgroundModes:
@@ -261,6 +281,7 @@ targets:
         TARGETED_DEVICE_FAMILY: "1"
         ASSETCATALOG_COMPILER_APPICON_NAME: AppIcon
         ASSETCATALOG_COMPILER_GLOBAL_ACCENT_COLOR_NAME: AccentColor
+        SWIFT_ACTIVE_COMPILATION_CONDITIONS: "$(inherited) WHISPERCLIP_PERSONAL"
         # Ad-hoc / dev signing so simulator + generic device builds run without a
         # Developer account. Real signing is supplied on the command line for a
         # device/TestFlight build (mirrors the mac target's parameterization).
@@ -291,7 +312,7 @@ targets:
     info:
       path: WhisperClipboardiOSWidgets/Info.plist
       properties:
-        CFBundleDisplayName: Whisper Clip
+        CFBundleDisplayName: WhisperClip
         CFBundleShortVersionString: $(MARKETING_VERSION)
         CFBundleVersion: $(CURRENT_PROJECT_VERSION)
         NSExtension:

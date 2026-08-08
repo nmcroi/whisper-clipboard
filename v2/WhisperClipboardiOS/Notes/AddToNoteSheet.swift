@@ -47,7 +47,7 @@ struct AddToNoteSheet: View {
         List {
             Section {
                 Button {
-                    newNoteTitle = "Notitie " + Self.dateTitleFormatter.string(from: Date())
+                    newNoteTitle = defaultNoteTitle
                     showNewNote = true
                 } label: {
                     Label("Nieuwe notitie…", systemImage: "plus")
@@ -82,25 +82,44 @@ struct AddToNoteSheet: View {
 
     private func title(for note: Note) -> String {
         let trimmed = note.title.trimmingCharacters(in: .whitespacesAndNewlines)
-        return trimmed.isEmpty ? "Naamloze notitie" : trimmed
+        return trimmed.isEmpty
+            ? L10n.string( "Naamloze notitie", locale: app.interfaceLanguage.locale)
+            : trimmed
     }
 
     private func move(to noteId: String) {
-        try? app.history?.moveEntryToNote(entryId: entryId, noteId: noteId)
-        onMoved?()
-        dismiss()
-    }
-
-    private func createAndMove() {
-        if let note = try? app.history?.createNote(title: newNoteTitle) {
-            move(to: note.id)
+        guard let history = app.history else { return }
+        do {
+            try history.moveEntryToNote(entryId: entryId, noteId: noteId)
+            onMoved?()
+            dismiss()
+        } catch {
+            app.presentDataChangeError(error)
         }
     }
 
-    private static let dateTitleFormatter: DateFormatter = {
-        let f = DateFormatter()
-        f.locale = Locale(identifier: "nl_NL")
-        f.dateFormat = "d MMM"
-        return f
-    }()
+    private func createAndMove() {
+        guard let history = app.history else { return }
+        do {
+            guard try history.createNote(title: newNoteTitle, movingEntryId: entryId) != nil else {
+                return
+            }
+            onMoved?()
+            dismiss()
+        } catch {
+            app.presentDataChangeError(error)
+        }
+    }
+
+    private var defaultNoteTitle: String {
+        let locale = app.interfaceLanguage.locale
+        let formatter = DateFormatter()
+        formatter.locale = locale
+        formatter.setLocalizedDateFormatFromTemplate("dMMM")
+        return String(
+            format: L10n.string( "Notitie %@", locale: locale),
+            locale: locale,
+            formatter.string(from: Date())
+        )
+    }
 }

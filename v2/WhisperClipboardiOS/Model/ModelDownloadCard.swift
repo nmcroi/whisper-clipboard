@@ -17,7 +17,7 @@ struct ModelDownloadCard: View {
                 .font(ThemeFont.ui(18, weight: .semibold))
                 .foregroundStyle(Theme.text)
 
-            Text("Whisper Clip transcribeert volledig op je iPhone. Download eenmalig het Nederlandse Parakeet-model (~460 MB). Daarna werkt alles offline.")
+            Text("WhisperClip transcribeert volledig op je iPhone. Download eenmalig het meertalige Parakeet-model (~460 MB). Daarna werkt alles offline.")
                 .font(ThemeFont.ui(14))
                 .foregroundStyle(Theme.textSecondary)
                 .multilineTextAlignment(.center)
@@ -64,7 +64,9 @@ struct ModelDownloadCard: View {
                 Task { await app.downloadModel() }
             } label: {
                 // After a failure the button doubles as the retry action.
-                Text(app.errorMessage == nil ? "Download model" : "Opnieuw proberen")
+                Text(app.errorMessage == nil
+                     ? L10n.string( "Download model", locale: app.interfaceLanguage.locale)
+                     : L10n.string( "Opnieuw proberen", locale: app.interfaceLanguage.locale))
                     .font(ThemeFont.ui(16, weight: .semibold))
                     .foregroundStyle(Theme.onAccent)
                     .frame(maxWidth: .infinity)
@@ -80,7 +82,13 @@ struct ModelDownloadCard: View {
     private func progressLabel(_ progress: Double) -> String {
         let percent = "\(Int(progress * 100))%"
         if let bytes = app.downloadBytes, bytes.totalMB > 0 {
-            return "\(percent) · \(bytes.downloadedMB) van \(bytes.totalMB) MB"
+            return String(
+                format: L10n.string( "%1$@ · %2$lld van %3$lld MB", locale: app.interfaceLanguage.locale),
+                locale: app.interfaceLanguage.locale,
+                percent,
+                bytes.downloadedMB,
+                bytes.totalMB
+            )
         }
         return percent
     }

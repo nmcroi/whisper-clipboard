@@ -7,7 +7,7 @@
 	<key>CFBundleDevelopmentRegion</key>
 	<string>nl</string>
 	<key>CFBundleDisplayName</key>
-	<string>Whisper Clip</string>
+	<string>WhisperClip</string>
 	<key>CFBundleExecutable</key>
 	<string>$(EXECUTABLE_NAME)</string>
 	<key>CFBundleIconFile</key>
@@ -17,7 +17,7 @@
 	<key>CFBundleInfoDictionaryVersion</key>
 	<string>6.0</string>
 	<key>CFBundleName</key>
-	<string>Whisper Clip</string>
+	<string>WhisperClip</string>
 	<key>CFBundlePackageType</key>
 	<string>APPL</string>
 	<key>CFBundleShortVersionString</key>
@@ -29,15 +29,15 @@
 	<key>LSUIElement</key>
 	<true/>
 	<key>NSAudioCaptureUsageDescription</key>
-	<string>Whisper Clipboard gebruikt systeemaudio om live ondertitels te maken van wat er op je Mac klinkt. Er verlaat geen audio je computer.</string>
+	<string>WhisperClip gebruikt systeemaudio om live ondertitels te maken van wat er op je Mac klinkt. Er verlaat geen audio je computer.</string>
 	<key>NSHumanReadableCopyright</key>
 	<string>© 2026 NightStory</string>
 	<key>NSMicrophoneUsageDescription</key>
-	<string>Whisper Clipboard gebruikt de microfoon om je spraak lokaal op je Mac om te zetten naar tekst. Er verlaat geen audio je computer.</string>
+	<string>WhisperClip gebruikt de microfoon om je spraak lokaal op je Mac om te zetten naar tekst. Er verlaat geen audio je computer.</string>
 	<key>SUEnableAutomaticChecks</key>
-	<true/>
+	<false/>
 	<key>SUFeedURL</key>
-	<string>https://github.com/USER/whisper-clipboard/releases/latest/download/appcast.xml</string>
+	<string></string>
 	<key>SUPublicEDKey</key>
 	<string>ykAoJsoYRdrAQb2cN0p7GPcLUxjTKwEwDmNeUkWPmEI=</string>
 	<key>SUScheduledCheckInterval</key>

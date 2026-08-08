@@ -8,33 +8,36 @@ import SwiftUI
 /// mailto- en klembord-fallbacks zodat het verslag nooit strandt.
 struct MeetingSheet: View {
     @ObservedObject var controller: MeetingController
+    @EnvironmentObject private var environment: AppEnvironment
     @Environment(\.dismiss) private var dismiss
 
     /// Bewerkbare deelnemer-rijen; per sessie, nergens bewaard.
     @State private var rows: [Row] = [Row()]
     /// Statusregel over de verzending ("Mail geopend", fallback-melding, …).
     @State private var mailStatus: String?
+    @State private var seededOwnContact = false
 
     struct Row: Identifiable {
         let id = UUID()
         var name = ""
         var email = ""
-        var isAnonymous = false
+        var saveContact = false
 
-        var participant: MeetingParticipant {
-            MeetingParticipant(
-                name: name.trimmingCharacters(in: .whitespacesAndNewlines),
-                email: isAnonymous ? nil : email.trimmingCharacters(in: .whitespacesAndNewlines)
+        var participant: MeetingParticipant? {
+            let trimmedName = name.trimmingCharacters(in: .whitespacesAndNewlines)
+            let trimmedEmail = email.trimmingCharacters(in: .whitespacesAndNewlines)
+            guard !trimmedName.isEmpty || !trimmedEmail.isEmpty else { return nil }
+            return MeetingParticipant(
+                name: trimmedName.isEmpty ? "Deelnemer" : trimmedName,
+                email: trimmedEmail
             )
         }
     }
 
-    private var participants: [MeetingParticipant] { rows.map(\.participant) }
+    private var participants: [MeetingParticipant] { rows.compactMap(\.participant) }
 
     private var canStart: Bool {
-        !rows.isEmpty
-            && participants.allSatisfy(\.isValid)
-            && !MeetingMinutesComposer.recipients(participants).isEmpty
+        participants.allSatisfy(\.isValid)
     }
 
     var body: some View {
@@ -51,21 +54,26 @@ struct MeetingSheet: View {
             switch controller.phase {
             case .idle:
                 setupSection
+            case .preparing:
+                preparingSection
             case .recording, .paused:
                 recordingSection
             case .transcribing:
                 transcribingSection
-            case .finished:
+            // Bij een mislukte opslag blijft het verslag zichtbaar zodat het nog
+            // gekopieerd kan worden; de foutmelding staat er al boven.
+            case .finished, .savingFailed:
                 finishedSection
             }
 
             Spacer(minLength: 0)
         }
         .padding(24)
-        .frame(width: 480, height: 520)
+        .frame(width: 600, height: 540)
         .background(Theme.window)
         // Tijdens opname/transcriptie kan de sheet niet (per ongeluk) dicht.
         .interactiveDismissDisabled(controller.isBusy)
+        .onAppear(perform: seedOwnContact)
     }
 
     private var header: some View {
@@ -73,7 +81,7 @@ struct MeetingSheet: View {
             VStack(alignment: .leading, spacing: 6) {
                 Text.accentDotted("Notulen")
                     .font(ThemeFont.ui(20, weight: .bold))
-                Text("Opname en transcriptie gebeuren volledig lokaal. De audio wordt nooit als bestand opgeslagen; gepauzeerde stukken bestaan nergens. Iedereen op de lijst krijgt exact hetzelfde verslag.")
+                Text("Opname en transcriptie gebeuren volledig lokaal. Audio wordt alleen tijdelijk lokaal bewaard en na transcriptie verwijderd; gepauzeerde stukken bestaan nergens. Iedereen op de lijst krijgt exact hetzelfde verslag.")
                     .font(ThemeFont.ui(11))
                     .foregroundStyle(Theme.textSecondary)
                     .fixedSize(horizontal: false, vertical: true)
@@ -110,30 +118,81 @@ struct MeetingSheet: View {
             }
             .frame(maxHeight: 220)
 
-            HStack {
+            HStack(spacing: 10) {
                 Button {
                     rows.append(Row())
                 } label: {
-                    Label("Voeg deelnemer toe", systemImage: "person.badge.plus")
+                    Label("Nieuwe deelnemer", systemImage: "person.badge.plus")
+                        .frame(maxWidth: .infinity)
+                        .frame(height: 42)
+                        .foregroundStyle(Theme.accentText)
+                        .background(Theme.surface)
+                        .clipShape(RoundedRectangle(cornerRadius: Theme.Metrics.radius))
+                        .overlay(RoundedRectangle(cornerRadius: Theme.Metrics.radius).strokeBorder(Theme.border, lineWidth: 1))
                 }
-                .buttonStyle(AccentButtonStyle())
+                .buttonStyle(.plain)
+                .frame(maxWidth: .infinity)
 
-                Spacer()
+                if !environment.meetingContacts.isEmpty {
+                    Menu {
+                        ForEach(environment.meetingContacts.filter(\.isValid)) { contact in
+                            Button(contact.name) { add(contact) }
+                        }
+                    } label: {
+                        HStack(spacing: 6) {
+                            Image(systemName: "person.crop.circle.badge.checkmark")
+                            Text("Kies vaste deelnemer")
+                            Image(systemName: "chevron.down")
+                                .font(.system(size: 9, weight: .bold))
+                        }
+                        .frame(maxWidth: .infinity)
+                        .frame(height: 42)
+                        .foregroundStyle(Theme.accentText)
+                        .background(Theme.surface)
+                        .clipShape(RoundedRectangle(cornerRadius: Theme.Metrics.radius))
+                        .overlay(RoundedRectangle(cornerRadius: Theme.Metrics.radius).strokeBorder(Theme.border, lineWidth: 1))
+                    }
+                    .menuStyle(.borderlessButton)
+                    .menuIndicator(.hidden)
+                    .frame(maxWidth: .infinity)
+                }
 
                 Button {
-                    controller.start()
+                    startMeeting()
                 } label: {
                     Label("Start opname", systemImage: "record.circle")
+                        .frame(maxWidth: .infinity)
+                        .frame(height: 42)
+                        .foregroundStyle(Color.black)
+                        .background(Theme.accent)
+                        .clipShape(RoundedRectangle(cornerRadius: Theme.Metrics.radius))
                 }
-                .buttonStyle(AccentButtonStyle())
+                .buttonStyle(.plain)
+                .frame(maxWidth: .infinity)
                 .disabled(!canStart)
             }
 
-            Text("Anonieme deelnemers tellen mee als aanwezig maar krijgen geen mail. Deze lijst wordt nergens bewaard.")
+            Text("Iedere ingevulde deelnemer is een e-mailontvanger. Laat de lijst leeg om alleen lokaal te transcriberen. Vaste deelnemers synchroniseren via iCloud.")
                 .font(ThemeFont.ui(11))
                 .foregroundStyle(Theme.textTertiary)
                 .fixedSize(horizontal: false, vertical: true)
         }
+    }
+
+    private func seedOwnContact() {
+        guard !seededOwnContact else { return }
+        seededOwnContact = true
+        guard let own = environment.meetingContacts.first(where: \.isMe) else { return }
+        rows = []
+        add(own)
+    }
+
+    private func add(_ contact: SavedMeetingContact) {
+        guard !rows.contains(where: {
+            $0.name.caseInsensitiveCompare(contact.name) == .orderedSame
+                && $0.email.caseInsensitiveCompare(contact.email) == .orderedSame
+        }) else { return }
+        rows.append(Row(name: contact.name, email: contact.email))
     }
 
     private func participantRow(_ row: Binding<Row>) -> some View {
@@ -146,9 +205,6 @@ struct MeetingSheet: View {
                     .padding(.vertical, 6)
                     .background(Theme.surfaceHover)
                     .clipShape(RoundedRectangle(cornerRadius: Theme.Metrics.radius))
-                Toggle("Anoniem", isOn: row.isAnonymous)
-                    .font(ThemeFont.ui(12))
-                    .toggleStyle(.checkbox)
                 Button {
                     rows.removeAll { $0.id == row.wrappedValue.id }
                 } label: {
@@ -158,18 +214,44 @@ struct MeetingSheet: View {
                 .buttonStyle(.plain)
                 .help("Verwijder deelnemer")
             }
-            if !row.wrappedValue.isAnonymous {
-                TextField("E-mailadres", text: row.email)
-                    .textFieldStyle(.plain)
-                    .font(ThemeFont.ui(13))
-                    .padding(.horizontal, 10)
-                    .padding(.vertical, 6)
-                    .background(Theme.surfaceHover)
-                    .clipShape(RoundedRectangle(cornerRadius: Theme.Metrics.radius))
+            TextField("E-mailadres", text: row.email)
+                .textFieldStyle(.plain)
+                .font(ThemeFont.ui(13))
+                .padding(.horizontal, 10)
+                .padding(.vertical, 6)
+                .background(Theme.surfaceHover)
+                .clipShape(RoundedRectangle(cornerRadius: Theme.Metrics.radius))
+            if !isStoredContact(row.wrappedValue) {
+                Toggle("Bewaren", isOn: row.saveContact)
+                    .font(ThemeFont.ui(12))
+                    .toggleStyle(.checkbox)
+                    .disabled(!(row.wrappedValue.participant?.isValid ?? false))
+                    .help("Bewaar deze naam en dit e-mailadres voor volgende vergaderingen.")
             }
         }
         .padding(10)
         .themeCard()
+    }
+
+    private func startMeeting() {
+        var contacts = environment.meetingContacts
+        for row in rows where row.saveContact && !isStoredContact(row) {
+            guard let participant = row.participant else { continue }
+            contacts = MeetingContactList.saving(participant, in: contacts)
+        }
+        if contacts != environment.meetingContacts {
+            environment.meetingContacts = contacts
+        }
+        controller.start()
+    }
+
+    private func isStoredContact(_ row: Row) -> Bool {
+        let email = row.email.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !email.isEmpty else { return false }
+        return environment.meetingContacts.contains {
+            $0.email.trimmingCharacters(in: .whitespacesAndNewlines)
+                .caseInsensitiveCompare(email) == .orderedSame
+        }
     }
 
     // MARK: - Stap 2: opname
@@ -227,6 +309,26 @@ struct MeetingSheet: View {
                 .font(ThemeFont.ui(11))
                 .foregroundStyle(Theme.textTertiary)
                 .lineLimit(2)
+        }
+        .frame(maxWidth: .infinity)
+    }
+
+    /// Tussen "Start opname" en het werkelijk lopen van de microfoon zit op een
+    /// koude start de modellading. Die tijd hoort niet te worden gepresenteerd
+    /// als een lopende opname (bevinding 2026-08-03).
+    private var preparingSection: some View {
+        VStack(spacing: 12) {
+            Spacer()
+            ProgressView()
+                .controlSize(.small)
+                .tint(Theme.accent)
+            Text("Even klaarzetten…")
+                .font(ThemeFont.ui(13, weight: .medium))
+                .foregroundStyle(Theme.textSecondary)
+            Text("De opname begint zodra de microfoon klaarstaat.")
+                .font(ThemeFont.ui(11))
+                .foregroundStyle(Theme.textTertiary)
+            Spacer()
         }
         .frame(maxWidth: .infinity)
     }

@@ -9,22 +9,19 @@ import SwiftUI
 /// confirmation on completion.
 struct RecordingHUDView: View {
     @ObservedObject var controller: DictationController
-    @ObservedObject var levelMeter: AudioLevelMeter
+    /// Bewust géén `@ObservedObject`: de meter publiceert per audiobuffer, en op
+    /// dit niveau zou elke publicatie de hele HUD (achtergrond, schaduw,
+    /// transcript) opnieuw laten renderen. Alleen ``LevelBars`` luistert mee, en
+    /// dat bestaat uitsluitend tijdens het opnemen.
+    let levelMeter: AudioLevelMeter
 
     /// Whether to show the latency debug line (UserDefaults `showLatencyHUD`).
     let showLatency: Bool
 
-    /// Drives the entrance scale: starts slightly shrunk and settles to 1.0
-    /// as soon as the view appears, echoing the panel's own fade/drift-in so
-    /// the two read as one coordinated arrival rather than two effects.
-    @State private var appeared = false
-
     var body: some View {
         VStack(alignment: .leading, spacing: 10) {
             header
-                .animation(.easeOut(duration: 0.15), value: controller.phase)
             transcript
-                .animation(.easeOut(duration: 0.15), value: controller.phase)
             // Detailed three-part breakdown stays behind the debug flag, and
             // only once a run has completed (so it doesn't clutter recording).
             if showLatency, controller.phase == .finished || controller.phase == .idle {
@@ -41,15 +38,12 @@ struct RecordingHUDView: View {
         .overlay(
             RoundedRectangle(cornerRadius: 16, style: .continuous)
                 .strokeBorder(borderColor, lineWidth: 1)
+                // Alleen de randkleur vloeit over. Tekst en knoppen wisselen
+                // direct mee met de gepubliceerde fase: een cross-fade liet
+                // "Aan het transcriberen…" na afloop nog even staan.
+                .animation(.easeOut(duration: 0.12), value: controller.phase)
         )
-        .animation(.easeOut(duration: 0.15), value: controller.phase)
         .shadow(color: .black.opacity(0.5), radius: 24, x: 0, y: 12)
-        .scaleEffect(appeared ? 1.0 : 0.97)
-        .onAppear {
-            withAnimation(.easeOut(duration: 0.2)) {
-                appeared = true
-            }
-        }
     }
 
     private var borderColor: Color {
@@ -64,6 +58,18 @@ struct RecordingHUDView: View {
     @ViewBuilder
     private var header: some View {
         switch controller.phase {
+        case .preparing:
+            // Geen rode stip en geen teller: er wordt nog niets opgenomen
+            // (bevinding 2026-08-03).
+            HStack(spacing: 10) {
+                ProgressView()
+                    .controlSize(.small)
+                    .tint(Theme.accent)
+                Text("Even klaarzetten…")
+                    .font(.system(size: 13, weight: .medium))
+                    .foregroundStyle(Theme.textSecondary)
+                Spacer()
+            }
         case .recording:
             HStack(spacing: 10) {
                 PulsingDot()
@@ -71,7 +77,7 @@ struct RecordingHUDView: View {
                     .font(.system(size: 13, weight: .semibold, design: .monospaced))
                     .foregroundStyle(Theme.text)
                 Spacer()
-                LevelBars(level: levelMeter.level)
+                LevelBars(meter: levelMeter)
                 PauseResumeButton(isPaused: false) { controller.pauseRecording() }
                 StopButton { controller.stop() }
             }
@@ -153,6 +159,47 @@ struct RecordingHUDView: View {
     }
 }
 
+// MARK: - Cursor
+
+/// Toont het handje boven een HUD-knop en houdt de cursorstack in balans.
+///
+/// `NSCursor.push()` moet exact één `pop()` krijgen. De HUD verdwijnt echter
+/// vaak onder de muis vandaan (fase wisselt, paneel gaat weg) zonder dat er nog
+/// een hover-exit komt; dan bleef het handje hangen over het hele scherm. Deze
+/// modifier onthoudt of hij zelf gepusht heeft en popt óók bij `onDisappear`,
+/// nooit vaker dan één keer.
+private struct PointingHandCursor: ViewModifier {
+    @Binding var hovering: Bool
+    @State private var pushed = false
+
+    func body(content: Content) -> some View {
+        content
+            .onHover { isHovering in
+                hovering = isHovering
+                setPushed(isHovering)
+            }
+            // Vangnet voor de hover-exit die nooit komt.
+            .onDisappear { setPushed(false) }
+    }
+
+    @MainActor
+    private func setPushed(_ shouldPush: Bool) {
+        guard shouldPush != pushed else { return }
+        pushed = shouldPush
+        if shouldPush {
+            NSCursor.pointingHand.push()
+        } else {
+            NSCursor.pop()
+        }
+    }
+}
+
+private extension View {
+    func pointingHandCursor(hovering: Binding<Bool>) -> some View {
+        modifier(PointingHandCursor(hovering: hovering))
+    }
+}
+
 /// A red recording dot that pulses while recording.
 private struct PulsingDot: View {
     @State private var pulsing = false
@@ -191,14 +238,7 @@ private struct PauseResumeButton: View {
         .buttonStyle(.plain)
         .scaleEffect(hovering ? 1.08 : 1.0)
         .animation(.easeOut(duration: 0.12), value: hovering)
-        .onHover { isHovering in
-            hovering = isHovering
-            if isHovering {
-                NSCursor.pointingHand.push()
-            } else {
-                NSCursor.pop()
-            }
-        }
+        .pointingHandCursor(hovering: $hovering)
         .help(isPaused ? "Hervat opname" : "Pauzeer opname")
     }
 }
@@ -225,37 +265,34 @@ private struct StopButton: View {
         .buttonStyle(.plain)
         .scaleEffect(hovering ? 1.08 : 1.0)
         .animation(.easeOut(duration: 0.12), value: hovering)
-        .onHover { isHovering in
-            hovering = isHovering
-            if isHovering {
-                NSCursor.pointingHand.push()
-            } else {
-                NSCursor.pop()
-            }
-        }
+        .pointingHandCursor(hovering: $hovering)
         .help("Stop dicteren")
     }
 }
 
 /// A small cluster of yellow audio-level bars reacting to the live RMS level.
+///
+/// Luistert zélf naar de meter, zodat het hertekenen per audiobuffer beperkt
+/// blijft tot deze vijf balkjes en niet de hele HUD raakt.
 private struct LevelBars: View {
-    let level: Double
+    @ObservedObject var meter: AudioLevelMeter
 
     private let barCount = 5
 
     var body: some View {
+        let level = meter.level
         HStack(spacing: 3) {
             ForEach(0..<barCount, id: \.self) { index in
                 Capsule()
                     .fill(Theme.accent)
-                    .frame(width: 3, height: height(for: index))
+                    .frame(width: 3, height: height(for: index, level: level))
             }
         }
         .frame(height: 20, alignment: .center)
         .animation(.easeOut(duration: 0.12), value: level)
     }
 
-    private func height(for index: Int) -> CGFloat {
+    private func height(for index: Int, level: Double) -> CGFloat {
         let distance = abs(Double(index) - Double(barCount - 1) / 2)
         let profile = 1.0 - distance / Double(barCount)
         let magnitude = max(0.15, level) * profile

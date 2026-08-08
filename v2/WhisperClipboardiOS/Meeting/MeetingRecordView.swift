@@ -10,6 +10,8 @@ import WhisperShared
 /// alle deelnemers.
 struct MeetingRecordView: View {
     let participants: [MeetingParticipant]
+    let makeAIMinutes: Bool
+    let language: TranscriptionLanguage
 
     @EnvironmentObject private var app: AppModel
     @Environment(\.dismiss) private var dismiss
@@ -23,8 +25,15 @@ struct MeetingRecordView: View {
     @State private var showShare = false
     /// Statusregel over de verzending ("Verstuurd", "Geannuleerd", …).
     @State private var mailStatus: String?
+    @State private var aiMinutes: String?
+    @State private var isCreatingAI = false
+    @State private var aiError: String?
+    /// De lokale rij blijft bestaan totdat de gebruiker expliciet verwijdert.
+    /// Een mailresultaat wijzigt deze keuze nooit.
+    @State private var savedEntryID: String?
+    @State private var confirmDelete = false
 
-    private var meetingDate: Date { Date() }
+    private let meetingDate = Date()
 
     var body: some View {
         ZStack {
@@ -41,42 +50,59 @@ struct MeetingRecordView: View {
         .navigationTitle("Notulen-opname")
         .navigationBarTitleDisplayMode(.inline)
         // Tijdens de opname niet per ongeluk terug-swipen.
-        .navigationBarBackButtonHidden(controller.isRecording || controller.isTranscribing)
+        .navigationBarBackButtonHidden(
+            controller.isRecording || controller.isTranscribing || transcript != nil
+        )
         .task {
             controller.attach(app: app)
             controller.transcriptSource = "meeting"
-            controller.onTranscriptReady = { text in
+            controller.onTranscriptReady = { text, entry in
                 transcript = text
-                presentMail(for: text)
+                savedEntryID = entry?.id
+                if makeAIMinutes, let entry {
+                    Task { await createAIMinutes(for: entry) }
+                } else {
+                    presentMail(for: text)
+                }
             }
             // Auto-start: de setup-knop heette niet voor niets "Start opname".
             if !controller.isRecording {
-                controller.toggle()
+                controller.toggle(language: language)
             }
         }
         .sheet(isPresented: $showMail) {
             MailComposeView(
                 recipients: MeetingMinutesComposer.recipients(participants),
-                subject: MeetingMinutesComposer.subject(date: meetingDate),
+                subject: MeetingMinutesComposer.subject(date: meetingDate, language: reportLanguage),
                 body: mailBody
             ) { result in
                 switch result {
-                case .sent: mailStatus = "Verstuurd naar alle deelnemers."
-                case .saved: mailStatus = "Bewaard als concept in Mail."
-                case .cancelled: mailStatus = "Versturen geannuleerd — je kunt het hieronder opnieuw proberen."
-                case .failed: mailStatus = "Versturen mislukt — probeer het opnieuw."
+                case .sent:
+                    mailStatus = L10n.string( "Verstuurd naar alle deelnemers.", locale: app.interfaceLanguage.locale)
+                case .saved:
+                    mailStatus = L10n.string( "Bewaard als concept in Mail.", locale: app.interfaceLanguage.locale)
+                case .cancelled:
+                    mailStatus = L10n.string( "Versturen geannuleerd — je kunt het hieronder opnieuw proberen.", locale: app.interfaceLanguage.locale)
+                case .failed:
+                    mailStatus = L10n.string( "Versturen mislukt — probeer het opnieuw.", locale: app.interfaceLanguage.locale)
                 @unknown default: break
                 }
             }
         }
         .sheet(isPresented: $showShare) {
-            if let transcript {
-                ShareSheet(items: [MeetingMinutesComposer.mailBody(
-                    transcript: transcript,
-                    participants: participants,
-                    date: meetingDate
-                )])
+            if transcript != nil {
+                ShareSheet(items: [mailBody])
             }
+        }
+        .confirmationDialog(
+            "Transcript verwijderen?",
+            isPresented: $confirmDelete,
+            titleVisibility: .visible
+        ) {
+            Button("Verwijder transcript", role: .destructive) { deleteTranscriptAndFinish() }
+            Button("Annuleer", role: .cancel) {}
+        } message: {
+            Text("Dit verwijdert het transcript definitief van dit toestel en, wanneer iCloud-synchronisatie aanstaat, ook uit je gesynchroniseerde geschiedenis.")
         }
     }
 
@@ -84,8 +110,14 @@ struct MeetingRecordView: View {
         MeetingMinutesComposer.mailBody(
             transcript: transcript ?? "",
             participants: participants,
-            date: meetingDate
+            date: meetingDate,
+            aiMinutes: aiMinutes,
+            language: reportLanguage
         )
+    }
+
+    private var reportLanguage: MeetingReportLanguage {
+        MeetingReportLanguage(rawValue: app.interfaceLanguage.resolvedCode) ?? .dutch
     }
 
     // MARK: - Opname
@@ -96,50 +128,51 @@ struct MeetingRecordView: View {
 
         Text(controller.statusLine)
             .font(ThemeFont.ui(15))
-            .foregroundStyle(Theme.textSecondary)
+            .foregroundStyle(controller.isPaused ? Theme.danger : Theme.textSecondary)
             .multilineTextAlignment(.center)
 
-        HStack(spacing: 28) {
-            if controller.isRecording {
-                PauseToggleButton(isPaused: false, enabled: false) {}
-                    .opacity(0)
-                    .accessibilityHidden(true)
-            }
-            MeetingRecordButton(
-                isRecording: controller.isRecording,
-                isBusy: controller.isTranscribing,
-                level: controller.level
+        if controller.isRecording {
+            PauseToggleButton(
+                isPaused: controller.isPaused,
+                enabled: !controller.pausedByInterruption,
+                size: 190,
+                symbolSize: 60,
+                prominent: true
             ) {
-                controller.toggle()
+                controller.togglePause()
             }
-            if controller.isRecording {
-                PauseToggleButton(
-                    isPaused: controller.isPaused,
-                    enabled: !controller.pausedByInterruption
-                ) {
-                    controller.togglePause()
-                }
-            }
+        } else if controller.isTranscribing {
+            ProgressView()
+                .tint(Theme.accent)
+                .scaleEffect(1.4)
+                .frame(width: 190, height: 190)
+                .themeCard(radius: 95, border: Theme.borderStrong)
+        } else {
+            ProgressView()
+                .tint(Theme.accent)
+                .frame(width: 190, height: 190)
         }
 
         if controller.isRecording {
             Text(Self.formatElapsed(controller.elapsed))
                 .font(ThemeFont.ui(28, weight: .semibold).monospacedDigit())
                 .foregroundStyle(Theme.text)
-            if controller.isPaused {
-                Label(
-                    controller.pausedByInterruption ? "Gepauzeerd (onderbreking)" : "Gepauzeerd",
-                    systemImage: "pause.circle"
-                )
-                .font(ThemeFont.ui(13, weight: .medium))
-                .foregroundStyle(Theme.danger)
-            }
         }
 
-        Text("Gepauzeerde stukken worden niet opgenomen en komen nergens in het verslag terecht.")
-            .font(ThemeFont.ui(13))
-            .foregroundStyle(Theme.textTertiary)
-            .multilineTextAlignment(.center)
+        if controller.isRecording {
+            Button {
+                controller.toggle()
+            } label: {
+                Label("Stop en transcribeer", systemImage: "stop.fill")
+                    .font(ThemeFont.ui(14, weight: .semibold))
+                    .foregroundStyle(Theme.danger)
+                    .padding(.horizontal, 16)
+                    .padding(.vertical, 10)
+                    .background(Theme.dangerSoft)
+                    .clipShape(Capsule())
+            }
+            .buttonStyle(.plain)
+        }
 
         Spacer()
 
@@ -147,7 +180,11 @@ struct MeetingRecordView: View {
     }
 
     private var attendeesFooter: some View {
-        Text("Deelnemers: \(participants.map(\.name).joined(separator: ", "))")
+        Text(String(
+            format: L10n.string( "Deelnemers: %@", locale: app.interfaceLanguage.locale),
+            locale: app.interfaceLanguage.locale,
+            participants.map(\.name).joined(separator: ", ")
+        ))
             .font(ThemeFont.ui(12))
             .foregroundStyle(Theme.textTertiary)
             .multilineTextAlignment(.center)
@@ -175,6 +212,24 @@ struct MeetingRecordView: View {
                 .multilineTextAlignment(.center)
         }
 
+        if isCreatingAI {
+            HStack(spacing: 10) {
+                ProgressView().tint(Theme.accent)
+                Text("AI-notulen worden gemaakt…")
+                    .font(ThemeFont.ui(14, weight: .medium))
+            }
+            .foregroundStyle(Theme.textSecondary)
+        } else if let aiError {
+            Text(aiError)
+                .font(ThemeFont.ui(13))
+                .foregroundStyle(Theme.danger)
+                .multilineTextAlignment(.center)
+        } else if aiMinutes != nil {
+            Label("AI-notulen toegevoegd", systemImage: "checkmark.circle.fill")
+                .font(ThemeFont.ui(14, weight: .medium))
+                .foregroundStyle(Theme.accentText)
+        }
+
         Button {
             presentMail(for: transcript)
         } label: {
@@ -187,12 +242,36 @@ struct MeetingRecordView: View {
                 .clipShape(RoundedRectangle(cornerRadius: Theme.Metrics.radius, style: .continuous))
         }
         .buttonStyle(.plain)
+        .disabled(isCreatingAI)
 
-        Button("Klaar") { dismiss() }
-            .font(ThemeFont.ui(15))
-            .foregroundStyle(Theme.textSecondary)
+        VStack(spacing: 10) {
+            Text("Wat wil je met dit transcript doen?")
+                .font(ThemeFont.ui(15, weight: .semibold))
+                .foregroundStyle(Theme.text)
 
-        Text("Het verslag staat ook in de Geschiedenis (bron: Notulen).")
+            Button(savedEntryID == nil ? "Bewaren opnieuw proberen" : "Bewaar transcript") {
+                if savedEntryID != nil {
+                    dismiss()
+                } else if let saved = controller.retryPendingSave() {
+                    savedEntryID = saved.id
+                    dismiss()
+                }
+            }
+                .font(ThemeFont.ui(16, weight: .semibold))
+                .foregroundStyle(Theme.onAccent)
+                .frame(maxWidth: .infinity, minHeight: 52)
+                .background(Theme.accent)
+                .clipShape(RoundedRectangle(cornerRadius: Theme.Metrics.radius, style: .continuous))
+
+            Button("Verwijder transcript", role: .destructive) { confirmDelete = true }
+                .font(ThemeFont.ui(16, weight: .semibold))
+                .foregroundStyle(Theme.danger)
+                .frame(maxWidth: .infinity, minHeight: 52)
+                .background(Theme.dangerSoft)
+                .clipShape(RoundedRectangle(cornerRadius: Theme.Metrics.radius, style: .continuous))
+        }
+
+        Text("Totdat je kiest, blijft het verslag veilig in Geschiedenis staan (bron: Notulen).")
             .font(ThemeFont.ui(12))
             .foregroundStyle(Theme.textTertiary)
     }
@@ -208,12 +287,14 @@ struct MeetingRecordView: View {
         if let url = MeetingMinutesComposer.mailtoURL(
             transcript: transcript,
             participants: participants,
-            date: meetingDate
+            date: meetingDate,
+            aiMinutes: aiMinutes,
+            language: reportLanguage
         ) {
             UIApplication.shared.open(url) { opened in
                 if !opened {
                     showShare = true
-                    mailStatus = "Geen mail-app gevonden — deel het verslag via het deelvenster."
+                    mailStatus = L10n.string( "Geen mail-app gevonden — deel het verslag via het deelvenster.", locale: app.interfaceLanguage.locale)
                 }
             }
             return
@@ -221,44 +302,52 @@ struct MeetingRecordView: View {
         showShare = true
     }
 
+    private func deleteTranscriptAndFinish() {
+        guard let savedEntryID else {
+            dismiss()
+            return
+        }
+        do {
+            try app.history?.delete(id: savedEntryID)
+            dismiss()
+        } catch {
+            app.errorMessage = String(
+                format: L10n.string( "Het transcript kon niet worden verwijderd: %@", locale: app.interfaceLanguage.locale),
+                locale: app.interfaceLanguage.locale,
+                error.localizedDescription
+            )
+        }
+    }
+
+    private func createAIMinutes(for entry: TranscriptEntry) async {
+        guard let modes = app.modes,
+              let mode = modes.allModes.first(where: { $0.id == "builtin.notulen" })
+        else {
+            aiError = L10n.string( "AI-notulen konden niet worden gestart; de volledige transcriptie blijft beschikbaar.", locale: app.interfaceLanguage.locale)
+            presentMail(for: entry.text)
+            return
+        }
+
+        isCreatingAI = true
+        aiError = nil
+        do {
+            let result = try await modes.runToCompletion(mode: mode, on: entry)
+            aiMinutes = result.output
+        } catch {
+            let localizedError = ErrorLocalization.message(for: error, language: app.interfaceLanguage)
+            aiError = String(
+                format: L10n.string( "AI-notulen konden niet worden gemaakt: %@ De volledige transcriptie blijft beschikbaar.", locale: app.interfaceLanguage.locale),
+                locale: app.interfaceLanguage.locale,
+                localizedError
+            )
+        }
+        isCreatingAI = false
+        presentMail(for: entry.text)
+    }
+
     private static func formatElapsed(_ seconds: Double) -> String {
         let total = Int(seconds)
         return String(format: "%02d:%02d", total / 60, total % 60)
-    }
-}
-
-/// De opnameknop van de notulist: zelfde ring + vierkant-motief als overal.
-private struct MeetingRecordButton: View {
-    let isRecording: Bool
-    let isBusy: Bool
-    let level: Double
-    let action: () -> Void
-
-    var body: some View {
-        Button(action: action) {
-            ZStack {
-                Circle()
-                    .strokeBorder(isRecording ? Theme.danger : Theme.accent, lineWidth: 6)
-                    .frame(width: 132, height: 132)
-                    .scaleEffect(isRecording ? 1 + CGFloat(level) * 0.08 : 1)
-
-                RoundedRectangle(cornerRadius: isRecording ? 8 : 14, style: .continuous)
-                    .fill(isRecording ? Theme.danger : Theme.accent)
-                    .frame(
-                        width: isRecording ? 46 : 56,
-                        height: isRecording ? 46 : 56
-                    )
-
-                if isBusy {
-                    ProgressView()
-                        .tint(Theme.onAccent)
-                        .scaleEffect(1.3)
-                }
-            }
-        }
-        .buttonStyle(.plain)
-        .disabled(isBusy)
-        .animation(.spring(response: 0.3, dampingFraction: 0.7), value: isRecording)
     }
 }
 

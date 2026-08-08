@@ -64,7 +64,7 @@ enum TranscriptFormatting {
     /// The row title: the entry name, else the first ~8 words of the text.
     static func title(for entry: TranscriptEntry) -> String {
         let name = entry.name.trimmingCharacters(in: .whitespacesAndNewlines)
-        if !name.isEmpty { return name }
+        if !name.isEmpty && name.localizedCaseInsensitiveCompare("PLAUD-opname") != .orderedSame { return name }
         let words = entry.text
             .split(whereSeparator: { $0.isWhitespace || $0.isNewline })
             .prefix(8)

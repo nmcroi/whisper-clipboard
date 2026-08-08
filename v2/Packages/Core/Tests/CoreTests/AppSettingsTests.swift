@@ -232,19 +232,19 @@ import Foundation
 
     // MARK: - PLAUD sync fields
 
-    /// PLAUD sync defaults to OFF, 15-minute interval, 30-day window, no email (opt-in).
+    /// PLAUD sync defaults to OFF, 15-minute interval, 2-day window, no email (opt-in).
     @Test func plaudDefaultsAreOff() {
         let d = AppSettings()
         #expect(d.plaudSyncEnabled == false)
         #expect(d.plaudSyncIntervalMinutes == 15)
-        #expect(d.plaudSyncWindowDays == 30)
+        #expect(d.plaudSyncWindowDays == 2)
         #expect(d.plaudEmail == "")
     }
 
     /// An older settings.json missing the PLAUD keys still decodes, each field
     /// falling back to its default rather than failing the whole load. In
     /// particular, a file written before `plaudSyncWindowDays` existed must fall
-    /// back to the 30-day default (not 0/all-history).
+    /// back to the 2-day default (not 0/all-history).
     @Test func plaudFieldsFallBackWhenMissingFromJSON() throws {
         let json = """
         {"hotkeyMode":"toggle","language":"nl","engine":"parakeet","cleanOutput":true,"replacements":[],"directInsertion":false,"insertionDeniedBundleIds":[],"saveRecordings":false,"saveCaptions":false,"initialPrompt":""}
@@ -252,12 +252,12 @@ import Foundation
         let decoded = try JSONDecoder().decode(AppSettings.self, from: json)
         #expect(decoded.plaudSyncEnabled == false)
         #expect(decoded.plaudSyncIntervalMinutes == 15)
-        #expect(decoded.plaudSyncWindowDays == 30)
+        #expect(decoded.plaudSyncWindowDays == 2)
         #expect(decoded.plaudEmail == "")
     }
 
     /// A settings.json that carries the other PLAUD keys but predates
-    /// `plaudSyncWindowDays` still decodes the window to its 30-day default.
+    /// `plaudSyncWindowDays` still decodes the window to its 2-day default.
     @Test func plaudSyncWindowDaysFallsBackToDefaultWhenMissingFromJSON() throws {
         let json = """
         {"plaudSyncEnabled":true,"plaudSyncIntervalMinutes":60,"plaudEmail":"a@b.nl"}
@@ -265,7 +265,7 @@ import Foundation
         let decoded = try JSONDecoder().decode(AppSettings.self, from: json)
         #expect(decoded.plaudSyncEnabled == true)
         #expect(decoded.plaudSyncIntervalMinutes == 60)
-        #expect(decoded.plaudSyncWindowDays == 30)
+        #expect(decoded.plaudSyncWindowDays == 2)
     }
 
     /// Explicit PLAUD values round-trip through JSON coding, including the window

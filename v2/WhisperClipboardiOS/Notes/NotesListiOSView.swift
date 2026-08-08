@@ -34,18 +34,26 @@ struct NotesListiOSView: View {
                 // spreek-knop (net als het Opnemen-tabblad) — bewust niet
                 // zwevend over de rijen.
                 VStack(spacing: 0) {
+                    MainPageHeader(title: "Notities")
                     listBody
                         .frame(maxWidth: .infinity, maxHeight: .infinity)
                         .undoToast(
                             isPresented: pendingDeleteNoteId != nil,
-                            message: "Notitie verwijderd"
+                            message: L10n.string( "Notitie verwijderd", locale: app.interfaceLanguage.locale),
+                            actionTitle: L10n.string( "Ongedaan maken", locale: app.interfaceLanguage.locale)
                         ) {
                             undoDelete()
                         }
                     recordBar
                 }
             }
-            .navigationTitle("Notities")
+            .navigationTitle("")
+            .navigationBarTitleDisplayMode(.inline)
+            .toolbar {
+                ToolbarItem(placement: .principal) {
+                    Wordmark(size: 20)
+                }
+            }
             .navigationDestination(for: String.self) { id in
                 if let note = noteByID(id) {
                     NoteDetailiOSView(note: note, autoStartNoteId: $autoStartNoteId)
@@ -68,9 +76,11 @@ struct NotesListiOSView: View {
             NewNoteRecordButton {
                 createNote()
             }
-            Text("Spreek een nieuwe notitie in")
-                .font(ThemeFont.ui(13))
-                .foregroundStyle(Theme.textSecondary)
+            if app.showHelpTips {
+                Text("Spreek een nieuwe notitie in")
+                    .font(ThemeFont.ui(13))
+                    .foregroundStyle(Theme.textSecondary)
+            }
         }
         .frame(maxWidth: .infinity)
         .padding(.vertical, 16)
@@ -123,10 +133,12 @@ struct NotesListiOSView: View {
             Text("Nog geen notities")
                 .font(ThemeFont.ui(17, weight: .semibold))
                 .foregroundStyle(Theme.text)
-            Text("Tik op de knop hieronder om een notitie in te spreken — en voeg er later gewoon meer aan toe.")
-                .font(ThemeFont.ui(14))
-                .foregroundStyle(Theme.textSecondary)
-                .multilineTextAlignment(.center)
+            if app.showHelpTips {
+                Text("Tik op de knop hieronder om een notitie in te spreken — en voeg er later gewoon meer aan toe.")
+                    .font(ThemeFont.ui(14))
+                    .foregroundStyle(Theme.textSecondary)
+                    .multilineTextAlignment(.center)
+            }
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
         .padding()
@@ -165,7 +177,11 @@ struct NotesListiOSView: View {
         pendingDeleteTask = nil
         guard let id = pendingDeleteNoteId else { return }
         pendingDeleteNoteId = nil
-        try? app.history?.deleteNote(id: id, deleteEntries: false)
+        do {
+            try app.history?.deleteNote(id: id, deleteEntries: false)
+        } catch {
+            app.presentDataChangeError(error)
+        }
     }
 
     /// Undo binnen het venster: er is nog niets echt verwijderd, dus alleen de
@@ -191,19 +207,24 @@ struct NotesListiOSView: View {
     }
 
     private func createNote() {
-        let title = "Notitie " + Self.dateTitleFormatter.string(from: Date())
-        if let note = try? app.history?.createNote(title: title) {
+        let locale = app.interfaceLanguage.locale
+        let formatter = DateFormatter()
+        formatter.locale = locale
+        formatter.setLocalizedDateFormatFromTemplate("dMMM")
+        let title = String(
+            format: L10n.string( "Notitie %@", locale: locale),
+            locale: locale,
+            formatter.string(from: Date())
+        )
+        do {
+            guard let note = try app.history?.createNote(title: title) else { return }
             autoStartNoteId = note.id
             path.append(note.id)
+        } catch {
+            app.presentDataChangeError(error)
         }
     }
 
-    private static let dateTitleFormatter: DateFormatter = {
-        let f = DateFormatter()
-        f.locale = Locale(identifier: "nl_NL")
-        f.dateFormat = "d MMM"
-        return f
-    }()
 }
 
 // MARK: - Grote spreek-knop (rustlook van de Opnemen-knop)
@@ -235,6 +256,7 @@ private struct NewNoteRecordButton: View {
 // MARK: - Row
 
 struct NoteRowiOS: View {
+    @EnvironmentObject private var app: AppModel
     let note: Note
     let preview: String
 
@@ -268,14 +290,20 @@ struct NoteRowiOS: View {
 
     private var title: String {
         let trimmed = note.title.trimmingCharacters(in: .whitespacesAndNewlines)
-        return trimmed.isEmpty ? "Naamloze notitie" : trimmed
+        return trimmed.isEmpty
+            ? L10n.string( "Naamloze notitie", locale: app.interfaceLanguage.locale)
+            : trimmed
     }
 
     private var relativeDate: String {
         guard let date = note.modifiedDate else { return note.modifiedAt }
         let formatter = RelativeDateTimeFormatter()
-        formatter.locale = Locale(identifier: "nl_NL")
+        formatter.locale = app.interfaceLanguage.locale
         formatter.unitsStyle = .full
-        return "Gewijzigd " + formatter.localizedString(for: date, relativeTo: Date())
+        return String(
+            format: L10n.string( "Gewijzigd %@", locale: app.interfaceLanguage.locale),
+            locale: app.interfaceLanguage.locale,
+            formatter.localizedString(for: date, relativeTo: Date())
+        )
     }
 }

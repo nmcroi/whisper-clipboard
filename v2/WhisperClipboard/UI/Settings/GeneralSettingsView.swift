@@ -10,6 +10,7 @@ struct GeneralSettingsView: View {
 
     @State private var loginItemEnabled = SMAppService.mainApp.status == .enabled
     @State private var loginItemError: String?
+    @State private var showICloudMergeConfirmation = false
 
     var body: some View {
         ScrollView {
@@ -24,6 +25,7 @@ struct GeneralSettingsView: View {
                 Divider().overlay(Theme.border)
                 captionsSection
                 Divider().overlay(Theme.border)
+                recordingBackupSection
                 diarizationSection
                 Divider().overlay(Theme.border)
                 icloudSyncSection
@@ -189,6 +191,34 @@ struct GeneralSettingsView: View {
 
     // MARK: - Speaker diarization
 
+    /// Het audiovangnet stond wel in de instellingen-structuur maar was nergens
+    /// bereikbaar, en er werd ook nooit audio weggeschreven (bevinding
+    /// 2026-08-03). Nu allebei.
+    private var recordingBackupSection: some View {
+        VStack(alignment: .leading, spacing: 10) {
+            Text("Opname bewaren")
+                .font(ThemeFont.ui(15, weight: .semibold))
+                .foregroundStyle(Theme.text)
+
+            Toggle(isOn: Binding(
+                get: { environment.settings.saveRecordings },
+                set: { environment.settings.saveRecordings = $0 }
+            )) {
+                VStack(alignment: .leading, spacing: 2) {
+                    Text("Geluidsopname bewaren na transcriptie")
+                        .font(ThemeFont.ui(13, weight: .medium))
+                        .foregroundStyle(Theme.text)
+                    Text("Bewaart de opname bij de transcriptie, zodat je hem opnieuw kunt laten uitschrijven als er iets misgaat. Kost ongeveer 115 MB per uur spraak. Staat dit uit, dan wordt de opname na het transcriberen weggegooid en is een mislukte transcriptie definitief.")
+                        .font(ThemeFont.ui(11))
+                        .foregroundStyle(Theme.textSecondary)
+                        .fixedSize(horizontal: false, vertical: true)
+                }
+            }
+            .toggleStyle(.switch)
+            .tint(Theme.accent)
+        }
+    }
+
     private var diarizationSection: some View {
         VStack(alignment: .leading, spacing: 10) {
             Text("Sprekerherkenning")
@@ -251,13 +281,43 @@ struct GeneralSettingsView: View {
                     .foregroundStyle(Theme.textSecondary)
                     .fixedSize(horizontal: false, vertical: true)
                 Spacer()
-                Button("Synchroniseer nu") {
-                    Task { await environment.historySync.syncNow() }
+                if syncRequiresApproval {
+                    Button("Koppel dit iCloud-account") {
+                        showICloudMergeConfirmation = true
+                    }
+                    .font(ThemeFont.ui(11, weight: .medium))
+                } else {
+                    Button("Synchroniseer nu") {
+                        Task { await environment.historySync.syncNow() }
+                    }
+                    .font(ThemeFont.ui(11, weight: .medium))
+                    .disabled(!environment.settings.icloudSyncEnabled)
                 }
-                .font(ThemeFont.ui(11, weight: .medium))
-                .disabled(!environment.settings.icloudSyncEnabled)
             }
         }
+        .alert("Lokale geschiedenis samenvoegen?", isPresented: $showICloudMergeConfirmation) {
+            Button("Annuleer", role: .cancel) {}
+            Button("Samenvoegen") {
+                Task { await environment.historySync.approveCurrentAccountMerge() }
+            }
+        } message: {
+            Text(icloudApprovalMessage)
+        }
+    }
+
+    private var syncRequiresApproval: Bool {
+        if case .requiresApproval = environment.historySync.status { return true }
+        return false
+    }
+
+    private var icloudApprovalMessage: String {
+        guard case .requiresApproval(let localCount, let accountChanged) = environment.historySync.status else {
+            return ""
+        }
+        if accountChanged {
+            return "Er is een ander iCloud-account aangemeld. Voeg de \(localCount) lokale items alleen samen als deze geschiedenis bij dat account mag horen. Er wordt niets lokaal verwijderd."
+        }
+        return "De \(localCount) bestaande lokale items worden samengevoegd met dit iCloud-account. Er wordt niets lokaal verwijderd."
     }
 
     // MARK: - HUD

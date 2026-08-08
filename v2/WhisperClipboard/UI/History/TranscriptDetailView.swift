@@ -39,6 +39,7 @@ struct TranscriptDetailView: View {
     // Inline body editing.
     @State private var isEditingBody = false
     @State private var bodyDraft = ""
+    @State private var aiExpanded = false
 
     // Speaker renaming: the raw label currently being edited (e.g. "Spreker 1").
     @State private var editingSpeaker: String?
@@ -48,6 +49,11 @@ struct TranscriptDetailView: View {
     @State private var pendingTrim: TrimTarget?
     @State private var trimError: String?
 
+    /// Melding van een mislukte schrijfactie naar de store. Bevinding
+    /// 2026-08-03: alle mutaties hieronder liepen via `try?`, dus een mislukte
+    /// opslag was onzichtbaar en de UI toonde de wijziging alsof hij bewaard was.
+    @State private var dataError: String?
+
     var body: some View {
         ScrollView {
             VStack(alignment: .leading, spacing: 18) {
@@ -55,23 +61,39 @@ struct TranscriptDetailView: View {
                 metadataLine
                 actionBar
                 Divider().overlay(Theme.border)
+                aiDisclosure
+                Divider().overlay(Theme.border)
                 if hasSpeakers && !isEditingBody { speakerLegend }
                 bodySection
-                Divider().overlay(Theme.border)
-                TranscriptAISection(entry: entry, modes: modes, onOpenSettings: onOpenSettings)
             }
             .padding(24)
             .frame(maxWidth: .infinity, alignment: .leading)
         }
         .background(Theme.window)
-        .onAppear { titleDraft = entry.name }
-        .onDisappear { commitTitle() }
+        .onAppear {
+            titleDraft = entry.name.localizedCaseInsensitiveCompare("PLAUD-opname") == .orderedSame
+                ? ""
+                : entry.name
+        }
+        // Bevinding 2026-08-03: bij het sluiten van dit paneel bestaat er geen view
+        // meer die een alert kan tonen, dus escaleert een mislukte hernoeming hier.
+        .onDisappear { commitTitle(escalating: true) }
         .confirmationDialog(
             "Verwijder deze transcriptie?",
             isPresented: $confirmingDelete
         ) {
             Button("Verwijder", role: .destructive) {
-                try? store.delete(id: entry.id)
+                // Bevinding 2026-08-03: `onDeleted()` werd onvoorwaardelijk
+                // aangeroepen, dus het detailpaneel sloot en de selectie schoof
+                // door ook wanneer het verwijderen was mislukt — de transcriptie
+                // stond er nog, maar leek weg.
+                let deleted = DataChange.perform(
+                    "Het verwijderen van de transcriptie",
+                    reporting: $dataError
+                ) {
+                    try store.delete(id: entry.id)
+                }
+                guard deleted else { return }
                 onDeleted()
             }
             Button("Annuleer", role: .cancel) {}
@@ -98,12 +120,17 @@ struct TranscriptDetailView: View {
         } message: {
             Text(trimError ?? "")
         }
+        .dataChangeAlert($dataError)
     }
 
     // MARK: - Title
 
     private var titleField: some View {
-        TextField("Titel (optioneel)", text: $titleDraft)
+        TextField(
+            "",
+            text: $titleDraft,
+            prompt: Text(TranscriptFormatting.title(for: entry)).foregroundStyle(Theme.text)
+        )
             .textFieldStyle(.plain)
             .font(ThemeFont.ui(22, weight: .bold))
             .foregroundStyle(Theme.text)
@@ -153,7 +180,7 @@ struct TranscriptDetailView: View {
     // MARK: - Action bar
 
     private var actionBar: some View {
-        HStack(spacing: 10) {
+        HStack(spacing: 8) {
             Button {
                 Clipboard.copy(entry.text)
                 flashCopied()
@@ -161,19 +188,6 @@ struct TranscriptDetailView: View {
                 Label(copied ? "Gekopieerd ✓" : "Kopieer", systemImage: copied ? "checkmark" : "doc.on.doc")
             }
             .buttonStyle(AccentButtonStyle())
-
-            Menu {
-                ForEach(ExportFormat.allCases, id: \.self) { format in
-                    Button(format.fileExtension.uppercased()) { export(as: format) }
-                }
-            } label: {
-                Label("Exporteer", systemImage: "square.and.arrow.up")
-                    .font(ThemeFont.ui(13, weight: .medium))
-                    .foregroundStyle(Theme.text)
-            }
-            .menuStyle(.borderlessButton)
-            .fixedSize()
-            .secondaryChrome()
 
             // Inline editing toggle.
             Button {
@@ -199,37 +213,37 @@ struct TranscriptDetailView: View {
                     .secondaryChrome()
             }
 
-            Button {
-                try? store.setPinned(id: entry.id, !entry.pinned)
+            Spacer()
+
+            Menu {
+                Menu("Exporteer") {
+                    ForEach(ExportFormat.allCases, id: \.self) { format in
+                        Button(format.fileExtension.uppercased()) { export(as: format) }
+                    }
+                }
+                Button(entry.pinned ? "Losmaken" : "Vastzetten") {
+                    DataChange.perform(
+                        entry.pinned
+                            ? "Het losmaken van de transcriptie"
+                            : "Het vastzetten van de transcriptie",
+                        reporting: $dataError
+                    ) {
+                        try store.setPinned(id: entry.id, !entry.pinned)
+                    }
+                }
+                if canGroup && !isEditingBody {
+                    Toggle("Toon tijdcodes", isOn: $showTimecodes)
+                }
+                Divider()
+                Button("Verwijder", role: .destructive) { confirmingDelete = true }
             } label: {
-                Label(entry.pinned ? "Losmaken" : "Vastzetten", systemImage: entry.pinned ? "pin.slash" : "pin")
+                Label("Meer", systemImage: "ellipsis.circle")
                     .font(ThemeFont.ui(13, weight: .medium))
                     .foregroundStyle(Theme.text)
             }
-            .buttonStyle(.plain)
+            .menuStyle(.borderlessButton)
+            .fixedSize()
             .secondaryChrome()
-
-            Spacer()
-
-            if canGroup && !isEditingBody {
-                Toggle(isOn: $showTimecodes) {
-                    Label("Tijdcodes", systemImage: "clock")
-                        .font(ThemeFont.ui(12, weight: .medium))
-                }
-                .toggleStyle(.button)
-                .tint(Theme.accent)
-                .foregroundStyle(showTimecodes ? Theme.onAccent : Theme.textSecondary)
-                .help("Toon tijdcodes per zin")
-            }
-
-            Button(role: .destructive) {
-                confirmingDelete = true
-            } label: {
-                Image(systemName: "trash")
-                    .foregroundStyle(Theme.danger)
-            }
-            .buttonStyle(.plain)
-            .help("Verwijder")
         }
     }
 
@@ -282,13 +296,66 @@ struct TranscriptDetailView: View {
     /// A compact "Sprekers" editor: one chip per distinct speaker; click to rename.
     private var speakerLegend: some View {
         VStack(alignment: .leading, spacing: 8) {
-            Text("Sprekers")
-                .font(ThemeFont.ui(12, weight: .semibold))
-                .foregroundStyle(Theme.textSecondary)
+            HStack {
+                Text("Sprekers")
+                    .font(ThemeFont.ui(12, weight: .semibold))
+                    .foregroundStyle(Theme.textSecondary)
+                Spacer()
+                if speakerCount > 2 {
+                    Button {
+                        DataChange.perform(
+                            "Het samenvoegen tot twee sprekers",
+                            reporting: $dataError
+                        ) {
+                            try store.limitSpeakers(id: entry.id, maximum: 2)
+                        }
+                    } label: {
+                        Label("Beperk tot 2 sprekers", systemImage: "person.2")
+                            .font(ThemeFont.ui(11, weight: .medium))
+                    }
+                    .buttonStyle(.plain)
+                    .fixedSize()
+                    .secondaryChrome()
+                    .help("Voeg foutief herkende extra sprekers samen tot twee")
+                }
+            }
             FlowRow(spacing: 8) {
                 ForEach(distinctSpeakers, id: \.self) { raw in
                     speakerLegendChip(raw)
                 }
+            }
+        }
+    }
+
+    // MARK: - AI
+
+    private var aiDisclosure: some View {
+        VStack(alignment: .leading, spacing: 12) {
+            Button {
+                withAnimation(.easeInOut(duration: 0.18)) { aiExpanded.toggle() }
+            } label: {
+                HStack(spacing: 8) {
+                    Image(systemName: "sparkles").foregroundStyle(Theme.accentText)
+                    Text.accentDotted("AI")
+                        .font(ThemeFont.ui(15, weight: .semibold))
+                    Text("Samenvatten, notulen en meer")
+                        .font(ThemeFont.ui(11))
+                        .foregroundStyle(Theme.textSecondary)
+                    Spacer()
+                    Image(systemName: aiExpanded ? "chevron.up" : "chevron.down")
+                        .foregroundStyle(Theme.textSecondary)
+                }
+                .contentShape(Rectangle())
+            }
+            .buttonStyle(.plain)
+
+            if aiExpanded {
+                TranscriptAISection(
+                    entry: entry,
+                    modes: modes,
+                    onOpenSettings: onOpenSettings,
+                    showsHeader: false
+                )
             }
         }
     }
@@ -345,14 +412,18 @@ struct TranscriptDetailView: View {
     // MARK: - Grouped renderings
 
     private var speakerTurnsView: some View {
-        VStack(alignment: .leading, spacing: 14) {
-            ForEach(Array(speakerTurns.enumerated()), id: \.offset) { index, turn in
+        // Materialise the grouping once. Referencing the computed `speakerTurns`
+        // from every row used to regroup 11,000+ words hundreds of times for a
+        // long PLAUD recording, which saturated the main thread on selection.
+        let turns = speakerTurns
+        return LazyVStack(alignment: .leading, spacing: 14) {
+            ForEach(Array(turns.enumerated()), id: \.offset) { index, turn in
                 TranscriptTurnRow(
                     displayName: turn.speaker.map { entry.displayName(forSpeaker: $0) } ?? "Spreker ?",
                     color: turn.speaker.map { Self.speakerColor(for: $0) } ?? Theme.textSecondary,
                     text: turn.text,
                     timecode: showTimecodes ? TranscriptFormatting.timecode(turn.start) : nil,
-                    onDelete: speakerTurns.count > 1
+                    onDelete: turns.count > 1
                         ? { pendingTrim = .turn(index) }
                         : nil
                 )
@@ -361,12 +432,13 @@ struct TranscriptDetailView: View {
     }
 
     private var sentencesView: some View {
-        VStack(alignment: .leading, spacing: 4) {
-            ForEach(Array(sentences.enumerated()), id: \.offset) { index, sentence in
+        let groupedSentences = sentences
+        return LazyVStack(alignment: .leading, spacing: 4) {
+            ForEach(Array(groupedSentences.enumerated()), id: \.offset) { index, sentence in
                 TranscriptSentenceRow(
                     text: sentence.text,
                     timecode: showTimecodes ? TranscriptFormatting.timecode(sentence.start) : nil,
-                    onDelete: sentences.count > 1
+                    onDelete: groupedSentences.count > 1
                         ? { pendingTrim = .sentence(index) }
                         : nil
                 )
@@ -419,10 +491,24 @@ struct TranscriptDetailView: View {
 
     // MARK: - Title / copy helpers
 
-    private func commitTitle() {
+    /// Bewaart de titel. Met `escalating` gaat een fout niet naar de alert van
+    /// dit paneel maar naar de kritieke melding: bij `onDisappear` is er geen
+    /// view meer die een alert kán tonen (bevinding 2026-08-03).
+    private func commitTitle(escalating: Bool = false) {
         guard titleDraft.trimmingCharacters(in: .whitespacesAndNewlines)
             != entry.name.trimmingCharacters(in: .whitespacesAndNewlines) else { return }
-        try? store.rename(id: entry.id, name: titleDraft)
+        DataChange.perform(
+            "Het hernoemen van de transcriptie",
+            report: { message in
+                if escalating {
+                    Notifications.postCritical(message, title: "Transcriptie hernoemen")
+                } else {
+                    dataError = message
+                }
+            }
+        ) {
+            try store.rename(id: entry.id, name: titleDraft)
+        }
     }
 
     private func flashCopied() {
@@ -448,7 +534,16 @@ struct TranscriptDetailView: View {
     private func saveBodyEdit() {
         let trimmed = bodyDraft.trimmingCharacters(in: .whitespacesAndNewlines)
         if trimmed != entry.text.trimmingCharacters(in: .whitespacesAndNewlines) {
-            try? store.updateText(id: entry.id, text: trimmed)
+            // Bevinding 2026-08-03: de editor sloot en `bodyDraft` werd gewist
+            // ook als het opslaan mislukte — de bewerkte tekst was dan weg. Blijf
+            // in bewerkmodus staan zodat de gebruiker zijn tekst nog heeft.
+            let saved = DataChange.perform(
+                "Het bewaren van de bewerkte tekst",
+                reporting: $dataError
+            ) {
+                try store.updateText(id: entry.id, text: trimmed)
+            }
+            guard saved else { return }
         }
         isEditingBody = false
         bodyDraft = ""
@@ -457,7 +552,15 @@ struct TranscriptDetailView: View {
     // MARK: - Speaker naming
 
     private func commitSpeakerName(_ raw: String) {
-        try? store.setSpeakerName(transcriptId: entry.id, rawSpeaker: raw, name: speakerNameDraft)
+        // Bevinding 2026-08-03: het chipje klapte dicht alsof de naam bewaard was,
+        // ook bij een mislukte schrijfactie. Blijf bij een fout in bewerkmodus.
+        let saved = DataChange.perform(
+            "Het hernoemen van de spreker",
+            reporting: $dataError
+        ) {
+            try store.setSpeakerName(transcriptId: entry.id, rawSpeaker: raw, name: speakerNameDraft)
+        }
+        guard saved else { return }
         editingSpeaker = nil
         speakerNameDraft = ""
     }
@@ -496,7 +599,23 @@ struct TranscriptDetailView: View {
             let mid = (seg.start + seg.end) / 2
             return !(mid >= removeRange.lowerBound && mid <= removeRange.upperBound)
         }
-        try? store.updateSegments(id: entry.id, segments: kept)
+        // Bevinding 2026-08-03: dit is de zwaarste van de zeven `try?`-mutaties.
+        // `updateSegments` bouwt de `text` van de transcriptie opnieuw op uit de
+        // overgebleven woorden en overschrijft daarmee onherstelbaar de
+        // nabewerkte of met de hand geredigeerde tekst. Mislukte dat, dan zag de
+        // gebruiker niets — en lukte het, dan was de oude tekst weg. De fout moet
+        // dus zichtbaar zijn, en bij een fout snijden we ook de audio niet bij
+        // (anders raken tekst en audio uit elkaar).
+        let saved = DataChange.perform(
+            "Het verwijderen van dit fragment uit de transcriptie",
+            reporting: $dataError
+        ) {
+            try store.updateSegments(id: entry.id, segments: kept)
+        }
+        guard saved else {
+            pendingTrim = nil
+            return
+        }
 
         if alsoAudio, hasAudio {
             let keptRanges = contiguousRanges(from: kept)

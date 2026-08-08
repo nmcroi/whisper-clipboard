@@ -4,11 +4,13 @@ import SwiftUI
 /// The top-level sidebar destinations.
 enum SidebarTab: String, Hashable, CaseIterable {
     case home
+    case notes
     case history
 
     var title: String {
         switch self {
         case .home: return "Home"
+        case .notes: return "Notities"
         case .history: return "Geschiedenis"
         }
     }
@@ -16,6 +18,7 @@ enum SidebarTab: String, Hashable, CaseIterable {
     var symbol: String {
         switch self {
         case .home: return "house"
+        case .notes: return "note.text"
         case .history: return "clock.arrow.circlepath"
         }
     }

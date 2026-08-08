@@ -32,9 +32,9 @@ final class ClaudeClientTests: XCTestCase {
         XCTAssertEqual(ClaudeClient.parseSSELine(#"data: {"type":"ping"}"#), .ignore)
     }
 
-    func testMessageDeltaIgnored() {
+    func testMessageDeltaReportsOutputUsage() {
         let line = #"data: {"type":"message_delta","delta":{"stop_reason":"end_turn"},"usage":{"output_tokens":12}}"#
-        XCTAssertEqual(ClaudeClient.parseSSELine(line), .ignore)
+        XCTAssertEqual(ClaudeClient.parseSSELine(line), .usage(input: nil, output: 12))
     }
 
     func testErrorEventCarriesMessage() {
@@ -83,6 +83,7 @@ final class ClaudeClientTests: XCTestCase {
             case .text(let chunk): text += chunk
             case .stop: stopped = true
             case .error: XCTFail("unexpected error event")
+            case .usage: break
             case .ignore: break
             }
         }

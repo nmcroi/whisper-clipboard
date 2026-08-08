@@ -42,6 +42,8 @@ public final class HistorySyncEngine: NSObject {
 
     private let store: HistoryStore
     private let journal: HistoryPendingJournal
+    private let accountBinding: HistorySyncAccountBinding
+    private let seedLedger: HistorySyncSeedLedger
     private let stateURL: URL
     /// Yields the live "iCloud sync enabled" setting each time it's read.
     private let isEnabled: () -> Bool
@@ -49,25 +51,36 @@ public final class HistorySyncEngine: NSObject {
     /// The live CloudKit sync engine — nil until `start()` succeeds (and while
     /// dormant). All CloudKit access funnels through here.
     private var engine: CKSyncEngine?
-
+    /// Journal token captured when a record/delete is materialized for a send.
+    /// A later local mutation replaces the journal token and therefore cannot be
+    /// cleared by the older send's success event.
+    private var inFlightJournalTokens: [CKRecord.ID: (journalKey: String, token: String)] = [:]
+    /// Server versions returned with a conflict. A retry must preserve their
+    /// change tag; creating a brand-new CKRecord would conflict forever.
+    private var conflictRetryRecords: [CKRecord.ID: CKRecord] = [:]
     /// The container identifier the apps register in their entitlements.
     public static let containerIdentifier = "iCloud.nl.nielscroiset.whisperclipboard"
 
     /// - Parameters:
     ///   - store: the history store to observe (outbound) and apply into (inbound).
     ///   - isEnabled: reads `AppSettings.icloudSyncEnabled` live.
-    ///   - stateFilename: the per-platform serialization file name (each app owns
-    ///     its own so two platforms never clobber each other's engine state).
+    /// Sync sidecars default to build-variant-specific names. Callers normally
+    /// leave these defaults alone; explicit names are useful for isolated tests.
     public init(
         store: HistoryStore,
         isEnabled: @escaping () -> Bool,
         containerIdentifier: String = HistorySyncEngine.containerIdentifier,
-        stateFilename: String = "sync-state.bin"
+        stateFilename: String = HistorySyncStorage.stateFilename,
+        pendingFilename: String = HistorySyncStorage.pendingFilename,
+        accountFilename: String = HistorySyncStorage.accountFilename,
+        seedFilename: String = HistorySyncStorage.seedFilename
     ) {
         self.store = store
         self.isEnabled = isEnabled
         self.containerIdentifier = containerIdentifier
-        self.journal = HistoryPendingJournal()
+        self.journal = HistoryPendingJournal(filename: pendingFilename)
+        self.accountBinding = HistorySyncAccountBinding(filename: accountFilename)
+        self.seedLedger = HistorySyncSeedLedger(filename: seedFilename)
         self.stateURL = AppSupport.baseDirectory.appendingPathComponent(stateFilename, isDirectory: false)
         super.init()
 
@@ -88,16 +101,53 @@ public final class HistorySyncEngine: NSObject {
             status = .disabled
             return
         }
-        // Check account availability first — this is where a build with no
-        // CloudKit entitlement (ad-hoc dev / CI) fails, and we must go dormant
-        // quietly rather than surface a crash or a noisy error.
-        let available = await accountIsAvailable()
-        guard available else { return } // status already set by accountIsAvailable()
 
         guard engine == nil else {
             status = .active(lastSync: nil)
             return
         }
+
+        // Resolve the actual private-database owner before constructing the sync
+        // engine. This is a read-only preflight and prevents a local database
+        // from being silently uploaded after an iCloud account switch.
+        guard let currentUser = await currentUserRecordName() else { return }
+        let localCount = localSyncItemCount()
+        if let approvedUser = accountBinding.userRecordName() {
+            guard approvedUser == currentUser else {
+                status = .requiresApproval(localCount: localCount, accountChanged: true)
+                return
+            }
+        } else if localCount > 0 {
+            status = .requiresApproval(localCount: localCount, accountChanged: false)
+            return
+        } else if !accountBinding.bind(to: currentUser) {
+            status = .error(message: "Kon de iCloud-accountkoppeling niet veilig bewaren")
+            return
+        }
+
+        startApprovedEngine(for: currentUser)
+    }
+
+    /// Explicitly approves merging the complete local database with the iCloud
+    /// account that is signed in at the moment of confirmation. No stored or
+    /// previously-observed account id is trusted without checking again.
+    public func approveCurrentAccountMerge() async {
+        guard isEnabled() else {
+            status = .disabled
+            return
+        }
+        guard let currentUser = await currentUserRecordName() else { return }
+        guard accountBinding.bind(to: currentUser) else {
+            status = .error(message: "Kon de iCloud-accountkoppeling niet veilig bewaren")
+            return
+        }
+        engine = nil
+        startApprovedEngine(for: currentUser)
+    }
+
+    private func startApprovedEngine(for currentUser: String) {
+        guard engine == nil else { return }
+        guard seedLocalHistoryIfNeeded(for: currentUser) else { return }
 
         var config = CKSyncEngine.Configuration(
             database: container().privateCloudDatabase,
@@ -113,7 +163,8 @@ public final class HistorySyncEngine: NSObject {
         // already present is harmless — CloudKit treats it idempotently — so we
         // don't need to track "created" precisely across launches.
         engine.state.add(pendingDatabaseChanges: [
-            .saveZone(CKRecordZone(zoneName: TranscriptCloudRecord.zoneName))
+            .saveZone(CKRecordZone(zoneName: TranscriptCloudRecord.zoneName)),
+            .saveZone(CKRecordZone(zoneName: NoteCloudRecord.zoneName))
         ])
 
         // Replay any journaled pending ops (offline / pre-start changes) into the
@@ -130,7 +181,15 @@ public final class HistorySyncEngine: NSObject {
         do {
             try await engine.fetchChanges()
             try await engine.sendChanges()
-            status = .active(lastSync: Date())
+            if journal.pendingItems().isEmpty {
+                status = .active(lastSync: Date())
+            } else {
+                if case .error = status {
+                    // Keep the specific error reported by the delegate event.
+                } else {
+                    status = .error(message: "Niet alle wijzigingen konden naar iCloud worden gestuurd")
+                }
+            }
         } catch {
             status = .error(message: error.localizedDescription)
         }
@@ -195,6 +254,19 @@ public final class HistorySyncEngine: NSObject {
         }
     }
 
+    /// Returns the current account's opaque record name after the entitlement
+    /// and account-status checks. `userRecordID()` is a read-only CloudKit call.
+    private func currentUserRecordName() async -> String? {
+        guard await accountIsAvailable() else { return nil }
+        do {
+            return try await container().userRecordID().recordName
+        } catch {
+            NSLog("HistorySyncEngine: user identity unavailable (%@)", String(describing: error))
+            status = .unavailable(reason: "iCloud-account kon niet worden vastgesteld")
+            return nil
+        }
+    }
+
     /// Whether the running binary carries the CloudKit container in its code-sign
     /// entitlements. This is the guard that keeps unentitled builds dormant:
     /// constructing a `CKContainer` for a container the app isn't entitled to
@@ -256,29 +328,68 @@ public final class HistorySyncEngine: NSObject {
     // MARK: - Outbound
 
     private func enqueueOutbound(_ change: HistoryChange) {
-        journal.append(change)
+        guard journal.append(change) else {
+            status = .error(message: "Kon een lokale wijziging niet veilig klaarzetten voor iCloud")
+            return
+        }
         guard let engine else { return }
-        let zoneID = CKRecordZone.ID(zoneName: TranscriptCloudRecord.zoneName)
+        addPending(change, to: engine)
+    }
+
+    private func addPending(_ change: HistoryChange, to engine: CKSyncEngine) {
+        let zoneID = CKRecordZone.ID(zoneName: change.zoneName)
         let recordID = CKRecord.ID(recordName: change.id, zoneID: zoneID)
         switch change {
-        case .upsert:
+        case .upsert, .noteUpsert:
             engine.state.add(pendingRecordZoneChanges: [.saveRecord(recordID)])
-        case .delete:
+        case .delete, .noteDelete:
             engine.state.add(pendingRecordZoneChanges: [.deleteRecord(recordID)])
         }
     }
 
-    /// Feeds the durable journal's pending ops into the live engine, then clears
-    /// them (the engine's own state now owns them). Ordering is preserved.
-    private func replayJournal() {
-        let pending = journal.pending()
-        guard !pending.isEmpty, engine != nil else { return }
-        for change in pending {
-            enqueueOutbound(change)
+    /// Adds every pre-existing local row to the durable journal once per approved
+    /// account. The marker is only written after every journal append succeeded.
+    private func seedLocalHistoryIfNeeded(for userRecordName: String) -> Bool {
+        let seedKey = "\(userRecordName)|transcripts-and-notes-v1"
+        guard !seedLedger.contains(seedKey) else { return true }
+        let transcriptIDs: [String]
+        let noteIDs: [String]
+        do {
+            transcriptIDs = try store.allRecordIDs()
+            noteIDs = try store.allNoteRecordIDs()
+        } catch {
+            status = .error(message: "Kon lokale geschiedenis niet voorbereiden: \(error.localizedDescription)")
+            return false
         }
-        // enqueueOutbound re-appended each id to the journal, but it also handed
-        // them to the engine; clear the journal now that the engine owns them.
-        journal.clearAll()
+
+        for id in transcriptIDs {
+            guard journal.append(.upsert(id: id)) else {
+                status = .error(message: "Kon de eerste synchronisatie niet veilig voorbereiden")
+                return false
+            }
+        }
+        for id in noteIDs {
+            guard journal.append(.noteUpsert(id: id)) else {
+                status = .error(message: "Kon bestaande notities niet veilig voorbereiden")
+                return false
+            }
+        }
+        guard seedLedger.markSeeded(seedKey) else {
+            status = .error(message: "Kon de eerste synchronisatie niet veilig markeren")
+            return false
+        }
+        return true
+    }
+
+    /// Feeds the durable journal's pending ops into the live engine. Entries stay
+    /// journaled until CloudKit confirms each save/delete, so a crash after an
+    /// engine-state update cannot lose unsent local changes.
+    private func replayJournal() {
+        let pendingItems = journal.pendingItems()
+        guard !pendingItems.isEmpty, let engine else { return }
+        for item in pendingItems {
+            addPending(item.change, to: engine)
+        }
     }
 
     // MARK: - State serialization
@@ -315,12 +426,31 @@ extension HistorySyncEngine: CKSyncEngineDelegate {
             handleAccountChange(change)
 
         case .fetchedRecordZoneChanges(let changes):
-            applyFetched(changes)
-            status = .active(lastSync: Date())
+            // bevinding 2026-08-03: een mislukte lokale schrijfactie werd stil
+            // ingeslikt en daarna als geslaagde sync gemeld. Nu wordt hij als
+            // foutstatus getoond in plaats van "gesynchroniseerd".
+            if let failure = applyFetched(changes, syncEngine: syncEngine) {
+                status = .error(
+                    message: "Kon iCloud-wijzigingen niet lokaal opslaan: \(failure.localizedDescription)"
+                )
+            } else if journal.pendingItems().isEmpty {
+                status = .active(lastSync: Date())
+            }
 
         case .sentRecordZoneChanges(let sent):
             handleSent(sent)
-            status = .active(lastSync: Date())
+            if sent.failedRecordSaves.isEmpty,
+               sent.failedRecordDeletes.isEmpty,
+               journal.pendingItems().isEmpty {
+                status = .active(lastSync: Date())
+            } else {
+                let firstError = sent.failedRecordSaves.first?.error
+                    ?? sent.failedRecordDeletes.values.first
+                status = .error(
+                    message: firstError?.localizedDescription
+                        ?? "Niet alle wijzigingen konden naar iCloud worden gestuurd"
+                )
+            }
 
         case .fetchedDatabaseChanges,
              .sentDatabaseChanges,
@@ -344,18 +474,50 @@ extension HistorySyncEngine: CKSyncEngineDelegate {
         let changes = syncEngine.state.pendingRecordZoneChanges.filter { scope.contains($0) }
         guard !changes.isEmpty else { return nil }
 
+        let journalItems = Dictionary(
+            uniqueKeysWithValues: journal.pendingItems().map { ($0.change.journalKey, $0) }
+        )
+
         // Materialize every to-be-saved row up front on the main actor, so the
         // (non-isolated) batch-builder closure only reads from a captured, plain
         // dictionary. Rows that vanished locally are pruned from the pending set.
         var records: [CKRecord.ID: CKRecord] = [:]
         for change in changes {
-            guard case .saveRecord(let recordID) = change else { continue }
-            if let local = try? store.record(id: recordID.recordName) {
-                let ck = CKRecord(recordType: TranscriptCloudRecord.recordType, recordID: recordID)
+            let recordID: CKRecord.ID
+            let isNote = recordIDZoneName(change) == NoteCloudRecord.zoneName
+            let expectedJournalChange: HistoryChange
+            switch change {
+            case .saveRecord(let id):
+                recordID = id
+                expectedJournalChange = isNote ? .noteUpsert(id: id.recordName) : .upsert(id: id.recordName)
+            case .deleteRecord(let id):
+                recordID = id
+                expectedJournalChange = isNote ? .noteDelete(id: id.recordName) : .delete(id: id.recordName)
+            @unknown default:
+                continue
+            }
+            if let item = journalItems[expectedJournalChange.journalKey], item.change == expectedJournalChange {
+                inFlightJournalTokens[recordID] = (item.change.journalKey, item.token)
+            }
+
+            guard case .saveRecord = change else { continue }
+            if isNote, let local = try? store.noteRecord(id: recordID.recordName) {
+                let ck = conflictRetryRecords[recordID]
+                    ?? CKRecord(recordType: NoteCloudRecord.recordType, recordID: recordID)
+                NoteCloudRecord.apply(local, to: ck)
+                records[recordID] = ck
+            } else if !isNote, let local = try? store.record(id: recordID.recordName) {
+                let ck = conflictRetryRecords[recordID]
+                    ?? CKRecord(recordType: TranscriptCloudRecord.recordType, recordID: recordID)
                 TranscriptCloudRecord.apply(local, to: ck)
                 records[recordID] = ck
             } else {
                 syncEngine.state.remove(pendingRecordZoneChanges: [.saveRecord(recordID)])
+                // The row no longer exists and no matching delete survived in
+                // the journal, so this stale save can never be materialized.
+                if let item = inFlightJournalTokens.removeValue(forKey: recordID) {
+                    journal.clear(journalKey: item.journalKey, token: item.token)
+                }
             }
         }
 
@@ -367,71 +529,277 @@ extension HistorySyncEngine: CKSyncEngineDelegate {
 
     // MARK: Inbound application
 
-    private func applyFetched(_ changes: CKSyncEngine.Event.FetchedRecordZoneChanges) {
+    /// Past opgehaalde records lokaal toe. Geeft de eerste mislukte schrijfactie
+    /// terug, zodat de aanroeper geen schone sync meldt.
+    ///
+    /// bevinding 2026-08-03: de lokale schrijfactie gebeurt nu VÓÓR
+    /// `discardPendingLocalChange`, en de lokale wijziging wordt alleen
+    /// losgelaten als het schrijven écht lukte. Andersom hield de rij bij een
+    /// fout zijn oude inhoud terwijl de lokale wijziging uit het journaal én uit
+    /// de wachtrij verdween — die rij liep dan permanent uit de pas, want hij
+    /// werd nooit meer verstuurd of opnieuw opgehaald. Alleen de volgorde en de
+    /// foutafhandeling veranderen; de conflictafhandeling blijft gelijk.
+    private func applyFetched(
+        _ changes: CKSyncEngine.Event.FetchedRecordZoneChanges,
+        syncEngine: CKSyncEngine
+    ) -> Error? {
+        var firstFailure: Error?
+        func recordFailure(_ error: Error, _ recordName: String) {
+            NSLog(
+                "HistorySyncEngine: applying fetched change failed for %@ (%@)",
+                recordName, String(describing: error)
+            )
+            if firstFailure == nil { firstFailure = error }
+        }
+
         for modification in changes.modifications {
             let ck = modification.record
-            let remote = TranscriptCloudRecord.local(from: ck)
-            let localClock = (try? store.modifiedAt(ids: [remote.id]))?[remote.id]
-            let resolution = TranscriptCloudRecord.resolve(
-                localModifiedAt: localClock,
-                remoteModifiedAt: remote.modifiedAt
-            )
-            switch resolution {
-            case .takeRemote:
-                try? store.applyRemoteUpsert(remote)
-            case .keepLocal:
-                // Our copy is newer: re-queue it so the server converges to us.
-                let zoneID = CKRecordZone.ID(zoneName: TranscriptCloudRecord.zoneName)
-                engine?.state.add(pendingRecordZoneChanges: [
-                    .saveRecord(CKRecord.ID(recordName: remote.id, zoneID: zoneID))
-                ])
+            if ck.recordType == NoteCloudRecord.recordType {
+                let remote = NoteCloudRecord.local(from: ck)
+                let localUpsert = HistoryChange.noteUpsert(id: remote.id)
+                if journal.pendingItem(journalKey: localUpsert.journalKey)?.change
+                    == .noteDelete(id: remote.id) {
+                    addPending(.noteDelete(id: remote.id), to: syncEngine)
+                    continue
+                }
+                let localClock = (try? store.noteModifiedAt(ids: [remote.id]))?[remote.id]
+                if NoteCloudRecord.resolve(
+                    localModifiedAt: localClock,
+                    remoteModifiedAt: remote.modifiedAtMillis
+                ) == .takeRemote {
+                    do {
+                        try store.applyRemoteNoteUpsert(remote)
+                        discardPendingLocalChange(for: localUpsert)
+                    } catch {
+                        recordFailure(error, remote.id)
+                    }
+                } else {
+                    enqueueOutbound(localUpsert)
+                }
+            } else {
+                let remote = TranscriptCloudRecord.local(from: ck)
+                let localUpsert = HistoryChange.upsert(id: remote.id)
+                if journal.pendingItem(journalKey: localUpsert.journalKey)?.change
+                    == .delete(id: remote.id) {
+                    addPending(.delete(id: remote.id), to: syncEngine)
+                    continue
+                }
+                let localClock = (try? store.modifiedAt(ids: [remote.id]))?[remote.id]
+                if TranscriptCloudRecord.resolve(
+                    localModifiedAt: localClock,
+                    remoteModifiedAt: remote.modifiedAt
+                ) == .takeRemote {
+                    do {
+                        try store.applyRemoteUpsert(
+                            remote,
+                            includesNoteLink: TranscriptCloudRecord.carriesNoteLink(ck)
+                        )
+                        discardPendingLocalChange(for: localUpsert)
+                    } catch {
+                        recordFailure(error, remote.id)
+                    }
+                } else {
+                    enqueueOutbound(localUpsert)
+                }
             }
         }
         for deletion in changes.deletions {
-            try? store.applyRemoteDelete(id: deletion.recordID.recordName)
+            if deletion.recordID.zoneID.zoneName == NoteCloudRecord.zoneName {
+                let upsert = HistoryChange.noteUpsert(id: deletion.recordID.recordName)
+                let delete = HistoryChange.noteDelete(id: deletion.recordID.recordName)
+                if journal.pendingItem(journalKey: upsert.journalKey)?.change == upsert {
+                    addPending(upsert, to: syncEngine)
+                } else {
+                    do {
+                        try store.applyRemoteNoteDelete(id: deletion.recordID.recordName)
+                        discardPendingLocalChange(for: delete)
+                    } catch {
+                        recordFailure(error, deletion.recordID.recordName)
+                    }
+                }
+            } else {
+                let upsert = HistoryChange.upsert(id: deletion.recordID.recordName)
+                let delete = HistoryChange.delete(id: deletion.recordID.recordName)
+                if journal.pendingItem(journalKey: upsert.journalKey)?.change == upsert {
+                    addPending(upsert, to: syncEngine)
+                } else {
+                    do {
+                        try store.applyRemoteDelete(id: deletion.recordID.recordName)
+                        discardPendingLocalChange(for: delete)
+                    } catch {
+                        recordFailure(error, deletion.recordID.recordName)
+                    }
+                }
+            }
         }
+        return firstFailure
     }
 
     private func handleSent(_ sent: CKSyncEngine.Event.SentRecordZoneChanges) {
+        // A journal entry is retired only after CloudKit confirms the operation.
+        // Failed operations remain durable and can be replayed after relaunch.
+        for record in sent.savedRecords {
+            conflictRetryRecords.removeValue(forKey: record.recordID)
+            acknowledgeJournalEntry(for: record.recordID)
+        }
+        for recordID in sent.deletedRecordIDs {
+            acknowledgeJournalEntry(for: recordID)
+        }
+        for failed in sent.failedRecordSaves {
+            inFlightJournalTokens.removeValue(forKey: failed.record.recordID)
+        }
+        for recordID in sent.failedRecordDeletes.keys {
+            inFlightJournalTokens.removeValue(forKey: recordID)
+        }
+
         // Resolve server conflicts on failed saves via last-writer-wins.
         for failed in sent.failedRecordSaves {
             let recordID = failed.record.recordID
             switch failed.error.code {
             case .serverRecordChanged:
                 guard let serverRecord = failed.error.serverRecord else { break }
-                let remote = TranscriptCloudRecord.local(from: serverRecord)
-                let localClock = (try? store.modifiedAt(ids: [remote.id]))?[remote.id]
-                let resolution = TranscriptCloudRecord.resolve(
-                    localModifiedAt: localClock,
-                    remoteModifiedAt: remote.modifiedAt
-                )
-                if resolution == .takeRemote {
-                    try? store.applyRemoteUpsert(remote)
+                if serverRecord.recordType == NoteCloudRecord.recordType {
+                    let remote = NoteCloudRecord.local(from: serverRecord)
+                    let localClock = (try? store.noteModifiedAt(ids: [remote.id]))?[remote.id]
+                    if NoteCloudRecord.resolve(
+                        localModifiedAt: localClock,
+                        remoteModifiedAt: remote.modifiedAtMillis
+                    ) == .takeRemote {
+                        // bevinding 2026-08-03: eerst schrijven, pas daarna de
+                        // lokale wijziging laten vallen. Mislukt het schrijven,
+                        // dan blijft die wijziging staan en draait de
+                        // conflictafhandeling bij een volgende poging opnieuw.
+                        do {
+                            try store.applyRemoteNoteUpsert(remote)
+                            discardPendingLocalChange(for: .noteUpsert(id: remote.id))
+                        } catch {
+                            NSLog(
+                                "HistorySyncEngine: applying server record failed for %@ (%@)",
+                                remote.id, String(describing: error)
+                            )
+                        }
+                    } else {
+                        conflictRetryRecords[recordID] = serverRecord
+                        engine?.state.add(pendingRecordZoneChanges: [.saveRecord(recordID)])
+                    }
                 } else {
-                    // Keep local; resubmit against the server's change tag.
-                    engine?.state.add(pendingRecordZoneChanges: [.saveRecord(recordID)])
+                    let remote = TranscriptCloudRecord.local(from: serverRecord)
+                    let localClock = (try? store.modifiedAt(ids: [remote.id]))?[remote.id]
+                    if TranscriptCloudRecord.resolve(
+                        localModifiedAt: localClock,
+                        remoteModifiedAt: remote.modifiedAt
+                    ) == .takeRemote {
+                        // bevinding 2026-08-03: zie hierboven — schrijven eerst,
+                        // pas bij succes de lokale wijziging laten vallen.
+                        do {
+                            try store.applyRemoteUpsert(
+                                remote,
+                                includesNoteLink: TranscriptCloudRecord.carriesNoteLink(serverRecord)
+                            )
+                            discardPendingLocalChange(for: .upsert(id: remote.id))
+                        } catch {
+                            NSLog(
+                                "HistorySyncEngine: applying server record failed for %@ (%@)",
+                                remote.id, String(describing: error)
+                            )
+                        }
+                    } else {
+                        conflictRetryRecords[recordID] = serverRecord
+                        engine?.state.add(pendingRecordZoneChanges: [.saveRecord(recordID)])
+                    }
                 }
             case .zoneNotFound, .userDeletedZone:
                 // Recreate the custom zone, then re-queue the save.
                 engine?.state.add(pendingDatabaseChanges: [
-                    .saveZone(CKRecordZone(zoneName: TranscriptCloudRecord.zoneName))
+                    .saveZone(CKRecordZone(zoneID: recordID.zoneID))
                 ])
                 engine?.state.add(pendingRecordZoneChanges: [.saveRecord(recordID)])
             default:
                 NSLog("HistorySyncEngine: save failed for %@ (%@)", recordID.recordName, String(describing: failed.error))
             }
         }
+
+        // A delete can conflict when the server record changed after our last
+        // fetch. A local pending deletion is intentional, so retry it against
+        // the current server state; transient failures stay in the journal.
+        for (recordID, error) in sent.failedRecordDeletes {
+            switch error.code {
+            case .serverRecordChanged:
+                engine?.state.add(pendingRecordZoneChanges: [.deleteRecord(recordID)])
+            case .zoneNotFound, .userDeletedZone:
+                engine?.state.add(pendingDatabaseChanges: [
+                    .saveZone(CKRecordZone(zoneID: recordID.zoneID))
+                ])
+                engine?.state.add(pendingRecordZoneChanges: [.deleteRecord(recordID)])
+            default:
+                NSLog("HistorySyncEngine: delete failed for %@ (%@)", recordID.recordName, String(describing: error))
+            }
+        }
+    }
+
+    private func acknowledgeJournalEntry(for recordID: CKRecord.ID) {
+        guard let item = inFlightJournalTokens.removeValue(forKey: recordID) else { return }
+        journal.clear(journalKey: item.journalKey, token: item.token)
+    }
+
+    /// Drops only the currently journaled mutation for this record and removes
+    /// its matching pending engine operation. Used when an equal/newer remote
+    /// value wins, so an obsolete local save cannot overwrite it later.
+    private func discardPendingLocalChange(for change: HistoryChange) {
+        guard let item = journal.pendingItem(journalKey: change.journalKey) else { return }
+        let recordID = CKRecord.ID(
+            recordName: change.id,
+            zoneID: CKRecordZone.ID(zoneName: change.zoneName)
+        )
+        switch item.change {
+        case .upsert, .noteUpsert:
+            engine?.state.remove(pendingRecordZoneChanges: [.saveRecord(recordID)])
+        case .delete, .noteDelete:
+            engine?.state.remove(pendingRecordZoneChanges: [.deleteRecord(recordID)])
+        }
+        inFlightJournalTokens.removeValue(forKey: recordID)
+        conflictRetryRecords.removeValue(forKey: recordID)
+        journal.clear(journalKey: item.change.journalKey, token: item.token)
+    }
+
+    private func localSyncItemCount() -> Int {
+        let transcriptCount = (try? store.allRecordIDs().count) ?? 0
+        let noteCount = (try? store.allNoteRecordIDs().count) ?? 0
+        return transcriptCount + noteCount
+    }
+
+    private func recordIDZoneName(_ change: CKSyncEngine.PendingRecordZoneChange) -> String {
+        switch change {
+        case .saveRecord(let id), .deleteRecord(let id): id.zoneID.zoneName
+        @unknown default: ""
+        }
     }
 
     private func handleAccountChange(_ change: CKSyncEngine.Event.AccountChange) {
         switch change.changeType {
-        case .signOut, .switchAccounts:
-            // The account went away or changed: go dormant. Local history stays;
-            // the serialized engine state is left on disk but a fresh account will
-            // start clean.
-            status = .unavailable(reason: "iCloud-account gewijzigd")
-        case .signIn:
-            Task { await start() }
+        case .signOut:
+            // Keep local data and its binding, but drop the live engine. A later
+            // sign-in is preflighted against that binding before any upload.
+            engine = nil
+            status = .unavailable(reason: "uitgelogd bij iCloud")
+
+        case .switchAccounts(_, let currentUser):
+            engine = nil
+            let localCount = localSyncItemCount()
+            let changed = accountBinding.userRecordName() != currentUser.recordName
+            status = .requiresApproval(localCount: localCount, accountChanged: changed)
+
+        case .signIn(let currentUser):
+            if accountBinding.userRecordName() == currentUser.recordName {
+                status = .active(lastSync: nil)
+            } else {
+                engine = nil
+                let localCount = localSyncItemCount()
+                status = .requiresApproval(
+                    localCount: localCount,
+                    accountChanged: accountBinding.userRecordName() != nil
+                )
+            }
         @unknown default:
             break
         }

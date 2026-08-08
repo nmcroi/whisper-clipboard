@@ -13,13 +13,14 @@ import WhisperShared
 enum SupportedMedia {
     /// Lower-cased file extensions (no leading dot) the importer accepts.
     static let extensions: Set<String> = [
-        "mp3", "mp4", "m4a", "wav", "mov", "aac", "aiff", "aif", "caf",
+        "mp3", "mp4", "m4a", "wav", "mov", "aac", "aiff", "aif", "caf", "opus",
     ]
 
     /// `UTType`s for the `NSOpenPanel` allowed-content-types and drop validation.
     static let contentTypes: [UTType] = [
         .mp3, .mpeg4Movie, .mpeg4Audio, .wav, .quickTimeMovie, .aiff,
         UTType("public.aac-audio"), UTType(filenameExtension: "caf"),
+        UTType(filenameExtension: "opus"),
     ].compactMap { $0 }
 
     /// Whether `url`'s extension is supported (pure, case-insensitive).
@@ -82,14 +83,43 @@ final class ImportJob: Identifiable {
     /// The history `source` tag for the resulting transcript ("file" for a normal
     /// import, "plaud" for a PLAUD cloud sync). Defaults to "file".
     let source: String
-    /// Filename stem used as the history entry name.
-    var displayName: String { url.deletingPathExtension().lastPathComponent }
+    /// User-facing history title. PLAUD filenames contain a date, record id and
+    /// sometimes a literal `.opus`; none of that belongs in the visible title.
+    var displayName: String {
+        guard source == "plaud" else { return url.deletingPathExtension().lastPathComponent }
+        let stem = url.deletingPathExtension().lastPathComponent
+        let withoutDate = Self.plaudDate(from: stem) == nil ? stem : String(stem.dropFirst(16))
+        let withoutShortID = withoutDate.replacingOccurrences(
+            of: #"_[0-9a-fA-F]{8}$"#,
+            with: "",
+            options: .regularExpression
+        )
+        let cleaned = withoutShortID.replacingOccurrences(of: ".opus", with: "", options: .caseInsensitive)
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+        let looksTechnical = cleaned.range(of: #"^[0-9a-fA-F]{20,}$"#, options: .regularExpression) != nil
+        return cleaned.isEmpty || looksTechnical ? "" : cleaned
+    }
+
+    /// Original PLAUD recording time encoded by `suggestedFilenameStem`.
+    var originalRecordingDate: Date? {
+        source == "plaud" ? Self.plaudDate(from: url.deletingPathExtension().lastPathComponent) : nil
+    }
     var state: State
 
     init(url: URL, source: String = "file", state: State = .waiting) {
         self.url = url
         self.source = source
         self.state = state
+    }
+
+    private static func plaudDate(from stem: String) -> Date? {
+        guard stem.count >= 15 else { return nil }
+        let prefix = String(stem.prefix(15))
+        let formatter = DateFormatter()
+        formatter.locale = Locale(identifier: "en_US_POSIX")
+        formatter.timeZone = .current
+        formatter.dateFormat = "yyyy-MM-dd_HHmm"
+        return formatter.date(from: prefix)
     }
 }
 
@@ -196,6 +226,31 @@ final class FileImportService {
         return enqueued
     }
 
+    /// Enqueues a batch and waits until every accepted job is either safely
+    /// stored or definitively failed. PLAUD uses this so it never records a
+    /// download as processed merely because it entered the queue.
+    func importFilesAndWait(_ urls: [URL], source: String = "file") async -> [URL] {
+        let acceptedJobs = importFiles(urls, source: source)
+        guard !acceptedJobs.isEmpty else { return [] }
+        while acceptedJobs.contains(where: { !$0.state.isTerminal }) {
+            try? await Task.sleep(for: .milliseconds(100))
+        }
+        return acceptedJobs.compactMap { job in
+            switch job.state {
+            case .done:
+                return job.url
+            case .failed(let message)
+                where job.source == "plaud"
+                    && message == FileImportError.emptyTranscript.errorDescription:
+                // Silence is a terminal, successfully inspected PLAUD item. It
+                // must not be downloaded again every time the user dismisses it.
+                return job.url
+            default:
+                return nil
+            }
+        }
+    }
+
     /// Re-runs a failed job (retry button).
     func retry(_ job: ImportJob) {
         guard case .failed = job.state else { return }
@@ -211,14 +266,26 @@ final class FileImportService {
     // MARK: - Queue processing
 
     private var isDraining = false
+    private var drainTask: Task<Void, Never>?
 
     /// Processes waiting jobs one at a time until none remain.
     private func drainQueue() {
         guard !isDraining else { return }
         isDraining = true
-        Task { [weak self] in
+        drainTask = Task { [weak self] in
             await self?.runDrainLoop()
         }
+    }
+
+    /// Stops PLAUD work immediately without disturbing ordinary user-selected
+    /// imports. Used by the PLAUD Stop button and by disabling automatic sync.
+    func cancelPlaudImports() {
+        if jobs.contains(where: { $0.source == "plaud" && !$0.state.isTerminal }) {
+            drainTask?.cancel()
+        }
+        jobs.removeAll { $0.source == "plaud" }
+        isDraining = false
+        isBusy = false
     }
 
     private func runDrainLoop() async {
@@ -272,15 +339,31 @@ final class FileImportService {
                 duration: decoded.duration
             )
 
-            try store(text: text, segments: segments, duration: decoded.duration, name: job.displayName, source: job.source)
+            try store(
+                text: text,
+                segments: segments,
+                duration: decoded.duration,
+                name: job.displayName,
+                source: job.source,
+                createdAt: job.originalRecordingDate ?? Date()
+            )
             copyToClipboard(text)
             job.state = .done
             notify("\(job.url.lastPathComponent) is getranscribeerd en gekopieerd")
             scheduleAutoClear(job)
         } catch {
+            if error is CancellationError {
+                jobs.removeAll { $0.id == job.id }
+                if let tempURL { try? FileManager.default.removeItem(at: tempURL) }
+                return
+            }
             let message = (error as? LocalizedError)?.errorDescription ?? error.localizedDescription
             job.state = .failed(message: message)
             notify(message)
+            if job.source == "plaud",
+               message == FileImportError.emptyTranscript.errorDescription {
+                scheduleSilentPlaudClear(job)
+            }
         }
         if let tempURL {
             try? FileManager.default.removeItem(at: tempURL)
@@ -329,16 +412,23 @@ final class FileImportService {
         }
     }
 
-    private func store(text: String, segments: [Core.TranscriptSegment], duration: Double, name: String, source: String = "file") throws {
+    private func store(
+        text: String,
+        segments: [Core.TranscriptSegment],
+        duration: Double,
+        name: String,
+        source: String = "file",
+        createdAt: Date = Date()
+    ) throws {
         let entry = TranscriptEntry(
             id: UUID().uuidString,
             text: text,
-            createdAt: Self.timestampString(from: Date()),
+            createdAt: Self.timestampString(from: createdAt),
             name: name,
             pinned: false,
             language: locale().language.languageCode?.identifier ?? "nl",
             model: "parakeet-tdt-0.6b-v3",
-            source: source,
+            source: source + ".mac",
             duration: duration,
             segments: segments
         )
@@ -353,6 +443,21 @@ final class FileImportService {
             try? await Task.sleep(for: .seconds(Self.autoClearDelay))
             guard let self else { return }
             if job.state == .done { self.remove(job) }
+        }
+    }
+
+    /// A silent PLAUD recording has been examined successfully, but produces no
+    /// history entry. Show the explanation briefly, then clear it: retrying the
+    /// same silence is neither useful nor compatible with deleting its local
+    /// cache after it is marked processed.
+    private func scheduleSilentPlaudClear(_ job: ImportJob) {
+        Task { [weak self] in
+            try? await Task.sleep(for: .seconds(Self.autoClearDelay))
+            guard let self else { return }
+            if case .failed(let message) = job.state,
+               message == FileImportError.emptyTranscript.errorDescription {
+                self.remove(job)
+            }
         }
     }
 

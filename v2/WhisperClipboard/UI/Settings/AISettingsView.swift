@@ -13,6 +13,11 @@ struct AISettingsView: View {
     @State private var testState: TestState = .idle
     @State private var editingMode: AIMode?
     @State private var showingEditor = false
+    /// Zichtbare fout bij het bewerken van AI-modi. Deze vier handelingen stonden
+    /// achter `try?`: een mode leefde dan wel in het geheugen maar stond niet in
+    /// `modes.json`, en was na een herstart weg zonder dat iemand iets zag
+    /// (bevinding 2026-08-03).
+    @State private var dataError: String?
 
     enum TestState: Equatable {
         case idle
@@ -26,18 +31,47 @@ struct AISettingsView: View {
             VStack(alignment: .leading, spacing: 20) {
                 keySection
                 Divider().overlay(Theme.border)
+                usageSection
+                Divider().overlay(Theme.border)
                 modesSection
             }
             .padding(24)
             .frame(maxWidth: .infinity, alignment: .leading)
         }
         .background(Theme.window)
+        .dataChangeAlert($dataError)
         .onAppear(perform: loadKey)
         .sheet(isPresented: $showingEditor) {
             ModeEditorView(
                 mode: editingMode,
                 onSave: saveMode
             )
+        }
+    }
+
+    private var usageSection: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            Text("API-verbruik")
+                .font(ThemeFont.ui(15, weight: .semibold))
+                .foregroundStyle(Theme.text)
+            HStack {
+                VStack(alignment: .leading, spacing: 3) {
+                    Text(modes.estimatedCostUSD.formatted(.currency(code: "USD")))
+                        .font(ThemeFont.ui(18, weight: .bold))
+                        .foregroundStyle(Theme.accentText)
+                    Text("\(modes.totalInputTokens.formatted()) invoertokens · \(modes.totalOutputTokens.formatted()) uitvoertokens")
+                        .font(ThemeFont.ui(11))
+                        .foregroundStyle(Theme.textSecondary)
+                }
+                Spacer()
+                Text("Schatting voor Claude Sonnet 5; je Anthropic-factuur is leidend.")
+                    .font(ThemeFont.ui(10))
+                    .foregroundStyle(Theme.textTertiary)
+                    .multilineTextAlignment(.trailing)
+                    .frame(maxWidth: 210)
+            }
+            .padding(12)
+            .themeCard()
         }
     }
 
@@ -181,7 +215,9 @@ struct AISettingsView: View {
             Spacer(minLength: 0)
 
             Button {
-                try? modes.duplicate(mode)
+                DataChange.perform("Modus dupliceren", reporting: $dataError) {
+                    try modes.duplicate(mode)
+                }
             } label: {
                 Image(systemName: "plus.square.on.square").foregroundStyle(Theme.textSecondary)
             }
@@ -199,7 +235,9 @@ struct AISettingsView: View {
                 .help("Bewerk")
 
                 Button(role: .destructive) {
-                    try? modes.deleteMode(id: mode.id)
+                    DataChange.perform("Modus verwijderen", reporting: $dataError) {
+                        try modes.deleteMode(id: mode.id)
+                    }
                 } label: {
                     Image(systemName: "trash").foregroundStyle(Theme.danger)
                 }
@@ -232,7 +270,19 @@ struct AISettingsView: View {
         let key = apiKey.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !key.isEmpty else { return }
         // Persist first so a successful test reflects what will actually be used.
-        try? KeychainStore.save(key)
+        //
+        // Bevinding 2026-08-03: dit ging via `try?`. Mislukte de schrijfactie naar
+        // de Sleutelhanger, dan testte de app de sleutel uit het geheugen en
+        // meldde "Verbinding oké" voor een sleutel die nergens bewaard stond — na
+        // een herstart was er geen sleutel meer. Afbreken met dezelfde melding als
+        // `saveKey()`, want een test die niet over de bewaarde sleutel gaat zegt
+        // niets.
+        do {
+            try KeychainStore.save(key)
+        } catch {
+            testState = .failure("Kon de sleutel niet bewaren.")
+            return
+        }
         testState = .testing
         Task {
             let client = ClaudeClient(apiKey: key)
@@ -248,15 +298,23 @@ struct AISettingsView: View {
     }
 
     private func saveMode(name: String, prompt: String, icon: String) {
+        let saved: Bool
         if let editing = editingMode {
             var updated = editing
             updated.name = name
             updated.systemPrompt = prompt
             updated.icon = icon
-            try? modes.updateMode(updated)
+            saved = DataChange.perform("Modus opslaan", reporting: $dataError) {
+                try modes.updateMode(updated)
+            }
         } else {
-            try? modes.addMode(name: name, systemPrompt: prompt, icon: icon)
+            saved = DataChange.perform("Modus toevoegen", reporting: $dataError) {
+                try modes.addMode(name: name, systemPrompt: prompt, icon: icon)
+            }
         }
+        // Alleen sluiten als het echt bewaard is, zodat de ingevoerde tekst niet
+        // verdwijnt bij een mislukte schrijfactie.
+        guard saved else { return }
         showingEditor = false
     }
 }

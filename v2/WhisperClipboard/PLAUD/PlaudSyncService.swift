@@ -27,7 +27,10 @@ import WhisperShared
 /// ## De-duplication across restarts
 /// Every downloaded recording's PLAUD `id` is persisted to a small
 /// `plaud-processed.json` (mirroring ``WatchedProcessedStore``), so relaunching
-/// never re-downloads a recording already run through the pipeline.
+/// never re-downloads a recording already run through the pipeline. Een
+/// beschadigde administratie is géén "eerste run": dan stopt de sync met een
+/// melding in plaats van de hele window als duplicaten te importeren
+/// (bevinding 2026-08-03, zie ``stateFailure``).
 ///
 /// ## Robustness
 /// - Never crashes on API failure: every error maps to a Dutch status message.
@@ -60,6 +63,10 @@ final class PlaudSyncService {
     private(set) var lastError: String?
     /// True while a sync run is in flight (guards against overlap).
     private(set) var isSyncing = false
+    /// Visible per-recording progress for long full-history imports.
+    private(set) var progressCompleted = 0
+    private(set) var progressTotal = 0
+    private(set) var progressMessage = ""
 
     // MARK: - Dependencies
 
@@ -71,7 +78,8 @@ final class PlaudSyncService {
     /// the subset of `urls` it **accepted** (the importer refuses the whole batch
     /// while dictation/import is busy, and drops unsupported files). Only accepted
     /// recordings are marked processed, so a refused batch is retried next run.
-    private let importer: (_ urls: [URL]) -> [URL]
+    private let importer: (_ urls: [URL]) async -> [URL]
+    private let cancelImporter: () -> Void
     /// True when the importer/dictation is busy and we must hold off this tick.
     private let isBusy: () -> Bool
     /// The client (injected for tests; default uses `.shared`).
@@ -90,7 +98,21 @@ final class PlaudSyncService {
     /// run — a nil `since` lists the full history once, then narrows.
     private var lastSuccessfulSync: Date?
 
+    /// Niet-nil zodra de opgeslagen sync-administratie op schijf wél bestaat maar
+    /// niet te lezen is. Zolang dat zo is mag er GEEN sync draaien.
+    ///
+    /// Bevinding 2026-08-03: ``PlaudProcessedStore/load()`` en
+    /// ``PlaudSyncCheckpoint/load()`` gaven bij elke lees- of decodeerfout "leeg"
+    /// terug. Een beschadigde administratie las daardoor als "er is nog nooit iets
+    /// geïmporteerd" en de service downloadde en transcribeerde de hele
+    /// PLAUD-window opnieuw als dubbele geschiedenis-items. Doorgaan is hier
+    /// erger dan stoppen, dus breken we af met een duidelijke melding.
+    private let stateFailure: String?
+    /// Zorgt dat de kritieke melding hierover maar één keer per app-sessie komt.
+    private var stateFailureAnnounced = false
+
     private var timer: Timer?
+    private var syncTask: Task<Void, Never>?
 
     /// How far *before* the last successful sync each run re-fetches, so a
     /// recording that landed in PLAUD's cloud slightly out of `start_time` order
@@ -101,7 +123,8 @@ final class PlaudSyncService {
     init(
         settings: @escaping () -> AppSettings,
         credentialsProvider: @escaping () -> PlaudCredentials? = { PlaudCredentials.load() },
-        importer: @escaping (_ urls: [URL]) -> [URL],
+        importer: @escaping (_ urls: [URL]) async -> [URL],
+        cancelImporter: @escaping () -> Void = {},
         isBusy: @escaping () -> Bool,
         client: PlaudClient = PlaudClient(),
         store: PlaudProcessedStore = PlaudProcessedStore(),
@@ -111,18 +134,62 @@ final class PlaudSyncService {
         self.settings = settings
         self.credentialsProvider = credentialsProvider
         self.importer = importer
+        self.cancelImporter = cancelImporter
         self.isBusy = isBusy
         self.client = client
         self.store = store
         self.checkpoint = checkpoint
         self.audioDirectory = audioDirectory ?? Self.defaultAudioDirectory
-        self.processed = store.load()
-        self.lastSuccessfulSync = checkpoint.load()
+
+        // Lees de administratie NIET via `load()`: die maakt van een leesfout een
+        // lege set / nil, en dat is precies de stille fout die duplicaten oplevert
+        // (bevinding 2026-08-03). Zie ``stateFailure``.
+        var problems: [String] = []
+        var loadedProcessed: Set<String> = []
+        var loadedCheckpoint: Date?
+
+        switch store.loadDistinguishing() {
+        case .absent:
+            break  // eerste run: er is nog nooit iets geïmporteerd, dat klopt
+        case .loaded(let ids):
+            loadedProcessed = ids
+        case .unreadable(let reason):
+            problems.append(
+                "de lijst met al geïmporteerde opnames (\(PlaudSyncStorage.processedFilename)) is onleesbaar — \(reason)"
+            )
+        }
+
+        switch checkpoint.loadDistinguishing() {
+        case .absent:
+            break  // eerste run: nog geen ijkpunt
+        case .loaded(let date):
+            loadedCheckpoint = date
+        case .unreadable(let reason):
+            problems.append(
+                "het ijkpunt van de laatste synchronisatie (\(PlaudSyncStorage.checkpointFilename)) is onleesbaar — \(reason)"
+            )
+        }
+
+        let failure: String? = problems.isEmpty
+            ? nil
+            : "PLAUD-synchronisatie is gestopt: " + problems.joined(separator: " en ")
+                + ". Doorgaan zou de hele periode opnieuw importeren als dubbele items."
+                + " Herstel of verwijder dat bestand in ~/Library/Application Support/"
+                + AppSupport.folderName + "/ en start de app opnieuw."
+
+        self.processed = loadedProcessed
+        self.lastSuccessfulSync = loadedCheckpoint
+        self.stateFailure = failure
+
+        if let failure {
+            self.lastError = failure
+            self.status = .failed(failure)
+        }
     }
 
     /// `~/Library/Application Support/Whisper Clipboard v2/PLAUD/`.
     static var defaultAudioDirectory: URL {
-        AppSupport.baseDirectory.appendingPathComponent("PLAUD", isDirectory: true)
+        AppSupport.baseDirectory.appendingPathComponent(PlaudSyncStorage.audioFolderName, isDirectory: true)
     }
 
     // MARK: - Lifecycle
@@ -171,7 +238,18 @@ final class PlaudSyncService {
     /// A manual "Synchroniseer nu": always attempts, even if busy is transiently
     /// true (it still won't overlap another in-flight sync).
     func syncNow() {
-        Task { await self.performSync(trigger: .manual) }
+        syncTask = Task { await self.performSync(trigger: .manual) }
+    }
+
+    func cancelSync() {
+        syncTask?.cancel()
+        syncTask = nil
+        cancelImporter()
+        isSyncing = false
+        status = .idle
+        progressCompleted = 0
+        progressTotal = 0
+        progressMessage = "Gestopt"
     }
 
     /// An automatic tick: skips when the importer/dictation is busy (the files
@@ -186,6 +264,19 @@ final class PlaudSyncService {
     func performSync(trigger: Trigger) async {
         guard !isSyncing else { return }
 
+        // Nooit doorgaan met een administratie die "leeg" leek maar in werkelijkheid
+        // onleesbaar was (bevinding 2026-08-03) — dat importeert de hele window
+        // opnieuw als duplicaten. Afbreken en het één keer hard melden, want een
+        // stilgevallen synchronisatie is zelf ook een stille fout.
+        if let failure = stateFailure {
+            setFailure(failure)
+            if !stateFailureAnnounced {
+                stateFailureAnnounced = true
+                Notifications.postCritical(failure, title: "PLAUD-synchronisatie gestopt")
+            }
+            return
+        }
+
         guard let credentials = credentialsProvider(), credentials.isConfigured else {
             setFailure(PlaudError.missingCredentials.errorDescription ?? "Geen PLAUD-inloggegevens.")
             return
@@ -193,6 +284,9 @@ final class PlaudSyncService {
 
         isSyncing = true
         status = .syncing
+        progressCompleted = 0
+        progressTotal = 0
+        progressMessage = "Opnamelijst ophalen…"
         defer { isSyncing = false }
 
         // Capture the run's start *before* the network call: on success we persist
@@ -229,27 +323,30 @@ final class PlaudSyncService {
             }
             // Single-pass dedup against the persisted processed set, newest first.
             let allNew = windowed.filter { !processed.contains($0.id) }
-            let toDownload = allNew.sorted {
+            let pending = allNew.sorted {
                 ($0.startTime ?? .distantPast) > ($1.startTime ?? .distantPast)
             }
 
-            guard !toDownload.isEmpty else {
+            guard !pending.isEmpty else {
                 recordCheckpoint(runStartedAt)
                 setSuccess(imported: 0)
                 return
             }
 
-            // Download each new recording, remembering which id produced which
-            // file so we only mark a recording processed once the importer has
-            // ACCEPTED its file. `allHandled` stays true only if every recording
-            // this run intended to fetch was downloaded AND accepted; any skip
-            // (busy break, download error, importer refusal) holds the checkpoint
-            // back so the next run re-lists — including items older than the 24h
-            // overlap margin that would otherwise fall out of the `since` window.
-            var idByURL: [URL: String] = [:]
-            var downloadedURLs: [URL] = []
-            var allHandled = true
-            for recording in toDownload {
+            // An automatic background tick handles at most one recording. That
+            // keeps global dictation responsive instead of occupying the shared
+            // speech engine for an entire PLAUD archive. A deliberate manual
+            // sync still completes the whole pending batch.
+            let toDownload = trigger == .automatic ? Array(pending.prefix(1)) : pending
+
+            // Process strictly one at a time. This bounds disk usage and gives a
+            // full-history import honest progress instead of downloading every
+            // recording before the first transcription begins.
+            var allHandled = toDownload.count == pending.count
+            var importedCount = 0
+            progressTotal = toDownload.count
+            for (index, recording) in toDownload.enumerated() {
+                try Task.checkCancellation()
                 // A late busy check on automatic runs: don't fight a dictation that
                 // started mid-sync. Manual runs push through (the importer itself
                 // still guards, refusing while dictation records).
@@ -261,37 +358,51 @@ final class PlaudSyncService {
                 let preferred = audioDirectory.appendingPathComponent(recording.suggestedFilenameStem + ".mp3")
                 let written: URL
                 do {
-                    // Use the *returned* URL — its extension may differ from the
-                    // requested .mp3 when PLAUD serves another format (e.g. opus).
-                    written = try await client.downloadAudio(recording, token: token, to: preferred)
+                    progressMessage = "Opname \(index + 1) van \(toDownload.count) downloaden…"
+                    // A cancelled earlier run may already have downloaded this
+                    // exact file. Reuse it rather than spending bandwidth twice.
+                    if let size = try? preferred.resourceValues(forKeys: [.fileSizeKey]).fileSize,
+                       size > 0 {
+                        written = preferred
+                    } else {
+                        // Use the returned URL: the extension may differ when the
+                        // server supplies another media container.
+                        written = try await client.downloadAudio(recording, token: token, to: preferred)
+                    }
                 } catch {
                     // One failed download shouldn't abort the whole sync; leave it
                     // unprocessed AND hold the checkpoint so the next run retries it
                     // (even if it's older than the overlap margin).
                     NSLog("PlaudSync: download failed for %@: %@", recording.id, String(describing: error))
                     allHandled = false
+                    progressCompleted = index + 1
                     continue
                 }
-                idByURL[written] = recording.id
-                downloadedURLs.append(written)
-            }
 
-            // Hand the downloaded files to the importer; it returns the subset it
-            // accepted (it refuses the whole batch while busy). Mark processed only
-            // the recordings whose file was accepted.
-            let acceptedURLs = downloadedURLs.isEmpty ? [] : importer(downloadedURLs)
-            let acceptedSet = Set(acceptedURLs)
-            for url in downloadedURLs {
-                guard let id = idByURL[url] else { continue }
-                if acceptedSet.contains(url) {
-                    processed.insert(id)
+                progressMessage = "Opname \(index + 1) van \(toDownload.count) transcriberen…"
+                let accepted = await importer([written]).contains(written)
+                try Task.checkCancellation()
+                if accepted {
+                    processed.insert(recording.id)
+                    importedCount += 1
+                    // Save after every recording so a quit/crash never causes a
+                    // successfully transcribed item to be imported twice.
+                    store.save(processed)
+                    // The transcript is now durable in HistoryStore (and is
+                    // journaled for iCloud). The PLAUD cloud remains the audio
+                    // source of truth, so the local download is no longer needed.
+                    do {
+                        try FileManager.default.removeItem(at: written)
+                    } catch {
+                        NSLog("PlaudSync: cleanup failed for %@: %@", written.lastPathComponent, String(describing: error))
+                    }
                 } else {
                     // Downloaded but the importer refused it: keep it eligible.
                     allHandled = false
                 }
+                progressCompleted = index + 1
             }
 
-            store.save(processed)
             // Only advance the checkpoint when nothing was left behind — every
             // intended item was downloaded AND accepted. A refused batch, a failed
             // download, or a busy break holds the checkpoint so the next run
@@ -299,7 +410,10 @@ final class PlaudSyncService {
             if allHandled {
                 recordCheckpoint(runStartedAt)
             }
-            setSuccess(imported: acceptedURLs.count)
+            setSuccess(imported: importedCount)
+        } catch is CancellationError {
+            status = .idle
+            progressMessage = "Gestopt"
         } catch let error as PlaudError {
             setFailure(error.errorDescription ?? "PLAUD-fout.")
         } catch {
@@ -365,11 +479,20 @@ struct PlaudProcessedStore {
     static let filename = "plaud-processed.json"
 
     private let backing: JSONIdentitySet
+    /// Het concrete pad, nodig om "bestaat nog niet" te onderscheiden van
+    /// "bestaat wél maar is onleesbaar" — zie ``loadDistinguishing()``.
+    private let fileURL: URL
 
     /// Default location under Application Support next to the other v2 state.
     /// Pass `fileURL` (tests) to redirect it elsewhere.
     init(fileURL: URL? = nil) {
-        self.backing = JSONIdentitySet(filename: Self.filename, fileURL: fileURL)
+        let resolved = fileURL
+            ?? AppSupport.baseDirectory.appendingPathComponent(
+                PlaudSyncStorage.processedFilename,
+                isDirectory: false
+            )
+        self.fileURL = resolved
+        self.backing = JSONIdentitySet(filename: PlaudSyncStorage.processedFilename, fileURL: resolved)
     }
 
     /// Loads the persisted ids, or an empty set when absent/unreadable.
@@ -378,6 +501,37 @@ struct PlaudProcessedStore {
     /// Persists `ids`. Best-effort: logs and swallows failures so a read-only
     /// disk can never break sync.
     func save(_ ids: Set<String>) { backing.save(ids) }
+
+    /// Uitkomst van het lezen van de administratie.
+    enum LoadOutcome {
+        /// Er staat nog niets op schijf: eerste run, alles is terecht nieuw.
+        case absent
+        /// Gelezen. Een lege set betekent hier écht "leeg", geen leesfout.
+        case loaded(Set<String>)
+        /// Het bestand bestaat wél maar is niet te lezen of te decoderen.
+        case unreadable(String)
+    }
+
+    /// Bevinding 2026-08-03: ``load()`` geeft via ``JSONIdentitySet`` bij ELKE
+    /// lees- of decodeerfout een lege set terug. Een beschadigde administratie
+    /// las daardoor als "er is nog nooit iets geïmporteerd", waarna de hele
+    /// PLAUD-window opnieuw werd gedownload en getranscribeerd — dubbele
+    /// geschiedenis-items. Deze variant houdt de twee gevallen uit elkaar zodat
+    /// de aanroeper kan afbreken in plaats van door te gaan alsof er niets was.
+    func loadDistinguishing() -> LoadOutcome {
+        guard FileManager.default.fileExists(atPath: fileURL.path) else { return .absent }
+        let data: Data
+        do {
+            data = try Data(contentsOf: fileURL)
+        } catch {
+            return .unreadable(error.localizedDescription)
+        }
+        do {
+            return .loaded(Set(try JSONDecoder().decode([String].self, from: data)))
+        } catch {
+            return .unreadable("de inhoud is geen geldige lijst met opname-ids")
+        }
+    }
 }
 
 // MARK: - Sync checkpoint persistence
@@ -397,7 +551,7 @@ struct PlaudSyncCheckpoint {
     /// Pass `fileURL` (tests) to redirect it elsewhere.
     init(fileURL: URL? = nil) {
         self.fileURL = fileURL
-            ?? AppSupport.baseDirectory.appendingPathComponent(Self.filename, isDirectory: false)
+            ?? AppSupport.baseDirectory.appendingPathComponent(PlaudSyncStorage.checkpointFilename, isDirectory: false)
     }
 
     /// The stored last-sync date, or nil when absent/unreadable (first run).
@@ -408,6 +562,35 @@ struct PlaudSyncCheckpoint {
             return Date(timeIntervalSince1970: seconds)
         }
         return nil
+    }
+
+    /// Uitkomst van het lezen van het ijkpunt.
+    enum LoadOutcome {
+        /// Nog geen ijkpunt: eerste run.
+        case absent
+        case loaded(Date)
+        /// Het bestand bestaat wél maar is niet te lezen of te decoderen.
+        case unreadable(String)
+    }
+
+    /// Bevinding 2026-08-03: ``load()`` heeft dezelfde vorm als de administratie
+    /// hierboven — nil bij afwezig én bij een leesfout. Een beschadigd ijkpunt las
+    /// daardoor als "eerste run", waarna de volledige window opnieuw werd gelijst.
+    /// Deze variant houdt de twee gevallen uit elkaar.
+    func loadDistinguishing() -> LoadOutcome {
+        guard FileManager.default.fileExists(atPath: fileURL.path) else { return .absent }
+        let data: Data
+        do {
+            data = try Data(contentsOf: fileURL)
+        } catch {
+            return .unreadable(error.localizedDescription)
+        }
+        do {
+            let seconds = try JSONDecoder().decode(Double.self, from: data)
+            return .loaded(Date(timeIntervalSince1970: seconds))
+        } catch {
+            return .unreadable("de inhoud is geen geldig tijdstip")
+        }
     }
 
     /// Persists `date`. Best-effort: logs and swallows failures.
@@ -423,4 +606,21 @@ struct PlaudSyncCheckpoint {
             NSLog("PlaudSyncCheckpoint: failed to save (%@)", String(describing: error))
         }
     }
+}
+
+/// Debug and Release history databases are deliberately separate. Their PLAUD
+/// checkpoints and processed-id ledgers must be separate for the same reason:
+/// one build must never suppress imports that only exist in the other database.
+enum PlaudSyncStorage {
+    static var suffix: String {
+        #if DEBUG
+        return "-dev"
+        #else
+        return "-release"
+        #endif
+    }
+
+    static var processedFilename: String { "plaud-processed\(suffix).json" }
+    static var checkpointFilename: String { "plaud-last-sync\(suffix).json" }
+    static var audioFolderName: String { "PLAUD\(suffix)" }
 }

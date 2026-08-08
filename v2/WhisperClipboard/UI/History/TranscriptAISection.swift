@@ -13,6 +13,7 @@ struct TranscriptAISection: View {
     @Bindable var modes: ModesService
     /// Opens the Settings window (to the AI tab) so the user can add a key.
     var onOpenSettings: () -> Void
+    var showsHeader = true
 
     /// The free-form one-off prompt the user is typing.
     @State private var promptDraft = ""
@@ -21,7 +22,7 @@ struct TranscriptAISection: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: 14) {
-            header
+            if showsHeader { header }
 
             if modes.hasAPIKey {
                 chipRow

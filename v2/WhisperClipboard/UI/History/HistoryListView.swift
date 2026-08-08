@@ -14,10 +14,35 @@ struct HistoryListView: View {
     @State private var rawQuery = ""
     @State private var debouncedQuery = ""
     @State private var filter: HistoryFilter = .all
+    @State private var durationFilter: DurationFilter = .any
+    @State private var deviceFilter: DeviceFilter = .any
+    @State private var speakerFilter: SpeakerFilter = .any
+    @State private var titleFilter: TitleFilter = .any
+    @State private var sortOrder: SortOrder = .newest
     @State private var selectedID: String?
     @State private var renamingID: String?
     @State private var renameText = ""
     @State private var deletingEntry: TranscriptEntry?
+
+    /// De zichtbare lijst, één keer opgehaald per echte wijziging.
+    ///
+    /// Bevinding 2026-08-04: dit was een computed property die bij ELKE
+    /// body-pass een blokkerende `dbQueue.read` van 500 rijen deed, inclusief
+    /// JSON-decode van alle segmenten — en `listPane`, `listContent`,
+    /// `detailPane` en `selectedEntry` lazen hem allemaal, dus drie à vier van
+    /// die queries per pass, synchroon op de main thread. Dat is de merkbare
+    /// vertraging bij elke klik.
+    @State private var entries: [TranscriptEntry] = []
+
+    /// Of de eerste query al gedraaid heeft. Zonder deze vlag zou de lege staat
+    /// ("Nog geen transcripties") één frame flitsen voordat `onAppear` de cache
+    /// vult. Bevinding 2026-08-04.
+    @State private var hasLoaded = false
+
+    /// Melding van een mislukte schrijfactie naar de store. Bevinding
+    /// 2026-08-03: verwijderen, vastzetten en hernoemen liepen via `try?`, dus
+    /// een mislukte opslag was onzichtbaar en de lijst deed alsof het gelukt was.
+    @State private var dataError: String?
 
     @State private var searchDebounce = PassthroughSubject<String, Never>()
 
@@ -27,9 +52,9 @@ struct HistoryListView: View {
         // fits the window's minimum content width alongside the 180pt sidebar.
         HSplitView {
             listPane
-                .frame(minWidth: 320, idealWidth: 360, maxWidth: 460)
+                .frame(minWidth: 300, idealWidth: 340, maxWidth: 420)
             detailPane
-                .frame(minWidth: 380, maxWidth: .infinity)
+                .frame(minWidth: 460, maxWidth: .infinity)
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
         .background(Theme.window)
@@ -42,14 +67,28 @@ struct HistoryListView: View {
             presenting: deletingEntry
         ) { entry in
             Button("Verwijder", role: .destructive) {
-                try? store.delete(id: entry.id)
-                if selectedID == entry.id { selectedID = entries.first?.id }
+                // Bevinding 2026-08-03: de selectie schoof onvoorwaardelijk door,
+                // ook wanneer het verwijderen mislukte — de rij stond er nog maar
+                // de gebruiker zag hem niet meer.
+                let deleted = DataChange.perform(
+                    "Het verwijderen van de transcriptie",
+                    reporting: $dataError
+                ) {
+                    try store.delete(id: entry.id)
+                }
                 deletingEntry = nil
+                guard deleted else { return }
+                // Eerst verversen, dan pas de selectie doorschuiven: de cache
+                // bevat anders nog de zojuist verwijderde rij (bevinding
+                // 2026-08-04).
+                refreshEntries()
+                if selectedID == entry.id { selectedID = entries.first?.id }
             }
             Button("Annuleer", role: .cancel) { deletingEntry = nil }
         } message: { _ in
             Text("Dit kan niet ongedaan worden gemaakt.")
         }
+        .dataChangeAlert($dataError)
         // DispatchQueue.main delivers across run-loop modes, so the debounce
         // still fires while the user is scrolling or dragging the divider.
         .onReceive(searchDebounce.debounce(for: .milliseconds(220), scheduler: DispatchQueue.main)) { value in
@@ -58,7 +97,14 @@ struct HistoryListView: View {
         .onChange(of: navigation.pendingTranscriptID) { _, id in
             if let id { selectedID = id; navigation.pendingTranscriptID = nil }
         }
+        // Eén query per echte wijziging: zoektekst, filters of sortering
+        // (samengebald in `criteria`), of een mutatie in de store.
+        .onChange(of: criteria) { _, _ in refreshEntries() }
+        // `revision` bumpt na élke mutatie van de store — lokaal (verwijderen,
+        // hernoemen, vastzetten, import) én bij binnenkomende iCloud-sync.
+        .onChange(of: store.revision) { _, _ in refreshEntries() }
         .onAppear {
+            refreshEntries()
             if let id = navigation.pendingTranscriptID {
                 selectedID = id
                 navigation.pendingTranscriptID = nil
@@ -72,12 +118,88 @@ struct HistoryListView: View {
 
     private var listPane: some View {
         VStack(spacing: 0) {
+            HStack {
+                Text("Geschiedenis")
+                    .font(ThemeFont.ui(20, weight: .bold))
+                    .foregroundStyle(Theme.text)
+                Spacer()
+                Text("\(entries.count)")
+                    .font(ThemeFont.ui(12, weight: .semibold))
+                    .foregroundStyle(Theme.textSecondary)
+            }
+            .padding(.horizontal, 14)
+            .padding(.top, 14)
+            .padding(.bottom, 2)
             searchField
             filterChips
+            advancedControls
             Divider().overlay(Theme.border)
             listContent
         }
         .background(Theme.window)
+    }
+
+    private var advancedControls: some View {
+        HStack(spacing: 8) {
+            Menu {
+                Picker("Apparaat", selection: $deviceFilter) {
+                    ForEach(DeviceFilter.allCases, id: \.self) { Text($0.label).tag($0) }
+                }
+                Divider()
+                Picker("Lengte", selection: $durationFilter) {
+                    ForEach(DurationFilter.allCases, id: \.self) { Text($0.label).tag($0) }
+                }
+                Divider()
+                Picker("Sprekers", selection: $speakerFilter) {
+                    ForEach(SpeakerFilter.allCases, id: \.self) { Text($0.label).tag($0) }
+                }
+                Divider()
+                Picker("Titel", selection: $titleFilter) {
+                    ForEach(TitleFilter.allCases, id: \.self) { Text($0.label).tag($0) }
+                }
+                if hasAdvancedFilters {
+                    Divider()
+                    Button("Wis extra filters") {
+                        deviceFilter = .any
+                        durationFilter = .any
+                        speakerFilter = .any
+                        titleFilter = .any
+                    }
+                }
+            } label: {
+                Label(hasAdvancedFilters ? "Filter actief" : "Filter", systemImage: "line.3.horizontal.decrease.circle")
+            }
+            .menuStyle(.borderlessButton)
+            .fixedSize()
+            .padding(.horizontal, 10)
+            .padding(.vertical, 6)
+            .background(Theme.surface)
+            .clipShape(RoundedRectangle(cornerRadius: Theme.Metrics.radius))
+            .overlay(RoundedRectangle(cornerRadius: Theme.Metrics.radius).strokeBorder(Theme.border, lineWidth: 1))
+
+            Menu {
+                Picker("Sortering", selection: $sortOrder) {
+                    ForEach(SortOrder.allCases, id: \.self) { Text($0.label).tag($0) }
+                }
+            } label: {
+                Label(sortOrder.label, systemImage: "arrow.up.arrow.down")
+            }
+            .menuStyle(.borderlessButton)
+            .fixedSize()
+            .padding(.horizontal, 10)
+            .padding(.vertical, 6)
+            .background(Theme.surface)
+            .clipShape(RoundedRectangle(cornerRadius: Theme.Metrics.radius))
+            .overlay(RoundedRectangle(cornerRadius: Theme.Metrics.radius).strokeBorder(Theme.border, lineWidth: 1))
+            Spacer()
+        }
+        .font(ThemeFont.ui(11, weight: .medium))
+        .padding(.horizontal, 12)
+        .padding(.bottom, 10)
+    }
+
+    private var hasAdvancedFilters: Bool {
+        deviceFilter != .any || durationFilter != .any || speakerFilter != .any || titleFilter != .any
     }
 
     private var searchField: some View {
@@ -134,7 +256,9 @@ struct HistoryListView: View {
     @ViewBuilder
     private var listContent: some View {
         let items = entries
-        if items.isEmpty {
+        if !hasLoaded {
+            Color.clear
+        } else if items.isEmpty {
             emptyState
         } else {
             ScrollView {
@@ -228,7 +352,12 @@ struct HistoryListView: View {
                 entry: entry,
                 store: store,
                 modes: modes,
-                onDeleted: { selectedID = entries.first?.id }
+                // Ook hier eerst verversen: de cache bevat de zojuist in het
+                // detailpaneel verwijderde rij nog (bevinding 2026-08-04).
+                onDeleted: {
+                    refreshEntries()
+                    selectedID = entries.first?.id
+                }
             )
             .id(entry.id)
         } else {
@@ -247,30 +376,139 @@ struct HistoryListView: View {
 
     // MARK: - Data
 
-    /// Recomputed whenever the store bumps `revision`, the query, or the filter.
-    private var entries: [TranscriptEntry] {
-        _ = store.revision
-        return (try? store.entries(query: debouncedQuery, filter: filter, limit: 500)) ?? []
+    /// Alles wat de zichtbare lijst bepaalt, in één waarde. Zo volstaat één
+    /// `onChange` en kan er geen filter vergeten worden bij het verversen.
+    private struct ListCriteria: Equatable {
+        var query: String
+        var filter: HistoryFilter
+        var device: DeviceFilter
+        var duration: DurationFilter
+        var speaker: SpeakerFilter
+        var title: TitleFilter
+        var sort: SortOrder
+    }
+
+    private var criteria: ListCriteria {
+        ListCriteria(
+            query: debouncedQuery,
+            filter: filter,
+            device: deviceFilter,
+            duration: durationFilter,
+            speaker: speakerFilter,
+            title: titleFilter,
+            sort: sortOrder
+        )
+    }
+
+    /// De enige plek die de database bevraagt. Volgorde, filters, de limiet van
+    /// 500 en het zoekgedrag zijn ongewijzigd; alleen het moment waarop dit
+    /// draait is veranderd (bevinding 2026-08-04).
+    private func refreshEntries() {
+        let fetched = (try? store.entries(query: debouncedQuery, filter: filter, limit: 500)) ?? []
+        entries = fetched
+            .filter { deviceFilter.matches($0) }
+            .filter { durationFilter.matches($0.duration) }
+            .filter { speakerFilter.matches(speakerCount(of: $0)) }
+            .filter { titleFilter.matches($0) }
+            .sorted(by: sortOrder.areInIncreasingOrder)
+        hasLoaded = true
+    }
+
+    private func speakerCount(of entry: TranscriptEntry) -> Int {
+        Set(entry.segments.compactMap(\.speaker).filter { !$0.isEmpty }).count
     }
 
     /// The selected entry, resolved only within the currently visible list. If
     /// the selection was filtered/searched out (or deleted), the detail pane
     /// clears rather than showing a row that isn't in the list.
+    ///
+    /// Bevinding 2026-08-04: dit deed de volledige query nóg een keer over.
+    /// Leest nu uit de al opgehaalde lijst.
     private var selectedEntry: TranscriptEntry? {
         guard let selectedID else { return nil }
-        _ = store.revision
         return entries.first { $0.id == selectedID }
     }
 
     // MARK: - Actions
 
     private func togglePin(_ entry: TranscriptEntry) {
-        try? store.setPinned(id: entry.id, !entry.pinned)
+        DataChange.perform(
+            entry.pinned ? "Het losmaken van de transcriptie" : "Het vastzetten van de transcriptie",
+            reporting: $dataError
+        ) {
+            try store.setPinned(id: entry.id, !entry.pinned)
+        }
     }
 
     private func commitRename(_ entry: TranscriptEntry) {
-        try? store.rename(id: entry.id, name: renameText)
+        // Bevinding 2026-08-03: het naamveld klapte dicht alsof de naam bewaard
+        // was. Blijf bij een fout in bewerkmodus zodat de ingetypte naam blijft.
+        let saved = DataChange.perform(
+            "Het hernoemen van de transcriptie",
+            reporting: $dataError
+        ) {
+            try store.rename(id: entry.id, name: renameText)
+        }
+        guard saved else { return }
         renamingID = nil
+    }
+}
+
+private enum DeviceFilter: CaseIterable {
+    case any, mac, iphone, unknown
+    var label: String {
+        switch self { case .any: "Alle apparaten"; case .mac: "Mac"; case .iphone: "iPhone"; case .unknown: "Ouder/onbekend" }
+    }
+    func matches(_ entry: TranscriptEntry) -> Bool {
+        let device = TranscriptSourceStyle.device(for: entry.source)
+        switch self { case .any: return true; case .mac: return device == "Mac"; case .iphone: return device == "iPhone"; case .unknown: return device == nil }
+    }
+}
+
+private enum DurationFilter: CaseIterable {
+    case any, under1, oneTo5, fiveTo10, tenTo20, twentyTo60, over60
+    var label: String {
+        switch self { case .any: "Alle lengtes"; case .under1: "Korter dan 1 minuut"; case .oneTo5: "1–5 minuten"; case .fiveTo10: "5–10 minuten"; case .tenTo20: "10–20 minuten"; case .twentyTo60: "20–60 minuten"; case .over60: "Langer dan 1 uur" }
+    }
+    func matches(_ seconds: Double) -> Bool {
+        switch self { case .any: return true; case .under1: return seconds < 60; case .oneTo5: return seconds >= 60 && seconds < 300; case .fiveTo10: return seconds >= 300 && seconds < 600; case .tenTo20: return seconds >= 600 && seconds < 1200; case .twentyTo60: return seconds >= 1200 && seconds < 3600; case .over60: return seconds >= 3600 }
+    }
+}
+
+private enum SpeakerFilter: CaseIterable {
+    case any, one, two, threePlus
+    var label: String { switch self { case .any: "Alle aantallen sprekers"; case .one: "1 spreker"; case .two: "2 sprekers"; case .threePlus: "3 of meer sprekers" } }
+    func matches(_ count: Int) -> Bool { switch self { case .any: return true; case .one: return count <= 1; case .two: return count == 2; case .threePlus: return count >= 3 } }
+}
+
+private enum TitleFilter: CaseIterable {
+    case any, titled, untitled
+    var label: String { switch self { case .any: "Met en zonder titel"; case .titled: "Titel ingevuld"; case .untitled: "Geen titel ingevuld" } }
+    func matches(_ entry: TranscriptEntry) -> Bool {
+        let name = entry.name.trimmingCharacters(in: .whitespacesAndNewlines)
+        let hasTitle = !name.isEmpty && name.localizedCaseInsensitiveCompare("PLAUD-opname") != .orderedSame
+        switch self { case .any: return true; case .titled: return hasTitle; case .untitled: return !hasTitle }
+    }
+}
+
+private enum SortOrder: CaseIterable {
+    case newest, oldest, nameAZ, nameZA, longest, shortest
+    var label: String { switch self { case .newest: "Nieuwste"; case .oldest: "Oudste"; case .nameAZ: "Naam A–Z"; case .nameZA: "Naam Z–A"; case .longest: "Langste"; case .shortest: "Kortste" } }
+    func areInIncreasingOrder(_ lhs: TranscriptEntry, _ rhs: TranscriptEntry) -> Bool {
+        switch self {
+        case .newest: return (lhs.timestamp ?? .distantPast) > (rhs.timestamp ?? .distantPast)
+        case .oldest: return (lhs.timestamp ?? .distantPast) < (rhs.timestamp ?? .distantPast)
+        case .nameAZ: return displayName(lhs).localizedCaseInsensitiveCompare(displayName(rhs)) == .orderedAscending
+        case .nameZA: return displayName(lhs).localizedCaseInsensitiveCompare(displayName(rhs)) == .orderedDescending
+        case .longest: return lhs.duration > rhs.duration
+        case .shortest: return lhs.duration < rhs.duration
+        }
+    }
+    private func displayName(_ entry: TranscriptEntry) -> String {
+        let name = entry.name.trimmingCharacters(in: .whitespacesAndNewlines)
+        return name.isEmpty || name.localizedCaseInsensitiveCompare("PLAUD-opname") == .orderedSame
+            ? entry.text
+            : name
     }
 }
 

@@ -15,12 +15,12 @@ extension AppSettings.AppearanceMode {
         }
     }
 
-    /// Dutch label for the "Thema" picker.
-    var label: String {
+    /// Localized label for the appearance picker.
+    func label(in language: AppLanguage) -> String {
         switch self {
-        case .system: return "Systeem"
-        case .dark: return "Donker"
-        case .light: return "Licht"
+        case .system: return L10n.string( "Systeem", locale: language.locale)
+        case .dark: return L10n.string( "Donker", locale: language.locale)
+        case .light: return L10n.string( "Licht", locale: language.locale)
         }
     }
 }
@@ -94,7 +94,7 @@ enum Theme {
     /// Secondary / muted text.
     static let textSecondary = Color(lightHex: "57575C", darkHex: "9A9AA2")
     /// Tertiary / faint text (timecodes, captions).
-    static let textTertiary = Color(lightHex: "8A8A90", darkHex: "6A6A72")
+    static let textTertiary = Color(lightHex: "6F6F75", darkHex: "7F7F88")
 
     // MARK: Accents
 
@@ -103,11 +103,11 @@ enum Theme {
     static let accent = Color(lightHex: "FFD60A", darkHex: "FFD60A")
     /// Accent for **text / thin strokes / the wordmark period**. A darker amber on
     /// white so accent-as-text stays readable.
-    static let accentText = Color(lightHex: "B58900", darkHex: "FFD60A")
+    static let accentText = Color(lightHex: "8A6900", darkHex: "FFD60A")
     /// A dimmer yellow for large fills / hovers.
     static let accentSoft = Color(lightHex: "C9A800", darkHex: "C9A800")
     /// Secondary accent — recording state, destructive actions.
-    static let danger = Color(lightHex: "E5342A", darkHex: "FF453A")
+    static let danger = Color(lightHex: "C91F18", darkHex: "FF453A")
     /// A dimmer red for backgrounds.
     static let dangerSoft = Color(lightHex: "FBE4E2", darkHex: "3A1A18")
 
@@ -134,18 +134,39 @@ enum ThemeFont {
 
     /// Inter for all UI text.
     static func ui(_ size: CGFloat, weight: Font.Weight = .regular) -> Font {
+        let style = relativeStyle(for: size)
         if hasInter {
-            return .custom("Inter", size: size).weight(weight)
+            return .custom("Inter", size: size, relativeTo: style).weight(weight)
         }
-        return .system(size: size, weight: weight, design: .default)
+        return .system(style, design: .default).weight(weight)
     }
 
     /// Merriweather for the app-title wordmark only; falls back to Inter/system.
     static func wordmark(_ size: CGFloat, weight: Font.Weight = .bold) -> Font {
         if hasMerriweather {
-            return .custom("Merriweather", size: size).weight(weight)
+            return .custom(
+                "Merriweather",
+                size: size,
+                relativeTo: relativeStyle(for: size)
+            ).weight(weight)
         }
         return ui(size, weight: weight)
+    }
+
+    /// Koppelt de visuele puntgrootte aan een semantische Dynamic Type-stijl.
+    /// Zo blijft de bestaande hiërarchie intact, terwijl alle eigen Inter- en
+    /// Merriweather-tekst meegroeit met de toegankelijkheidsinstelling.
+    private static func relativeStyle(for size: CGFloat) -> Font.TextStyle {
+        switch size {
+        case 32...: .largeTitle
+        case 26...: .title
+        case 21...: .title2
+        case 19...: .title3
+        case 17...: .body
+        case 15...: .subheadline
+        case 13...: .footnote
+        default: .caption2
+        }
     }
 
     private static func fontFamilyIsAvailable(_ family: String) -> Bool {
@@ -175,8 +196,25 @@ struct Wordmark: View {
     var size: CGFloat = 26
 
     var body: some View {
-        Text.accentDotted("Whisper Clip")
+        Text.accentDotted("WhisperClip")
             .font(ThemeFont.wordmark(size, weight: .bold))
+    }
+}
+
+/// De vaste grote paginatitel onder het gecentreerde Whisper Clip-woordmerk.
+struct MainPageHeader: View {
+    let title: LocalizedStringKey
+
+    var body: some View {
+        HStack {
+            Text(title)
+                .font(ThemeFont.ui(34, weight: .bold))
+                .foregroundStyle(Theme.text)
+            Spacer()
+        }
+        .padding(.horizontal, 20)
+        .padding(.top, 12)
+        .padding(.bottom, 8)
     }
 }
 
@@ -184,6 +222,7 @@ extension Text {
     /// The brand heading pattern: "<title>." with the trailing period in the
     /// accent colour.
     static func accentDotted(_ title: String) -> Text {
-        Text("\(Text(title).foregroundStyle(Theme.text))\(Text(".").foregroundStyle(Theme.accentText))")
+        Text(verbatim: title).foregroundStyle(Theme.text)
+            + Text(verbatim: ".").foregroundStyle(Theme.accentText)
     }
 }

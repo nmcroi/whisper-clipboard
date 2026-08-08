@@ -34,49 +34,43 @@ struct ActionCard: View {
     }
 
     private var content: some View {
-        VStack(alignment: .leading, spacing: 10) {
-            HStack {
-                Image(systemName: symbol)
-                    .font(.system(size: 20, weight: .medium))
-                    .foregroundStyle(active ? Theme.danger : (enabled ? Theme.accent : Theme.textTertiary))
-                Spacer()
-                if active {
-                    Circle()
-                        .fill(Theme.danger)
-                        .frame(width: 8, height: 8)
-                } else if let badge, !enabled {
-                    Text(badge)
-                        .font(ThemeFont.ui(10, weight: .semibold))
-                        .foregroundStyle(Theme.textTertiary)
-                        .padding(.horizontal, 6)
-                        .padding(.vertical, 2)
-                        .background(Theme.surfaceHover)
-                        .clipShape(Capsule())
-                }
+        HStack(alignment: .center, spacing: 12) {
+            Image(systemName: symbol)
+                .font(.system(size: 18, weight: .medium))
+                .foregroundStyle(active ? Theme.danger : (enabled ? Theme.accent : Theme.textTertiary))
+                .frame(width: 24)
+
+            VStack(alignment: .leading, spacing: 3) {
+                Text(title)
+                    .font(ThemeFont.ui(14, weight: .semibold))
+                    .foregroundStyle(enabled ? Theme.text : Theme.textSecondary)
+                Text(subtitle)
+                    .font(ThemeFont.ui(11))
+                    .foregroundStyle(Theme.textSecondary)
+                    .lineLimit(2)
             }
 
-            Text(title)
-                .font(ThemeFont.ui(15, weight: .semibold))
-                .foregroundStyle(enabled ? Theme.text : Theme.textSecondary)
+            Spacer(minLength: 6)
 
-            Text(subtitle)
-                .font(ThemeFont.ui(12))
-                .foregroundStyle(Theme.textSecondary)
-                .fixedSize(horizontal: false, vertical: true)
-                .frame(maxWidth: .infinity, alignment: .leading)
-
-            if let hint {
+            if active {
+                Circle().fill(Theme.danger).frame(width: 7, height: 7)
+            } else if let hint {
                 Text(hint)
-                    .font(ThemeFont.ui(11, weight: .medium).monospaced())
-                    .foregroundStyle(Theme.text)
-                    .padding(.horizontal, 8)
+                    .font(ThemeFont.ui(10, weight: .medium).monospaced())
+                    .foregroundStyle(Theme.textSecondary)
+                    .padding(.horizontal, 7)
                     .padding(.vertical, 3)
                     .background(Theme.surfaceHover)
                     .clipShape(Capsule())
+            } else if let badge, !enabled {
+                Text(badge)
+                    .font(ThemeFont.ui(10, weight: .semibold))
+                    .foregroundStyle(Theme.textTertiary)
             }
         }
-        .frame(maxWidth: .infinity, minHeight: 104, alignment: .topLeading)
-        .padding(16)
+        .frame(maxWidth: .infinity, minHeight: 54, alignment: .leading)
+        .padding(.horizontal, 14)
+        .padding(.vertical, 10)
         .themeCard(border: isHovering ? Theme.accent.opacity(0.6) : Theme.border)
         .opacity(enabled ? 1 : 0.55)
         .contentShape(Rectangle())
